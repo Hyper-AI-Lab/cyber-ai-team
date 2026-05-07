@@ -1,0 +1,109 @@
+from datetime import datetime, timedelta, timezone
+from secrets import compare_digest
+from typing import Optional
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from pydantic import BaseModel
+
+from cyber_team.config import settings
+
+
+ALGORITHM = "HS256"
+bearer_scheme = HTTPBearer(auto_error=False)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+class Principal(BaseModel):
+    subject: str
+    email: str
+    role: str
+    token_type: str
+
+
+def verify_owner_password(password: str) -> bool:
+    if settings.owner_password_hash:
+        return pwd_context.verify(password, settings.owner_password_hash)
+    return compare_digest(password, settings.owner_password)
+
+
+def create_token(subject: str, email: str, role: str, token_type: str, expires_delta: timedelta) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": subject,
+        "email": email,
+        "role": role,
+        "typ": token_type,
+        "iat": int(now.timestamp()),
+        "exp": int((now + expires_delta).timestamp()),
+    }
+    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+
+
+def create_owner_access_token() -> str:
+    return create_token(
+        subject="owner",
+        email=settings.owner_email,
+        role="owner",
+        token_type="access",
+        expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
+    )
+
+
+def create_owner_refresh_token() -> str:
+    return create_token(
+        subject="owner",
+        email=settings.owner_email,
+        role="owner",
+        token_type="refresh",
+        expires_delta=timedelta(days=settings.refresh_token_expire_days),
+    )
+
+
+def decode_token(token: str, expected_type: Optional[str] = None) -> Principal:
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    token_type = payload.get("typ")
+    if expected_type and token_type != expected_type:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token type",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    subject = payload.get("sub")
+    email = payload.get("email")
+    role = payload.get("role")
+    if not subject or not email or not role or not token_type:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token claims",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return Principal(subject=subject, email=email, role=role, token_type=token_type)
+
+
+async def get_current_principal(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)) -> Principal:
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return decode_token(credentials.credentials, expected_type="access")
+
+
+async def require_owner(principal: Principal = Depends(get_current_principal)) -> Principal:
+    if principal.role != "owner":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Owner access required")
+    return principal

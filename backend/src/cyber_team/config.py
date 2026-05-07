@@ -1,0 +1,121 @@
+"""Cyber-Team configuration via environment variables."""
+
+from pydantic_settings import BaseSettings
+from typing import Optional
+
+
+class Settings(BaseSettings):
+    # App
+    app_name: str = "Cyber-Team"
+    environment: str = "development"
+    log_level: str = "INFO"
+    secret_key: str = "changeme-app-secret-key"
+    cors_allowed_origins: str = "*"
+
+    # Owner
+    owner_email: str = "owner@example.com"
+    owner_password: str = "changeme-owner-password"
+    owner_password_hash: str = ""
+    access_token_expire_minutes: int = 60
+    refresh_token_expire_days: int = 7
+
+    # Mistral / LLM
+    mistral_api_key: str = ""
+    litellm_log: str = "INFO"
+
+    # PostgreSQL
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_db: str = "cyberteam"
+    postgres_user: str = "cyberteam"
+    postgres_password: str = "changeme-postgres-password"
+
+    # Redis
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_password: str = "changeme-redis-password"
+
+    # Qdrant
+    qdrant_host: str = "localhost"
+    qdrant_port: int = 6333
+    qdrant_api_key: str = ""
+
+    # Temporal
+    temporal_host: str = "localhost"
+    temporal_port: int = 7233
+    temporal_namespace: str = "default"
+
+    # Keycloak
+    keycloak_host: str = "localhost"
+    keycloak_port: int = 8080
+    keycloak_admin: str = "admin"
+    keycloak_admin_password: str = "changeme-keycloak-admin"
+    keycloak_realm: str = "cyberteam"
+
+    # OpenFGA
+    openfga_api_url: str = "http://localhost:9090"
+
+    # OPA
+    opa_api_url: str = "http://localhost:8181"
+
+    # ERPNext
+    erpnext_url: str = "http://localhost:8100"
+    erpnext_api_key: str = ""
+    erpnext_api_secret: str = ""
+
+    # Telephony
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_phone_number: str = ""
+    asterisk_host: str = "localhost"
+    asterisk_port: int = 8089
+    asterisk_ari_user: str = "cyberteam"
+    asterisk_ari_password: str = "changeme-ari-password"
+
+    # Langfuse
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "http://localhost:3100"
+
+    @property
+    def postgres_dsn(self) -> str:
+        return (
+            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def redis_url(self) -> str:
+        return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/0"
+
+    @property
+    def qdrant_url(self) -> str:
+        return f"http://{self.qdrant_host}:{self.qdrant_port}"
+
+    @property
+    def temporal_url(self) -> str:
+        return f"{self.temporal_host}:{self.temporal_port}"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
+
+    def validate_runtime_config(self) -> None:
+        if self.environment.lower() != "production":
+            return
+        insecure_values = {
+            "SECRET_KEY": self.secret_key == "changeme-app-secret-key",
+            "OWNER_PASSWORD": self.owner_password == "changeme-owner-password" and not self.owner_password_hash,
+            "POSTGRES_PASSWORD": self.postgres_password == "changeme-postgres-password",
+            "REDIS_PASSWORD": self.redis_password == "changeme-redis-password",
+        }
+        invalid = [name for name, is_invalid in insecure_values.items() if is_invalid]
+        if invalid:
+            raise RuntimeError(f"Refusing production startup with insecure defaults: {', '.join(invalid)}")
+        if "*" in self.cors_origins:
+            raise RuntimeError("Refusing production startup with wildcard CORS_ALLOWED_ORIGINS")
+
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+
+settings = Settings()

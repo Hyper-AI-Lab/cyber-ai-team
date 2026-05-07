@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'cyberteam-core'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['core:8000']
+
+  - job_name: 'temporal'
+    static_configs:
+      - targets: ['temporal:7233']
+
+  - job_name: 'qdrant'
+    static_configs:
+      - targets: ['qdrant:6333']
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']

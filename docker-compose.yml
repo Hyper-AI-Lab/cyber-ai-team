@@ -1,0 +1,348 @@
+services:
+  # ─── Core API ──────────────────────────────────────────────────────
+  core:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cyberteam-core
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - REDIS_HOST=redis
+      - QDRANT_HOST=qdrant
+      - TEMPORAL_HOST=temporal
+      - OPA_API_URL=http://opa:8181
+      - ERPNEXT_URL=http://erpnext:8000
+      - OPENFGA_API_URL=http://openfga:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      temporal:
+        condition: service_started
+    volumes:
+      - core-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ─── Temporal Workers ──────────────────────────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cyberteam-worker
+    command: ["python", "-m", "cyber_team.worker"]
+    env_file: .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - REDIS_HOST=redis
+      - QDRANT_HOST=qdrant
+      - TEMPORAL_HOST=temporal
+      - OPA_API_URL=http://opa:8181
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ─── Owner Console UI ─────────────────────────────────────────────
+  ui:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cyberteam-ui
+    ports:
+      - "3001:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://${HOST_IP:-localhost}:8000
+      - NEXT_PUBLIC_WS_URL=ws://${HOST_IP:-localhost}:8000/ws
+    depends_on:
+      core:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # ─── PostgreSQL ────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: cyberteam-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cyberteam}
+      POSTGRES_USER: ${POSTGRES_USER:-cyberteam}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme-postgres-password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cyberteam}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── DB Init (creates extra databases) ────────────────────────────
+  db-init:
+    image: postgres:16-alpine
+    container_name: cyberteam-db-init
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-cyberteam}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-changeme-postgres-password}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: >
+      bash -c "
+        for DB in langfuse temporal; do
+          psql -d postgres -tc \"SELECT 1 FROM pg_database WHERE datname = '$$DB'\" | grep -q 1 ||
+          psql -d postgres -c \"CREATE DATABASE $$DB\";
+        done;
+        echo 'Databases ready.'
+      "
+    restart: "no"
+
+  # ─── Redis ─────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: cyberteam-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-changeme-redis-password}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme-redis-password}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── Qdrant (Vector DB) ───────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: cyberteam-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    restart: unless-stopped
+
+  # ─── Temporal ──────────────────────────────────────────────────────
+  temporal:
+    image: temporalio/auto-setup:latest
+    container_name: cyberteam-temporal
+    environment:
+      - DB=postgres12
+      - DB_NAME=temporal
+      - DB_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-cyberteam}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD:-changeme-postgres-password}
+      - POSTGRES_SEEDS=postgres
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    ports:
+      - "7233:7233"
+    volumes:
+      - temporal-data:/etc/temporal/config
+    restart: unless-stopped
+
+  temporal-admin-tools:
+    image: temporalio/admin-tools:latest
+    container_name: cyberteam-temporal-admin
+    profiles: ["admin"]
+    environment:
+      - TEMPORAL_CLI_ADDRESS=temporal:7233
+    depends_on:
+      - temporal
+    restart: unless-stopped
+
+  # ─── OPA (Policy Engine) ──────────────────────────────────────────
+  opa:
+    image: openpolicyagent/opa:latest
+    container_name: cyberteam-opa
+    command: run --server /policies
+    ports:
+      - "8181:8181"
+    volumes:
+      - ./policies:/policies:ro
+    restart: unless-stopped
+
+  # ─── OpenFGA (Authorization) ──────────────────────────────────────
+  openfga:
+    image: openfga/openfga:latest
+    container_name: cyberteam-openfga
+    profiles: ["iam"]
+    command: run
+    environment:
+      - OPENFGA_DATASTORE_ENGINE=postgres
+      - OPENFGA_DATASTORE_URI=postgresql://${POSTGRES_USER:-cyberteam}:${POSTGRES_PASSWORD:-changeme-postgres-password}@postgres:5432/${POSTGRES_DB:-cyberteam}?sslmode=disable
+      - OPENFGA_HTTP_ADDR=0.0.0.0:8080
+      - OPENFGA_GRPC_ADDR=0.0.0.0:8081
+    ports:
+      - "9090:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── Keycloak (Auth) ──────────────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: cyberteam-keycloak
+    profiles: ["iam"]
+    command: start-dev
+    environment:
+      KC_DB: postgres
+      KC_DB_URL_HOST: postgres
+      KC_DB_URL_PORT: 5432
+      KC_DB_URL_DATABASE: ${POSTGRES_DB:-cyberteam}
+      KC_DB_USERNAME: ${POSTGRES_USER:-cyberteam}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-changeme-postgres-password}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-changeme-keycloak-admin}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── Langfuse (Traces & Observability) ────────────────────────────
+  langfuse:
+    image: langfuse/langfuse:latest
+    container_name: cyberteam-langfuse
+    profiles: ["observability"]
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-cyberteam}:${POSTGRES_PASSWORD:-changeme-postgres-password}@postgres:5432/langfuse
+      - NEXTAUTH_SECRET=changeme-nextauth-secret
+      - SALT=changeme-salt
+      - NEXTAUTH_URL=http://localhost:3100
+      - TELEMETRY_ENABLED=false
+    ports:
+      - "3100:3000"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ─── Grafana ───────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: cyberteam-grafana
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme-grafana-admin}
+      GF_INSTALL_PLUGINS: grafana-postgresql-datasource
+    ports:
+      - "3500:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # ─── Prometheus ────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: cyberteam-prometheus
+    profiles: ["observability"]
+    ports:
+      - "9099:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+
+  # ─── ERPNext ──────────────────────────────────────────────────────
+  erpnext:
+    image: frappe/erpnext:latest
+    container_name: cyberteam-erpnext
+    profiles: ["erp"]
+    environment:
+      - FRAPPE_SITE_NAME_HEADLESS=1
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB:-cyberteam}
+      - DB_USER=${POSTGRES_USER:-cyberteam}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-changeme-postgres-password}
+    ports:
+      - "8100:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - erpnext-data:/home/frappe/frappe-bench/sites
+    restart: unless-stopped
+
+  # ─── Asterisk (Telephony) ─────────────────────────────────────────
+  asterisk:
+    image: andrius/asterisk:latest
+    container_name: cyberteam-asterisk
+    profiles: ["telephony"]
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+      - "10000-10099:10000-10099/udp"
+      - "8089:8088"
+    volumes:
+      - asterisk-config:/etc/asterisk
+      - asterisk-spool:/var/spool/asterisk
+    restart: unless-stopped
+
+  # ─── Jasmin SMS Gateway ────────────────────────────────────────────
+  jasmin:
+    image: jookies/jasmin:latest
+    container_name: cyberteam-jasmin
+    profiles: ["telephony"]
+    ports:
+      - "1401:1401"
+      - "8999:8999"
+    volumes:
+      - jasmin-data:/etc/jasmin
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  qdrant-data:
+  temporal-data:
+  grafana-data:
+  prometheus-data:
+  core-data:
+  erpnext-data:
+  asterisk-config:
+  asterisk-spool:
+  jasmin-data:
+
+networks:
+  default:
+    name: cyberteam-network
