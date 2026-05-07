@@ -9,6 +9,7 @@ import {
   GitBranch,
   MessageSquare,
   ShieldCheck,
+  ScrollText,
   Settings,
   Zap,
 } from 'lucide-react'
@@ -26,6 +27,7 @@ const navItems: { view: ViewName; label: string; icon: React.ElementType }[] = [
   { view: 'workflows', label: 'Workflows', icon: GitBranch },
   { view: 'chat', label: 'Chat', icon: MessageSquare },
   { view: 'approvals', label: 'Approvals', icon: ShieldCheck },
+  { view: 'audit', label: 'Audit Trail', icon: ScrollText },
 ]
 
 export default function Sidebar({ activeView, onViewChange, approvalCount }: SidebarProps) {

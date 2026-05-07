@@ -100,6 +100,10 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
+    @property
+    def cors_allows_wildcard(self) -> bool:
+        return "*" in self.cors_origins
+
     def validate_runtime_config(self) -> None:
         if self.environment.lower() != "production":
             return
@@ -112,7 +116,7 @@ class Settings(BaseSettings):
         invalid = [name for name, is_invalid in insecure_values.items() if is_invalid]
         if invalid:
             raise RuntimeError(f"Refusing production startup with insecure defaults: {', '.join(invalid)}")
-        if "*" in self.cors_origins:
+        if self.cors_allows_wildcard:
             raise RuntimeError("Refusing production startup with wildcard CORS_ALLOWED_ORIGINS")
 
     model_config = {"env_file": ".env", "extra": "ignore"}

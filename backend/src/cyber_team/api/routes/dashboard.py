@@ -1,6 +1,6 @@
 """Dashboard routes — KPIs, agent status, approval queues."""
 
-from fastapi import APIRouter, Request, Query, Body
+from fastapi import APIRouter, HTTPException, Request, Query, Body
 from typing import Optional
 
 router = APIRouter()
@@ -27,13 +27,19 @@ async def get_approval_queue(request: Request, status: Optional[str] = Query(Non
 @router.post("/approval/{approval_id}/approve")
 async def approve_action(approval_id: str, request: Request, note: str = Body(default="", embed=True)):
     mgr = request.app.state.agent_manager
-    return await mgr.resolve_approval(approval_id, "approved", note)
+    try:
+        return await mgr.resolve_approval(approval_id, "approved", note)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.post("/approval/{approval_id}/reject")
 async def reject_action(approval_id: str, request: Request, note: str = Body(default="", embed=True)):
     mgr = request.app.state.agent_manager
-    return await mgr.resolve_approval(approval_id, "rejected", note)
+    try:
+        return await mgr.resolve_approval(approval_id, "rejected", note)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/workflow-visualizations")

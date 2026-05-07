@@ -9,8 +9,9 @@ import MemoryView from '@/components/MemoryView'
 import WorkflowsView from '@/components/WorkflowsView'
 import ChatView from '@/components/ChatView'
 import ApprovalsView from '@/components/ApprovalsView'
+import AuditView from '@/components/AuditView'
 
-export type ViewName = 'dashboard' | 'agents' | 'memory' | 'workflows' | 'chat' | 'approvals'
+export type ViewName = 'dashboard' | 'agents' | 'memory' | 'workflows' | 'chat' | 'approvals' | 'audit'
 
 export default function Home() {
   const [activeView, setActiveView] = useState<ViewName>('dashboard')
@@ -56,6 +57,8 @@ export default function Home() {
         return <ChatView agents={agents} />
       case 'approvals':
         return <ApprovalsView approvals={approvals} onRefresh={refreshData} />
+      case 'audit':
+        return <AuditView />
     }
   }
 

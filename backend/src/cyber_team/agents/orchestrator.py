@@ -16,6 +16,7 @@ class Orchestrator:
         self.agent_manager = agent_manager
         self.memory_service = memory_service
         self._tool_registry = tool_registry
+        self._audit = getattr(agent_manager, "_audit", None)
 
     async def list_workflows(self) -> list[dict]:
         async with async_session() as session:
@@ -44,7 +45,18 @@ class Orchestrator:
             )
             session.add(wf)
             await session.commit()
-            return self._workflow_to_dict(wf)
+            workflow = self._workflow_to_dict(wf)
+        if self._audit:
+            await self._audit.record(
+                event_type="workflow.created",
+                actor="owner",
+                actor_type="user",
+                resource_type="workflow",
+                resource_id=wf_id,
+                action="create",
+                metadata={"name": data.name},
+            )
+        return workflow
 
     async def run_workflow(self, workflow_id: str, input_data: Optional[dict] = None) -> dict:
         if input_data is None:
@@ -67,6 +79,16 @@ class Orchestrator:
             )
             session.add(run)
             await session.commit()
+        if self._audit:
+            await self._audit.record(
+                event_type="workflow.run_started",
+                actor="owner",
+                actor_type="user",
+                resource_type="workflow_run",
+                resource_id=run_id,
+                action="run",
+                metadata={"workflow_id": workflow_id},
+            )
 
         # Execute the graph
         try:
@@ -80,6 +102,16 @@ class Orchestrator:
                 else:
                     run_obj.state = result
                 await session.commit()
+            if self._audit:
+                await self._audit.record(
+                    event_type=f"workflow.run_{status}",
+                    actor="system",
+                    actor_type="system",
+                    resource_type="workflow_run",
+                    resource_id=run_id,
+                    action="run",
+                    metadata={"workflow_id": workflow_id},
+                )
             return self._run_to_dict(run_obj)
         except Exception as e:
             async with async_session() as session:
@@ -88,6 +120,17 @@ class Orchestrator:
                 run_obj.error = str(e)
                 run_obj.completed_at = datetime.utcnow()
                 await session.commit()
+            if self._audit:
+                await self._audit.record(
+                    event_type="workflow.run_failed",
+                    actor="system",
+                    actor_type="system",
+                    resource_type="workflow_run",
+                    resource_id=run_id,
+                    action="run",
+                    outcome="failed",
+                    metadata={"workflow_id": workflow_id, "error": str(e)},
+                )
             raise
 
     async def _execute_graph(self, graph: dict, input_data: dict, run_id: str, start_node: Optional[str] = None) -> tuple[dict, str]:
@@ -171,7 +214,15 @@ class Orchestrator:
                 agent_id = node.get("agent_id", "supervisor")
                 description = node.get("description_template", "").format(**state)
                 approval_id = await self.agent_manager._request_approval(
-                    agent_id, "workflow_step", description, state
+                    agent_id,
+                    "workflow_step",
+                    description,
+                    state,
+                    requester="workflow",
+                    requester_type="system",
+                    risk_level=node.get("risk_level", "medium"),
+                    target_type="workflow_run",
+                    target_id=run_id,
                 )
                 state[f"{current}_approval_id"] = approval_id
                 async with async_session() as session:
@@ -219,10 +270,46 @@ class Orchestrator:
                 run_obj.error = approval.review_note or "Approval rejected"
                 run_obj.completed_at = datetime.utcnow()
                 await session.commit()
+                if self._audit:
+                    await self._audit.record(
+                        event_type="workflow.run_rejected",
+                        actor="system",
+                        actor_type="system",
+                        resource_type="workflow_run",
+                        resource_id=run_id,
+                        action="resume",
+                        outcome="blocked",
+                        metadata={"approval_id": approval_id},
+                    )
                 return self._run_to_dict(run_obj)
 
         nodes = {node["id"]: node for node in graph.get("nodes", [])}
-        node_type = nodes.get(current, {}).get("type", "agent")
+        node = nodes.get(current, {})
+        node_type = node.get("type", "agent")
+        if node_type == "approval":
+            if not await self.agent_manager.approval_is_executable(
+                approval_id,
+                target_type="workflow_run",
+                target_id=run_id,
+            ):
+                raise ValueError(f"Approval request {approval_id} is not executable")
+            await self.agent_manager.consume_approval(
+                approval_id,
+                consumer="workflow",
+                target_type="workflow_run",
+                target_id=run_id,
+            )
+        elif node_type == "tool":
+            tool_name = node.get("tool_name")
+            if not await self.agent_manager.approval_is_executable(
+                approval_id,
+                target_type="tool",
+                target_id=tool_name,
+            ):
+                raise ValueError(f"Approval request {approval_id} is not executable")
+        else:
+            if not await self.agent_manager.approval_is_executable(approval_id):
+                raise ValueError(f"Approval request {approval_id} is not executable")
         if node_type == "approval":
             edges = graph.get("edges", [])
             next_nodes = [edge.get("to") for edge in edges if edge.get("from") == current and not edge.get("condition")]
@@ -237,6 +324,16 @@ class Orchestrator:
                 run_obj.result = state
                 run_obj.completed_at = datetime.utcnow()
                 await session.commit()
+                if self._audit:
+                    await self._audit.record(
+                        event_type="workflow.run_completed",
+                        actor="system",
+                        actor_type="system",
+                        resource_type="workflow_run",
+                        resource_id=run_id,
+                        action="resume",
+                        metadata={"approval_id": approval_id},
+                    )
                 return self._run_to_dict(run_obj)
 
         result, status = await self._execute_graph(graph, state, run_id, start_node=start_node)
@@ -249,6 +346,16 @@ class Orchestrator:
             else:
                 run_obj.state = result
             await session.commit()
+            if self._audit:
+                await self._audit.record(
+                    event_type=f"workflow.run_{status}",
+                    actor="system",
+                    actor_type="system",
+                    resource_type="workflow_run",
+                    resource_id=run_id,
+                    action="resume",
+                    metadata={"approval_id": approval_id},
+                )
             return self._run_to_dict(run_obj)
 
     async def list_workflow_runs(self, workflow_id: str) -> list[dict]:

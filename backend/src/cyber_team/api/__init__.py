@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from cyber_team.config import settings
-from cyber_team.api.routes import agents, workflows, memory, roles, chat, comms, dashboard, auth, tools
+from cyber_team.api.routes import agents, workflows, memory, roles, chat, comms, dashboard, auth, tools, audit
 from cyber_team.db import init_db
 from cyber_team.memory.service import MemoryService
 from cyber_team.agents.manager import AgentManager
@@ -15,17 +15,23 @@ from cyber_team.integrations.erpnext import ERPNextClient
 from cyber_team.roles.loader import load_default_roles
 from cyber_team.tools.registry import ToolRegistry
 from cyber_team.api.security import require_owner
+from cyber_team.audit.service import AuditService
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    settings.validate_runtime_config()
     await init_db()
+    app.state.audit_service = AuditService()
     app.state.memory_service = MemoryService()
     app.state.comms_gateway = CommsGateway()
     app.state.erpnext = ERPNextClient()
     app.state.tool_registry = ToolRegistry()
-    app.state.agent_manager = AgentManager(memory_service=app.state.memory_service)
+    app.state.agent_manager = AgentManager(
+        memory_service=app.state.memory_service,
+        audit_service=app.state.audit_service,
+    )
     app.state.orchestrator = Orchestrator(
         agent_manager=app.state.agent_manager,
         memory_service=app.state.memory_service,
@@ -36,6 +42,7 @@ async def lifespan(app: FastAPI):
         memory=app.state.memory_service,
         agent_manager=app.state.agent_manager,
         erpnext=app.state.erpnext,
+        audit=app.state.audit_service,
     )
     await app.state.memory_service.startup()
     await load_default_roles()
@@ -54,8 +61,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=settings.cors_origins,
+    allow_credentials=not settings.cors_allows_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -71,6 +78,7 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"], dependencies=
 app.include_router(comms.router, prefix="/api/comms", tags=["communications"], dependencies=protected_dependencies)
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"], dependencies=protected_dependencies)
 app.include_router(tools.router, prefix="/api/tools", tags=["tools"], dependencies=protected_dependencies)
+app.include_router(audit.router, prefix="/api/audit", tags=["audit"], dependencies=protected_dependencies)
 
 
 @app.get("/health")

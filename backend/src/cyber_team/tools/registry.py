@@ -62,6 +62,17 @@ class ToolRegistry:
             params = {}
 
         if tool_name not in self._tools:
+            if self._audit:
+                await self._audit.record(
+                    event_type="tool.execute",
+                    actor="owner",
+                    actor_type="user",
+                    resource_type="tool",
+                    resource_id=tool_name,
+                    action="execute",
+                    outcome="failed",
+                    metadata={"error": "tool_not_found"},
+                )
             return ToolResult(success=False, error=f"Tool not found: {tool_name}")
 
         tool = self._tools[tool_name]
@@ -69,7 +80,7 @@ class ToolRegistry:
         agent_id = params.pop("_agent_id", None)
         approval_id = params.pop("_approval_id", None)
 
-        if tool.requires_approval and not await self._approval_granted(approval_id):
+        if tool.requires_approval and not await self._approval_granted(approval_id, tool_name):
             requested_id = None
             if self._agent_manager:
                 requested_id = await self._agent_manager._request_approval(
@@ -77,6 +88,22 @@ class ToolRegistry:
                     f"tool:{tool_name}",
                     f"Execute tool {tool_name}",
                     params,
+                    requester=agent_id or "owner",
+                    requester_type="agent" if agent_id else "user",
+                    risk_level="high",
+                    target_type="tool",
+                    target_id=tool_name,
+                )
+            if self._audit:
+                await self._audit.record(
+                    event_type="tool.approval_required",
+                    actor=agent_id or "owner",
+                    actor_type="agent" if agent_id else "user",
+                    resource_type="tool",
+                    resource_id=tool_name,
+                    action="execute",
+                    outcome="blocked",
+                    metadata={"approval_id": requested_id},
                 )
             return ToolResult(
                 success=False,
@@ -89,10 +116,39 @@ class ToolRegistry:
             )
 
         try:
+            if approval_id and tool.requires_approval and self._agent_manager:
+                await self._agent_manager.consume_approval(
+                    approval_id,
+                    consumer=f"tool:{tool_name}",
+                    target_type="tool",
+                    target_id=tool_name,
+                )
             result = await executor(**params)
+            if self._audit:
+                await self._audit.record(
+                    event_type="tool.execute",
+                    actor=agent_id or "owner",
+                    actor_type="agent" if agent_id else "user",
+                    resource_type="tool",
+                    resource_id=tool_name,
+                    action="execute",
+                    outcome="success",
+                    metadata={"approval_id": approval_id, "requires_approval": tool.requires_approval},
+                )
             return ToolResult(success=True, output=result)
         except Exception as e:
             logger.error(f"Tool execution failed [{tool_name}]: {e}")
+            if self._audit:
+                await self._audit.record(
+                    event_type="tool.execute",
+                    actor=agent_id or "owner",
+                    actor_type="agent" if agent_id else "user",
+                    resource_type="tool",
+                    resource_id=tool_name,
+                    action="execute",
+                    outcome="failed",
+                    metadata={"approval_id": approval_id, "error": str(e)},
+                )
             return ToolResult(success=False, error=str(e))
 
     def get_tools_for_agent(self, tool_names: list[str]) -> list[ToolDefinition]:
@@ -352,19 +408,24 @@ class ToolRegistry:
     _memory_service = None
     _agent_manager = None
     _erpnext_client = None
+    _audit = None
 
-    def set_services(self, comms=None, memory=None, agent_manager=None, erpnext=None):
+    def set_services(self, comms=None, memory=None, agent_manager=None, erpnext=None, audit=None):
         """Inject service instances for tool execution."""
         self._comms_gateway = comms
         self._memory_service = memory
         self._agent_manager = agent_manager
         self._erpnext_client = erpnext
+        self._audit = audit
 
-    async def _approval_granted(self, approval_id: Optional[str]) -> bool:
+    async def _approval_granted(self, approval_id: Optional[str], tool_name: str) -> bool:
         if not approval_id or not self._agent_manager:
             return False
-        queue = await self._agent_manager.get_approval_queue("approved")
-        return any(item["id"] == approval_id for item in queue)
+        return await self._agent_manager.approval_is_executable(
+            approval_id,
+            target_type="tool",
+            target_id=tool_name,
+        )
 
     async def _tool_send_email(self, to_address: str, subject: str, body: str, cc: list = None):
         if not self._comms_gateway:

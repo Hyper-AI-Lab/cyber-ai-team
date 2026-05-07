@@ -202,6 +202,10 @@ class ApiClient {
       body: JSON.stringify({ tool_name: toolName, params }),
     });
   }
+
+  async listAuditEvents(limit: number = 100) {
+    return this.request(`/api/audit/events?limit=${limit}`);
+  }
 }
 
 export const api = new ApiClient();

@@ -77,11 +77,33 @@ class ApprovalRequest(Base):
     action_type: Mapped[str] = mapped_column(String(100))
     action_description: Mapped[str] = mapped_column(Text)
     action_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    requester: Mapped[str] = mapped_column(String(200), default="system")
+    requester_type: Mapped[str] = mapped_column(String(30), default="system")
+    risk_level: Mapped[str] = mapped_column(String(20), default="medium")
+    target_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    target_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     reviewer: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     review_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(100), index=True)
+    actor: Mapped[str] = mapped_column(String(200), index=True)
+    actor_type: Mapped[str] = mapped_column(String(30), default="system")
+    resource_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    resource_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, index=True)
+    action: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    outcome: Mapped[str] = mapped_column(String(30), default="success", index=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
 class CommunicationLog(Base):

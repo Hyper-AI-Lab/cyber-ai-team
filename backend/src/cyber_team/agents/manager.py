@@ -1,7 +1,7 @@
 """Agent Manager — registration, lifecycle, and configuration of agents."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,12 +11,14 @@ from cyber_team.db.models import Agent, RoleManifest, ApprovalRequest
 from cyber_team.llm.gateway import LLMGateway
 from cyber_team.memory.service import MemoryService
 from cyber_team.config import settings
+from cyber_team.audit.service import AuditService
 
 
 class AgentManager:
-    def __init__(self, memory_service: Optional[MemoryService] = None):
+    def __init__(self, memory_service: Optional[MemoryService] = None, audit_service: Optional[AuditService] = None):
         self._llm = LLMGateway()
         self._memory = memory_service
+        self._audit = audit_service
         self._agents_cache: dict[str, dict] = {}
 
     async def list_agents(self) -> list[dict]:
@@ -294,8 +296,21 @@ Propose a new role to fill this gap. Return JSON with:
             # If OPA is unavailable, fall back to policy string
             return policy == "always"
 
-    async def _request_approval(self, agent_id: Optional[str], action_type: str, description: str, payload: dict) -> str:
+    async def _request_approval(
+        self,
+        agent_id: Optional[str],
+        action_type: str,
+        description: str,
+        payload: dict,
+        requester: str = "system",
+        requester_type: str = "system",
+        risk_level: str = "medium",
+        target_type: Optional[str] = None,
+        target_id: Optional[str] = None,
+        expires_in_minutes: int = 1440,
+    ) -> str:
         approval_id = str(uuid.uuid4())
+        expires_at = datetime.utcnow() + timedelta(minutes=expires_in_minutes)
         async with async_session() as session:
             req = ApprovalRequest(
                 id=approval_id,
@@ -303,9 +318,31 @@ Propose a new role to fill this gap. Return JSON with:
                 action_type=action_type,
                 action_description=description,
                 action_payload=payload,
+                requester=requester,
+                requester_type=requester_type,
+                risk_level=risk_level,
+                target_type=target_type,
+                target_id=target_id,
+                expires_at=expires_at,
             )
             session.add(req)
             await session.commit()
+        if self._audit:
+            await self._audit.record(
+                event_type="approval.requested",
+                actor=requester,
+                actor_type=requester_type,
+                resource_type="approval",
+                resource_id=approval_id,
+                action=action_type,
+                metadata={
+                    "agent_id": agent_id,
+                    "risk_level": risk_level,
+                    "target_type": target_type,
+                    "target_id": target_id,
+                    "expires_at": expires_at.isoformat(),
+                },
+            )
         return approval_id
 
     async def get_approval_queue(self, status: Optional[str] = None) -> list[dict]:
@@ -324,13 +361,25 @@ Propose a new role to fill this gap. Return JSON with:
                     "action_type": r.action_type,
                     "action_description": r.action_description,
                     "action_payload": r.action_payload,
+                    "requester": r.requester,
+                    "requester_type": r.requester_type,
+                    "risk_level": r.risk_level,
+                    "target_type": r.target_type,
+                    "target_id": r.target_id,
                     "status": r.status,
+                    "reviewer": r.reviewer,
+                    "review_note": r.review_note,
+                    "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None,
+                    "consumed_at": r.consumed_at.isoformat() if r.consumed_at else None,
+                    "expires_at": r.expires_at.isoformat() if r.expires_at else None,
                     "created_at": r.created_at.isoformat(),
                 }
                 for r in requests
             ]
 
-    async def resolve_approval(self, approval_id: str, decision: str, note: str = "") -> dict:
+    async def resolve_approval(self, approval_id: str, decision: str, note: str = "", reviewer: str = "owner") -> dict:
+        if decision not in {"approved", "rejected"}:
+            raise ValueError("Decision must be 'approved' or 'rejected'")
         async with async_session() as session:
             result = await session.execute(
                 select(ApprovalRequest).where(ApprovalRequest.id == approval_id)
@@ -338,12 +387,90 @@ Propose a new role to fill this gap. Return JSON with:
             req = result.scalar_one_or_none()
             if not req:
                 raise ValueError(f"Approval request {approval_id} not found")
+            if req.status != "pending":
+                raise ValueError(f"Approval request {approval_id} is already {req.status}")
+            if req.expires_at and req.expires_at < datetime.utcnow():
+                req.status = "expired"
+                req.resolved_at = datetime.utcnow()
+                await session.commit()
+                if self._audit:
+                    await self._audit.record(
+                        event_type="approval.expired",
+                        actor=reviewer,
+                        actor_type="user",
+                        resource_type="approval",
+                        resource_id=req.id,
+                        action=req.action_type,
+                        outcome="blocked",
+                        metadata={"target_type": req.target_type, "target_id": req.target_id},
+                    )
+                raise ValueError(f"Approval request {approval_id} has expired")
             req.status = decision
-            req.reviewer = "owner"
+            req.reviewer = reviewer
             req.review_note = note
             req.resolved_at = datetime.utcnow()
             await session.commit()
-            return {"id": req.id, "status": decision}
+            response = {"id": req.id, "status": decision}
+        if self._audit:
+            await self._audit.record(
+                event_type=f"approval.{decision}",
+                actor=reviewer,
+                actor_type="user",
+                resource_type="approval",
+                resource_id=approval_id,
+                action=decision,
+                metadata={"note": note, "target_type": req.target_type, "target_id": req.target_id, "risk_level": req.risk_level},
+            )
+        return response
+
+    async def approval_is_executable(self, approval_id: Optional[str], target_type: Optional[str] = None, target_id: Optional[str] = None) -> bool:
+        if not approval_id:
+            return False
+        async with async_session() as session:
+            req = (await session.execute(select(ApprovalRequest).where(ApprovalRequest.id == approval_id))).scalar_one_or_none()
+            if not req or req.status != "approved" or req.consumed_at is not None:
+                return False
+            if req.expires_at and req.expires_at < datetime.utcnow():
+                req.status = "expired"
+                req.resolved_at = datetime.utcnow()
+                await session.commit()
+                return False
+            if target_type and req.target_type and req.target_type != target_type:
+                return False
+            if target_id and req.target_id and req.target_id != target_id:
+                return False
+            return True
+
+    async def consume_approval(self, approval_id: str, consumer: str = "system", target_type: Optional[str] = None, target_id: Optional[str] = None) -> None:
+        async with async_session() as session:
+            req = (await session.execute(select(ApprovalRequest).where(ApprovalRequest.id == approval_id))).scalar_one_or_none()
+            if not req:
+                raise ValueError(f"Approval request {approval_id} not found")
+            if req.status != "approved":
+                raise ValueError(f"Approval request {approval_id} is not approved")
+            if req.consumed_at is not None:
+                raise ValueError(f"Approval request {approval_id} was already consumed")
+            if req.expires_at and req.expires_at < datetime.utcnow():
+                req.status = "expired"
+                req.resolved_at = datetime.utcnow()
+                await session.commit()
+                raise ValueError(f"Approval request {approval_id} has expired")
+            if target_type and req.target_type and req.target_type != target_type:
+                raise ValueError(f"Approval request {approval_id} is not valid for {target_type}")
+            if target_id and req.target_id and req.target_id != target_id:
+                raise ValueError(f"Approval request {approval_id} is not valid for {target_id}")
+            req.consumed_at = datetime.utcnow()
+            await session.commit()
+        if self._audit:
+            await self._audit.record(
+                event_type="approval.consumed",
+                actor=consumer,
+                actor_type="system",
+                resource_type="approval",
+                resource_id=approval_id,
+                action="consume",
+                metadata={"target_type": target_type, "target_id": target_id},
+            )
 
     # ─── Agent Status ─────────────────────────────────────────────────
 
