@@ -10,6 +10,20 @@ allow if {
     input.role == "owner"
 }
 
+allow if {
+    input.role == "agent"
+    input.resource_type == "tool"
+    input.action == "execute"
+    input.resource_id in input.allowed_tools
+}
+
+allow if {
+    input.role == "agent"
+    input.resource_type == "memory_namespace"
+    input.action in {"read", "write"}
+    input.resource_id == input.memory_namespace
+}
+
 # Agents can invoke their own tools
 allow if {
     input.action == "invoke_tool"

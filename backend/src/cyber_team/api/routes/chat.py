@@ -1,10 +1,12 @@
 """Chat routes — interact with agents via chat."""
 
-from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from typing import Optional
 import json
 import asyncio
+from cyber_team.api.authorization import require_authorization
+from cyber_team.api.security import Principal, get_current_principal
 
 router = APIRouter()
 
@@ -23,7 +25,12 @@ class ChatResponse(BaseModel):
 
 
 @router.post("/send", response_model=ChatResponse)
-async def send_chat_message(data: ChatMessage, request: Request):
+async def send_chat_message(
+    data: ChatMessage,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "send", "chat", data.agent_id)
     mgr = request.app.state.agent_manager
     result = await mgr.chat(data.agent_id, data.message, data.conversation_id)
     return result

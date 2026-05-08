@@ -61,12 +61,17 @@ class ToolRegistry:
         if params is None:
             params = {}
 
+        agent_id = params.pop("_agent_id", None)
+        approval_id = params.pop("_approval_id", None)
+        actor = params.pop("_actor", agent_id or "owner")
+        actor_type = params.pop("_actor_type", "agent" if agent_id else "user")
+
         if tool_name not in self._tools:
             if self._audit:
                 await self._audit.record(
                     event_type="tool.execute",
-                    actor="owner",
-                    actor_type="user",
+                    actor=actor,
+                    actor_type=actor_type,
                     resource_type="tool",
                     resource_id=tool_name,
                     action="execute",
@@ -77,8 +82,6 @@ class ToolRegistry:
 
         tool = self._tools[tool_name]
         executor = self._executors[tool_name]
-        agent_id = params.pop("_agent_id", None)
-        approval_id = params.pop("_approval_id", None)
 
         if tool.requires_approval and not await self._approval_granted(approval_id, tool_name):
             requested_id = None
@@ -88,8 +91,8 @@ class ToolRegistry:
                     f"tool:{tool_name}",
                     f"Execute tool {tool_name}",
                     params,
-                    requester=agent_id or "owner",
-                    requester_type="agent" if agent_id else "user",
+                    requester=agent_id or actor,
+                    requester_type="agent" if agent_id else actor_type,
                     risk_level="high",
                     target_type="tool",
                     target_id=tool_name,
@@ -97,8 +100,8 @@ class ToolRegistry:
             if self._audit:
                 await self._audit.record(
                     event_type="tool.approval_required",
-                    actor=agent_id or "owner",
-                    actor_type="agent" if agent_id else "user",
+                    actor=actor,
+                    actor_type=actor_type,
                     resource_type="tool",
                     resource_id=tool_name,
                     action="execute",
@@ -127,8 +130,8 @@ class ToolRegistry:
             if self._audit:
                 await self._audit.record(
                     event_type="tool.execute",
-                    actor=agent_id or "owner",
-                    actor_type="agent" if agent_id else "user",
+                    actor=actor,
+                    actor_type=actor_type,
                     resource_type="tool",
                     resource_id=tool_name,
                     action="execute",
@@ -141,8 +144,8 @@ class ToolRegistry:
             if self._audit:
                 await self._audit.record(
                     event_type="tool.execute",
-                    actor=agent_id or "owner",
-                    actor_type="agent" if agent_id else "user",
+                    actor=actor,
+                    actor_type=actor_type,
                     resource_type="tool",
                     resource_id=tool_name,
                     action="execute",

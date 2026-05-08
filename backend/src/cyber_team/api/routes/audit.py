@@ -1,7 +1,9 @@
 """Audit routes — structured event trail for governance."""
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from typing import Optional
+from cyber_team.api.authorization import require_authorization
+from cyber_team.api.security import Principal, get_current_principal
 
 router = APIRouter()
 
@@ -14,7 +16,20 @@ async def list_audit_events(
     actor: Optional[str] = None,
     resource_type: Optional[str] = None,
     resource_id: Optional[str] = None,
+    principal: Principal = Depends(get_current_principal),
 ):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "audit_event",
+        context={
+            "event_type": event_type,
+            "actor": actor,
+            "resource_type": resource_type,
+            "resource_id": resource_id,
+        },
+    )
     audit = request.app.state.audit_service
     return await audit.list_events(
         limit=limit,

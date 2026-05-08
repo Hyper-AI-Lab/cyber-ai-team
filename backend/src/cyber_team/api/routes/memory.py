@@ -1,8 +1,10 @@
 """Memory management routes."""
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from typing import Optional
+from cyber_team.api.authorization import require_authorization
+from cyber_team.api.security import Principal, get_current_principal
 
 router = APIRouter()
 
@@ -46,30 +48,69 @@ class MemoryResponse(BaseModel):
 
 
 @router.post("/remember", response_model=MemoryResponse)
-async def remember(data: MemoryWrite, request: Request):
+async def remember(
+    data: MemoryWrite,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "write",
+        "memory_namespace",
+        data.namespace,
+        context={"agent_id": data.agent_id, "memory_type": data.memory_type},
+    )
     svc: "MemoryService" = request.app.state.memory_service
     return await svc.remember(data)
 
 
 @router.post("/recall", response_model=list[MemoryRecallItem])
-async def recall(data: MemoryQuery, request: Request):
+async def recall(
+    data: MemoryQuery,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "memory_namespace",
+        data.namespace,
+        context={"agent_id": data.agent_id, "memory_type": data.memory_type},
+    )
     svc: "MemoryService" = request.app.state.memory_service
     return await svc.recall(data)
 
 
 @router.get("/entity/{entity_id}")
-async def get_entity_profile(entity_id: str, request: Request):
+async def get_entity_profile(
+    entity_id: str,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "entity_profile", entity_id)
     svc: "MemoryService" = request.app.state.memory_service
     return await svc.get_entity_profile(entity_id)
 
 
 @router.get("/agent/{agent_id}")
-async def get_agent_memory(agent_id: str, request: Request):
+async def get_agent_memory(
+    agent_id: str,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "agent_memory", agent_id)
     svc: "MemoryService" = request.app.state.memory_service
     return await svc.get_agent_memory(agent_id)
 
 
 @router.delete("/{memory_id}", status_code=204)
-async def delete_memory(memory_id: str, request: Request):
+async def delete_memory(
+    memory_id: str,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "delete", "memory", memory_id)
     svc: "MemoryService" = request.app.state.memory_service
     await svc.delete_memory(memory_id)

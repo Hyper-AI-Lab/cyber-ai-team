@@ -1,8 +1,10 @@
 """Role catalog and role factory routes."""
 
-from fastapi import APIRouter, Request, HTTPException, Body
+from fastapi import APIRouter, Depends, Request, HTTPException, Body
 from pydantic import BaseModel, Field
 from typing import Optional, Any
+from cyber_team.api.authorization import require_authorization
+from cyber_team.api.security import Principal, get_current_principal
 
 router = APIRouter()
 
@@ -35,13 +37,22 @@ class RoleManifestResponse(BaseModel):
 
 
 @router.get("/catalog", response_model=list[RoleManifestResponse])
-async def list_role_catalog(request: Request):
+async def list_role_catalog(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "role_manifest")
     mgr = request.app.state.agent_manager
     return await mgr.list_role_manifests()
 
 
 @router.get("/catalog/{manifest_id}", response_model=RoleManifestResponse)
-async def get_role_manifest(manifest_id: str, request: Request):
+async def get_role_manifest(
+    manifest_id: str,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "role_manifest", manifest_id)
     mgr = request.app.state.agent_manager
     manifest = await mgr.get_role_manifest(manifest_id)
     if not manifest:
@@ -50,26 +61,57 @@ async def get_role_manifest(manifest_id: str, request: Request):
 
 
 @router.post("/catalog", response_model=RoleManifestResponse, status_code=201)
-async def create_role_manifest(data: RoleManifestCreate, request: Request):
+async def create_role_manifest(
+    data: RoleManifestCreate,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "create",
+        "role_manifest",
+        context={
+            "family": data.family,
+            "name": data.name,
+            "default_tools": data.default_tools,
+        },
+    )
     mgr = request.app.state.agent_manager
     return await mgr.create_role_manifest(data)
 
 
 @router.post("/instantiate/{manifest_id}")
-async def instantiate_role(manifest_id: str, request: Request, overrides: dict = Body(default_factory=dict)):
+async def instantiate_role(
+    manifest_id: str,
+    request: Request,
+    overrides: dict = Body(default_factory=dict),
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "instantiate", "role_manifest", manifest_id)
     mgr = request.app.state.agent_manager
     return await mgr.instantiate_role(manifest_id, overrides)
 
 
 @router.post("/company-builder")
-async def run_company_builder(request: Request, company_profile: dict = Body(...)):
+async def run_company_builder(
+    request: Request,
+    company_profile: dict = Body(...),
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "run", "company_builder")
     mgr = request.app.state.agent_manager
     result = await mgr.run_company_builder(company_profile)
     return result
 
 
 @router.post("/role-gap")
-async def propose_new_role(request: Request, gap_description: str = Body(..., embed=True)):
+async def propose_new_role(
+    request: Request,
+    gap_description: str = Body(..., embed=True),
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "propose", "role_manifest")
     mgr = request.app.state.agent_manager
     result = await mgr.propose_new_role(gap_description)
     return result

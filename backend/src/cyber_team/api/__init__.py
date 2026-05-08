@@ -14,8 +14,9 @@ from cyber_team.comms.gateway import CommsGateway
 from cyber_team.integrations.erpnext import ERPNextClient
 from cyber_team.roles.loader import load_default_roles
 from cyber_team.tools.registry import ToolRegistry
-from cyber_team.api.security import require_owner
+from cyber_team.api.security import get_current_principal
 from cyber_team.audit.service import AuditService
+from cyber_team.authorization.service import AuthorizationService
 
 
 @asynccontextmanager
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
     settings.validate_runtime_config()
     await init_db()
     app.state.audit_service = AuditService()
+    app.state.authorization_service = AuthorizationService(audit_service=app.state.audit_service)
     app.state.memory_service = MemoryService()
     app.state.comms_gateway = CommsGateway()
     app.state.erpnext = ERPNextClient()
@@ -69,7 +71,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
-protected_dependencies = [Depends(require_owner)]
+protected_dependencies = [Depends(get_current_principal)]
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"], dependencies=protected_dependencies)
 app.include_router(workflows.router, prefix="/api/workflows", tags=["workflows"], dependencies=protected_dependencies)
 app.include_router(memory.router, prefix="/api/memory", tags=["memory"], dependencies=protected_dependencies)

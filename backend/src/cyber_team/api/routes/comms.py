@@ -1,8 +1,10 @@
 """Communication routes — telephony, SMS, email, messaging."""
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from typing import Optional
+from cyber_team.api.authorization import require_authorization
+from cyber_team.api.security import Principal, get_current_principal
 
 router = APIRouter()
 
@@ -37,34 +39,90 @@ class MessageRequest(BaseModel):
 
 
 @router.post("/call")
-async def make_call(data: CallRequest, request: Request):
+async def make_call(
+    data: CallRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "send",
+        "communication",
+        context={"channel": "voice", "agent_id": data.agent_id},
+    )
     comms = request.app.state.comms_gateway
     result = await comms.make_call(data)
     return result
 
 
 @router.post("/sms")
-async def send_sms(data: SMSRequest, request: Request):
+async def send_sms(
+    data: SMSRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "send",
+        "communication",
+        context={"channel": "sms", "agent_id": data.agent_id},
+    )
     comms = request.app.state.comms_gateway
     result = await comms.send_sms(data)
     return result
 
 
 @router.post("/email")
-async def send_email(data: EmailRequest, request: Request):
+async def send_email(
+    data: EmailRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "send",
+        "communication",
+        context={"channel": "email", "agent_id": data.agent_id},
+    )
     comms = request.app.state.comms_gateway
     result = await comms.send_email(data)
     return result
 
 
 @router.post("/message")
-async def send_message(data: MessageRequest, request: Request):
+async def send_message(
+    data: MessageRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "send",
+        "communication",
+        context={"channel": data.platform, "agent_id": data.agent_id},
+    )
     comms = request.app.state.comms_gateway
     result = await comms.send_message(data)
     return result
 
 
 @router.get("/logs")
-async def get_comm_logs(request: Request, channel: Optional[str] = None, limit: int = 50):
+async def get_comm_logs(
+    request: Request,
+    channel: Optional[str] = None,
+    limit: int = 50,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "communication_log",
+        context={"channel": channel, "limit": limit},
+    )
     comms = request.app.state.comms_gateway
     return await comms.get_logs(channel, limit)
