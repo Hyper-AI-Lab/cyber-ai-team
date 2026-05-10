@@ -6,9 +6,13 @@ from sqlalchemy import select
 
 from cyber_team.db import async_session
 from cyber_team.db.models import AuditEvent
+from cyber_team.observability.metrics import MetricsService
 
 
 class AuditService:
+    def __init__(self, metrics_service: Optional[MetricsService] = None):
+        self._metrics = metrics_service
+
     async def record(
         self,
         event_type: str,
@@ -35,6 +39,8 @@ class AuditService:
             )
             session.add(event)
             await session.commit()
+            if self._metrics:
+                self._metrics.record_audit_event(event_type, outcome)
             return self._event_to_dict(event)
 
     async def list_events(
@@ -56,7 +62,9 @@ class AuditService:
                 query = query.where(AuditEvent.resource_type == resource_type)
             if resource_id:
                 query = query.where(AuditEvent.resource_id == resource_id)
-            result = await session.execute(query.order_by(AuditEvent.created_at.desc()).limit(limit))
+            result = await session.execute(
+                query.order_by(AuditEvent.created_at.desc()).limit(limit)
+            )
             return [self._event_to_dict(event) for event in result.scalars().all()]
 
     @staticmethod

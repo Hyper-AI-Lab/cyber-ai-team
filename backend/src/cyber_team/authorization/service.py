@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from cyber_team.api.security import Principal
 from cyber_team.audit.service import AuditService
 from cyber_team.config import settings
+from cyber_team.observability.metrics import MetricsService
 
 
 class AuthorizationDecision(BaseModel):
@@ -16,8 +17,13 @@ class AuthorizationDecision(BaseModel):
 
 
 class AuthorizationService:
-    def __init__(self, audit_service: Optional[AuditService] = None):
+    def __init__(
+        self,
+        audit_service: Optional[AuditService] = None,
+        metrics_service: Optional[MetricsService] = None,
+    ):
         self._audit = audit_service
+        self._metrics = metrics_service
 
     async def authorize(
         self,
@@ -50,6 +56,13 @@ class AuthorizationService:
                     "policy": decision.policy,
                     "context": self._safe_context(context),
                 },
+            )
+        if self._metrics:
+            self._metrics.record_authorization_decision(
+                allowed=decision.allowed,
+                resource_type=resource_type,
+                action=action,
+                source=decision.source,
             )
         return decision
 
