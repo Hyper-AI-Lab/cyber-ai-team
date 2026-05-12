@@ -13,7 +13,14 @@ allow if {
 allow if {
     input.role == "agent"
     input.resource_type == "tool"
-    input.action == "execute"
+    input.action == "read"
+    input.resource_id == null
+}
+
+allow if {
+    input.role == "agent"
+    input.resource_type == "tool"
+    input.action in {"read", "execute"}
     input.resource_id in input.allowed_tools
 }
 

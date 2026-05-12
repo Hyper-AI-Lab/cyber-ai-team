@@ -5,7 +5,9 @@ Agents reference tools by name; the registry resolves and executes them.
 """
 
 import logging
+from copy import deepcopy
 from typing import Any, Callable, Optional
+
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -17,6 +19,28 @@ class ToolParameter(BaseModel):
     description: str = ""
     required: bool = True
     default: Any = None
+    enum: Optional[list[Any]] = None
+
+    def to_schema(self) -> dict[str, Any]:
+        schema: dict[str, Any] = {
+            "type": self._json_type(),
+            "description": self.description,
+        }
+        if self.default is not None:
+            schema["default"] = self.default
+        if self.enum:
+            schema["enum"] = self.enum
+        return schema
+
+    def _json_type(self) -> str:
+        aliases = {
+            "dict": "object",
+            "list": "array",
+            "float": "number",
+            "int": "integer",
+            "bool": "boolean",
+        }
+        return aliases.get(self.type, self.type)
 
 
 class ToolDefinition(BaseModel):
@@ -25,6 +49,30 @@ class ToolDefinition(BaseModel):
     parameters: list[ToolParameter] = Field(default_factory=list)
     category: str = "general"
     requires_approval: bool = False
+    risk_level: str = "low"
+    output_schema: dict[str, Any] = Field(default_factory=lambda: {"type": "object"})
+
+    def input_schema(self) -> dict[str, Any]:
+        properties = {parameter.name: parameter.to_schema() for parameter in self.parameters}
+        required = [parameter.name for parameter in self.parameters if parameter.required]
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": False,
+        }
+
+    def contract(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "category": self.category,
+            "requires_approval": self.requires_approval,
+            "risk_level": self.risk_level,
+            "parameters": [parameter.model_dump() for parameter in self.parameters],
+            "input_schema": self.input_schema(),
+            "output_schema": self.output_schema,
+        }
 
 
 class ToolResult(BaseModel):
@@ -56,6 +104,55 @@ class ToolRegistry:
             tools = [t for t in tools if t.category == category]
         return tools
 
+    def list_tool_contracts(
+        self,
+        category: Optional[str] = None,
+        allowed_tools: Optional[list[str]] = None,
+    ) -> list[dict[str, Any]]:
+        allowed = set(allowed_tools) if allowed_tools is not None else None
+        return [
+            tool.contract()
+            for tool in self.list_tools(category)
+            if allowed is None or tool.name in allowed
+        ]
+
+    def validate_params(
+        self,
+        tool_name: str,
+        params: dict | None,
+    ) -> tuple[bool, dict, Optional[str]]:
+        if tool_name not in self._tools:
+            return False, {}, f"Tool not found: {tool_name}"
+        tool = self._tools[tool_name]
+        validated = deepcopy(params or {})
+        parameter_map = {parameter.name: parameter for parameter in tool.parameters}
+        unknown = sorted(set(validated) - set(parameter_map))
+        if unknown:
+            return False, validated, f"Unexpected parameters: {', '.join(unknown)}"
+        for parameter in tool.parameters:
+            if parameter.name not in validated:
+                if parameter.default is not None:
+                    validated[parameter.name] = deepcopy(parameter.default)
+                elif parameter.required:
+                    return False, validated, f"Missing required parameter: {parameter.name}"
+                else:
+                    continue
+            value = validated.get(parameter.name)
+            if value is None:
+                if parameter.required:
+                    return False, validated, f"Missing required parameter: {parameter.name}"
+                continue
+            if parameter.enum and value not in parameter.enum:
+                allowed_values = ", ".join(str(item) for item in parameter.enum)
+                return (
+                    False,
+                    validated,
+                    f"Parameter {parameter.name} must be one of: {allowed_values}",
+                )
+            if not self._value_matches_type(parameter.type, value):
+                return False, validated, f"Parameter {parameter.name} must be {parameter.type}"
+        return True, validated, None
+
     async def execute(self, tool_name: str, params: dict = None) -> ToolResult:
         """Execute a tool by name with given parameters."""
         if params is None:
@@ -82,6 +179,20 @@ class ToolRegistry:
 
         tool = self._tools[tool_name]
         executor = self._executors[tool_name]
+        valid, params, validation_error = self.validate_params(tool_name, params)
+        if not valid:
+            if self._audit:
+                await self._audit.record(
+                    event_type="tool.execute",
+                    actor=actor,
+                    actor_type=actor_type,
+                    resource_type="tool",
+                    resource_id=tool_name,
+                    action="execute",
+                    outcome="failed",
+                    metadata={"error": validation_error},
+                )
+            return ToolResult(success=False, error=validation_error)
 
         if tool.requires_approval and not await self._approval_granted(approval_id, tool_name):
             requested_id = None
@@ -136,7 +247,10 @@ class ToolRegistry:
                     resource_id=tool_name,
                     action="execute",
                     outcome="success",
-                    metadata={"approval_id": approval_id, "requires_approval": tool.requires_approval},
+                    metadata={
+                        "approval_id": approval_id,
+                        "requires_approval": tool.requires_approval,
+                    },
                 )
             return ToolResult(success=True, output=result)
         except Exception as e:
@@ -158,6 +272,29 @@ class ToolRegistry:
         """Get tool definitions available to an agent based on its tool list."""
         return [self._tools[name] for name in tool_names if name in self._tools]
 
+    @staticmethod
+    def _value_matches_type(parameter_type: str, value: Any) -> bool:
+        parameter_type = {
+            "dict": "object",
+            "list": "array",
+            "float": "number",
+            "int": "integer",
+            "bool": "boolean",
+        }.get(parameter_type, parameter_type)
+        if parameter_type == "string":
+            return isinstance(value, str)
+        if parameter_type == "integer":
+            return isinstance(value, int) and not isinstance(value, bool)
+        if parameter_type == "number":
+            return isinstance(value, (int, float)) and not isinstance(value, bool)
+        if parameter_type == "boolean":
+            return isinstance(value, bool)
+        if parameter_type == "object":
+            return isinstance(value, dict)
+        if parameter_type == "array":
+            return isinstance(value, list)
+        return True
+
     def _register_builtin_tools(self):
         """Register built-in tools that ship with Cyber-Team."""
 
@@ -170,10 +307,17 @@ class ToolRegistry:
                     ToolParameter(name="to_address", description="Recipient email"),
                     ToolParameter(name="subject", description="Email subject"),
                     ToolParameter(name="body", description="Email body (HTML)"),
-                    ToolParameter(name="cc", description="CC recipients", required=False, default=[]),
+                    ToolParameter(
+                        name="cc",
+                        type="list",
+                        description="CC recipients",
+                        required=False,
+                        default=[],
+                    ),
                 ],
                 category="communications",
                 requires_approval=True,
+                risk_level="high",
             ),
             self._tool_send_email,
         )
@@ -188,6 +332,7 @@ class ToolRegistry:
                 ],
                 category="communications",
                 requires_approval=True,
+                risk_level="high",
             ),
             self._tool_send_sms,
         )
@@ -202,6 +347,7 @@ class ToolRegistry:
                 ],
                 category="communications",
                 requires_approval=True,
+                risk_level="high",
             ),
             self._tool_make_call,
         )
@@ -211,12 +357,17 @@ class ToolRegistry:
                 name="send_message",
                 description="Send a message via Telegram, WhatsApp, or Slack",
                 parameters=[
-                    ToolParameter(name="platform", description="Platform: telegram, whatsapp, slack"),
+                    ToolParameter(
+                        name="platform",
+                        description="Platform: telegram, whatsapp, slack",
+                        enum=["telegram", "whatsapp", "slack"],
+                    ),
                     ToolParameter(name="recipient", description="Recipient identifier"),
                     ToolParameter(name="message", description="Message text"),
                 ],
                 category="communications",
                 requires_approval=True,
+                risk_level="high",
             ),
             self._tool_send_message,
         )
@@ -228,11 +379,22 @@ class ToolRegistry:
                 description="Store a memory entry for later recall",
                 parameters=[
                     ToolParameter(name="content", description="Content to remember"),
-                    ToolParameter(name="memory_type", description="Type: episodic, semantic, procedural, entity"),
+                    ToolParameter(
+                        name="memory_type",
+                        description="Type: episodic, semantic, procedural, entity",
+                        enum=["episodic", "semantic", "procedural", "entity"],
+                    ),
                     ToolParameter(name="namespace", description="Memory namespace"),
-                    ToolParameter(name="importance", description="Importance 0-1", required=False, default=0.5),
+                    ToolParameter(
+                        name="importance",
+                        type="float",
+                        description="Importance 0-1",
+                        required=False,
+                        default=0.5,
+                    ),
                 ],
                 category="memory",
+                risk_level="medium",
             ),
             self._tool_memory_remember,
         )
@@ -243,8 +405,18 @@ class ToolRegistry:
                 description="Search and retrieve relevant memories",
                 parameters=[
                     ToolParameter(name="query", description="Search query"),
-                    ToolParameter(name="namespace", description="Filter by namespace", required=False),
-                    ToolParameter(name="limit", description="Max results", required=False, default=5),
+                    ToolParameter(
+                        name="namespace",
+                        description="Filter by namespace",
+                        required=False,
+                    ),
+                    ToolParameter(
+                        name="limit",
+                        type="int",
+                        description="Max results",
+                        required=False,
+                        default=5,
+                    ),
                 ],
                 category="memory",
             ),
@@ -257,7 +429,12 @@ class ToolRegistry:
                 name="erpnext_get_invoices",
                 description="Retrieve invoices from ERPNext",
                 parameters=[
-                    ToolParameter(name="filters", description="Filter dict", required=False),
+                    ToolParameter(
+                        name="filters",
+                        type="dict",
+                        description="Filter dict",
+                        required=False,
+                    ),
                 ],
                 category="erpnext",
             ),
@@ -269,10 +446,11 @@ class ToolRegistry:
                 name="erpnext_create_lead",
                 description="Create a new lead in ERPNext CRM",
                 parameters=[
-                    ToolParameter(name="lead_data", description="Lead data dict"),
+                    ToolParameter(name="lead_data", type="dict", description="Lead data dict"),
                 ],
                 category="erpnext",
                 requires_approval=True,
+                risk_level="high",
             ),
             self._tool_erpnext_create_lead,
         )
@@ -282,7 +460,12 @@ class ToolRegistry:
                 name="erpnext_get_projects",
                 description="List projects from ERPNext",
                 parameters=[
-                    ToolParameter(name="filters", description="Filter dict", required=False),
+                    ToolParameter(
+                        name="filters",
+                        type="dict",
+                        description="Filter dict",
+                        required=False,
+                    ),
                 ],
                 category="erpnext",
             ),
@@ -308,10 +491,16 @@ class ToolRegistry:
                 description="Instantiate a role from a manifest",
                 parameters=[
                     ToolParameter(name="manifest_id", description="Role manifest ID"),
-                    ToolParameter(name="overrides", description="Override parameters", required=False),
+                    ToolParameter(
+                        name="overrides",
+                        type="dict",
+                        description="Override parameters",
+                        required=False,
+                    ),
                 ],
                 category="roles",
                 requires_approval=True,
+                risk_level="high",
             ),
             self._tool_role_instantiate,
         )
@@ -359,10 +548,15 @@ class ToolRegistry:
                 description="Approve or reject a pending approval request",
                 parameters=[
                     ToolParameter(name="approval_id", description="Approval request ID"),
-                    ToolParameter(name="decision", description="approved or rejected"),
+                    ToolParameter(
+                        name="decision",
+                        description="approved or rejected",
+                        enum=["approved", "rejected"],
+                    ),
                 ],
                 category="governance",
                 requires_approval=True,
+                risk_level="high",
             ),
             self._tool_approval_resolve,
         )
@@ -373,7 +567,13 @@ class ToolRegistry:
                 description="Send a notification to the human owner",
                 parameters=[
                     ToolParameter(name="message", description="Notification message"),
-                    ToolParameter(name="priority", description="Priority: low, medium, high", required=False, default="medium"),
+                    ToolParameter(
+                        name="priority",
+                        description="Priority: low, medium, high",
+                        required=False,
+                        default="medium",
+                        enum=["low", "medium", "high"],
+                    ),
                 ],
                 category="governance",
             ),
@@ -396,7 +596,13 @@ class ToolRegistry:
                 description="Read agent memories (read-only access)",
                 parameters=[
                     ToolParameter(name="agent_id", description="Agent ID to read memories for"),
-                    ToolParameter(name="limit", description="Max results", required=False, default=20),
+                    ToolParameter(
+                        name="limit",
+                        type="int",
+                        description="Max results",
+                        required=False,
+                        default=20,
+                    ),
                 ],
                 category="memory",
             ),
@@ -430,40 +636,110 @@ class ToolRegistry:
             target_id=tool_name,
         )
 
-    async def _tool_send_email(self, to_address: str, subject: str, body: str, cc: list = None):
+    async def _tool_send_email(
+        self,
+        to_address: str,
+        subject: str,
+        body: str,
+        cc: list = None,
+    ):
         if not self._comms_gateway:
             return "Communications gateway not available"
-        data = type("EmailReq", (), {"to_address": to_address, "subject": subject, "body": body, "agent_id": None, "cc": cc or []})()
+        data = type(
+            "EmailReq",
+            (),
+            {
+                "to_address": to_address,
+                "subject": subject,
+                "body": body,
+                "agent_id": None,
+                "cc": cc or [],
+            },
+        )()
         return await self._comms_gateway.send_email(data)
 
     async def _tool_send_sms(self, to_number: str, message: str):
         if not self._comms_gateway:
             return "Communications gateway not available"
-        data = type("SMSReq", (), {"to_number": to_number, "message": message, "agent_id": None, "from_number": None})()
+        data = type(
+            "SMSReq",
+            (),
+            {
+                "to_number": to_number,
+                "message": message,
+                "agent_id": None,
+                "from_number": None,
+            },
+        )()
         return await self._comms_gateway.send_sms(data)
 
     async def _tool_make_call(self, to_number: str, context: str):
         if not self._comms_gateway:
             return "Communications gateway not available"
-        data = type("CallReq", (), {"to_number": to_number, "context": context, "agent_id": None, "from_number": None})()
+        data = type(
+            "CallReq",
+            (),
+            {
+                "to_number": to_number,
+                "context": context,
+                "agent_id": None,
+                "from_number": None,
+            },
+        )()
         return await self._comms_gateway.make_call(data)
 
     async def _tool_send_message(self, platform: str, recipient: str, message: str):
         if not self._comms_gateway:
             return "Communications gateway not available"
-        data = type("MsgReq", (), {"platform": platform, "recipient": recipient, "message": message, "agent_id": None})()
+        data = type(
+            "MsgReq",
+            (),
+            {
+                "platform": platform,
+                "recipient": recipient,
+                "message": message,
+                "agent_id": None,
+            },
+        )()
         return await self._comms_gateway.send_message(data)
 
-    async def _tool_memory_remember(self, content: str, memory_type: str = "episodic", namespace: str = "general", importance: float = 0.5):
+    async def _tool_memory_remember(
+        self,
+        content: str,
+        memory_type: str = "episodic",
+        namespace: str = "general",
+        importance: float = 0.5,
+    ):
         if not self._memory_service:
             return "Memory service not available"
-        data = type("MemW", (), {"agent_id": None, "memory_type": memory_type, "namespace": namespace, "content": content, "metadata": {}, "importance": importance})()
+        data = type(
+            "MemW",
+            (),
+            {
+                "agent_id": None,
+                "memory_type": memory_type,
+                "namespace": namespace,
+                "content": content,
+                "metadata": {},
+                "importance": importance,
+            },
+        )()
         return await self._memory_service.remember(data)
 
     async def _tool_memory_recall(self, query: str, namespace: str = None, limit: int = 5):
         if not self._memory_service:
             return "Memory service not available"
-        data = type("MemQ", (), {"query": query, "namespace": namespace, "agent_id": None, "memory_type": None, "limit": limit})()
+        data = type(
+            "MemQ",
+            (),
+            {
+                "query": query,
+                "namespace": namespace,
+                "agent_id": None,
+                "memory_type": None,
+                "limit": limit,
+            },
+        )()
         return await self._memory_service.recall(data)
 
     async def _tool_erpnext_get_invoices(self, filters: dict = None):
@@ -486,7 +762,12 @@ class ToolRegistry:
             return "Agent manager not available"
         manifests = await self._agent_manager.list_role_manifests()
         query_lower = query.lower()
-        return [m for m in manifests if query_lower in m["name"].lower() or query_lower in m["description"].lower()]
+        return [
+            m
+            for m in manifests
+            if query_lower in m["name"].lower()
+            or query_lower in m["description"].lower()
+        ]
 
     async def _tool_role_instantiate(self, manifest_id: str, overrides: dict = None):
         if not self._agent_manager:

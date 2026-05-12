@@ -116,8 +116,14 @@ class AuthorizationService:
     ) -> AuthorizationDecision:
         if principal.role == "owner":
             return AuthorizationDecision(allowed=True, reason="owner_role_allows_all")
-        if principal.role == "agent" and resource_type == "tool" and action == "execute":
+        if (
+            principal.role == "agent"
+            and resource_type == "tool"
+            and action in {"read", "execute"}
+        ):
             allowed_tools = context.get("allowed_tools") or []
+            if action == "read" and resource_id is None:
+                return AuthorizationDecision(allowed=True, reason="agent_tool_catalog")
             if resource_id and resource_id in allowed_tools:
                 return AuthorizationDecision(allowed=True, reason="agent_tool_assignment")
         if (
