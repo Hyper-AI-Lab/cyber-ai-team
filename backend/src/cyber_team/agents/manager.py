@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,10 +15,26 @@ from cyber_team.audit.service import AuditService
 
 
 class AgentManager:
-    def __init__(self, memory_service: Optional[MemoryService] = None, audit_service: Optional[AuditService] = None):
+    TOOL_ALIASES = {
+        "call_make": "make_call",
+        "email_send": "send_email",
+        "message_send": "send_message",
+        "memory_write": "memory_remember",
+        "sms_send": "send_sms",
+        "crm_lead_create": "erpnext_create_lead",
+        "erpnext_finance_read": "erpnext_get_invoices",
+    }
+
+    def __init__(
+        self,
+        memory_service: Optional[MemoryService] = None,
+        audit_service: Optional[AuditService] = None,
+        tool_registry: Optional[Any] = None,
+    ):
         self._llm = LLMGateway()
         self._memory = memory_service
         self._audit = audit_service
+        self._tool_registry = tool_registry
         self._agents_cache: dict[str, dict] = {}
 
     async def list_agents(self) -> list[dict]:
@@ -39,16 +55,21 @@ class AgentManager:
 
     async def create_agent(self, data) -> dict:
         agent_id = slug_id(data.role_name)
+        tools, unsupported_tools = self._resolve_tool_names(data.tools)
+        config = dict(data.config)
+        if unsupported_tools:
+            config["requested_tools"] = list(data.tools)
+            config["unsupported_tools"] = unsupported_tools
         async with async_session() as session:
             agent = Agent(
                 id=agent_id,
                 role_family=data.role_family,
                 role_name=data.role_name,
                 instructions=data.instructions,
-                tools=data.tools,
+                tools=tools,
                 memory_namespace=data.memory_namespace or f"{data.role_family}:{agent_id}",
                 approval_policy=data.approval_policy,
-                config=data.config,
+                config=config,
             )
             session.add(agent)
             await session.commit()
@@ -63,6 +84,16 @@ class AgentManager:
             if not agent:
                 return None
             for field, value in data.model_dump(exclude_unset=True).items():
+                if field == "tools":
+                    tool_input = value or []
+                    value, unsupported_tools = self._resolve_tool_names(tool_input)
+                    config = dict(agent.config or {})
+                    if unsupported_tools:
+                        config["requested_tools"] = list(tool_input)
+                        config["unsupported_tools"] = unsupported_tools
+                    else:
+                        config.pop("unsupported_tools", None)
+                    agent.config = config
                 setattr(agent, field, value)
             agent.updated_at = datetime.utcnow()
             await session.commit()
@@ -81,7 +112,11 @@ class AgentManager:
             raise ValueError(f"Agent {agent_id} not found")
 
         # Check approval policy via OPA
-        needs_approval = await self._check_approval_policy(agent_id, "invoke", agent["approval_policy"])
+        needs_approval = await self._check_approval_policy(
+            agent_id,
+            "invoke",
+            agent["approval_policy"],
+        )
         if needs_approval:
             approval_id = await self._request_approval(agent_id, "invoke", task, {})
             return f"Approval requested: {approval_id}"
@@ -90,13 +125,19 @@ class AgentManager:
         memory_context = ""
         if self._memory:
             try:
-                mem_results = await self._memory.recall(type("MemQ", (), {
-                    "query": task,
-                    "agent_id": agent_id,
-                    "namespace": agent["memory_namespace"],
-                    "memory_type": None,
-                    "limit": 5,
-                })())
+                mem_results = await self._memory.recall(
+                    type(
+                        "MemQ",
+                        (),
+                        {
+                            "query": task,
+                            "agent_id": agent_id,
+                            "namespace": agent["memory_namespace"],
+                            "memory_type": None,
+                            "limit": 5,
+                        },
+                    )()
+                )
                 if mem_results:
                     memory_context = "\n\nRelevant memories:\n" + "\n".join(
                         f"- {m['content']}" for m in mem_results[:5]
@@ -115,20 +156,31 @@ class AgentManager:
         # Store invocation in episodic memory
         if self._memory:
             try:
-                await self._memory.remember(type("MemW", (), {
-                    "agent_id": agent_id,
-                    "memory_type": "episodic",
-                    "namespace": agent["memory_namespace"],
-                    "content": f"Task: {task[:200]} | Result: {result[:200]}",
-                    "metadata": {"type": "invocation"},
-                    "importance": 0.6,
-                })())
+                await self._memory.remember(
+                    type(
+                        "MemW",
+                        (),
+                        {
+                            "agent_id": agent_id,
+                            "memory_type": "episodic",
+                            "namespace": agent["memory_namespace"],
+                            "content": f"Task: {task[:200]} | Result: {result[:200]}",
+                            "metadata": {"type": "invocation"},
+                            "importance": 0.6,
+                        },
+                    )()
+                )
             except Exception:
                 pass
 
         return result
 
-    async def chat(self, agent_id: Optional[str], message: str, conversation_id: Optional[str] = None) -> dict:
+    async def chat(
+        self,
+        agent_id: Optional[str],
+        message: str,
+        conversation_id: Optional[str] = None,
+    ) -> dict:
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
 
@@ -140,7 +192,10 @@ class AgentManager:
             agent_name = agent["role_name"]
         else:
             # Route to supervisor/orchestrator
-            system_prompt = "You are the Cyber-Team supervisor. Coordinate between specialist agents and help the owner."
+            system_prompt = (
+                "You are the Cyber-Team supervisor. Coordinate between "
+                "specialist agents and help the owner."
+            )
             agent_id = "supervisor"
             agent_name = "Supervisor"
 
@@ -200,10 +255,11 @@ class AgentManager:
         manifest = await self.get_role_manifest(manifest_id)
         if not manifest:
             raise ValueError(f"Role manifest {manifest_id} not found")
+        existing = await self.get_agent(slug_id(manifest["name"]))
+        if existing:
+            return existing
 
-        instructions = manifest["instructions_template"]
-        if "company_name" in overrides:
-            instructions = instructions.replace("{company_name}", overrides["company_name"])
+        instructions = self._render_template(manifest["instructions_template"], overrides)
 
         create_data = type("AgentCreate", (), {
             "role_family": manifest["family"],
@@ -219,40 +275,84 @@ class AgentManager:
     # ─── Company Builder ──────────────────────────────────────────────
 
     async def run_company_builder(self, company_profile: dict) -> dict:
-        prompt = f"""You are the Company Builder agent for Cyber-Team. Based on the following company profile, 
-determine which roles are needed and propose an organizational blueprint.
-
-Company Profile:
-{company_profile}
-
-Available role families:
-- company_builder: Company Builder & Org Architect
-- supervisor: Supervisor/Orchestrator
-- finance: Finance & Accounting
-- legal: Legal & Policy
-- sales: Sales & CRM
-- marketing: Marketing & PR
-- support: Customer Support & Success
-- product: Product & Project Management
-- engineering: Software Engineering & QA
-- operations: Operations & Procurement
-- hr: People & HR
-- security: Security & Compliance
-- knowledge: Knowledge & Research
-- communications: Communications (email, chat, voice, SMS)
-
-Return a JSON object with:
-- "recommended_roles": list of role family names to instantiate
-- "org_structure": description of how roles relate
-- "approval_policies": which roles need human approval for actions
-"""
-
-        result = await self._llm.invoke(
-            system_prompt="You are a company organization architect. Always respond with valid JSON.",
-            user_message=prompt,
-            agent_id="company_builder",
-        )
-        return {"blueprint": result, "company_profile": company_profile}
+        company_name = company_profile.get("name") or company_profile.get("company_name")
+        company_name = company_name or settings.app_name
+        dry_run = bool(company_profile.get("dry_run"))
+        role_families = self._recommended_role_families(company_profile)
+        manifests = await self.list_role_manifests()
+        manifest_by_family = {manifest["family"]: manifest for manifest in manifests}
+        instantiated = []
+        missing_families = []
+        for family in role_families:
+            manifest = manifest_by_family.get(family)
+            if not manifest:
+                missing_families.append(family)
+                continue
+            agent_id = slug_id(manifest["name"])
+            if dry_run:
+                tools, unsupported_tools = self._resolve_tool_names(manifest["default_tools"])
+                instantiated.append(
+                    {
+                        "agent_id": agent_id,
+                        "role_family": manifest["family"],
+                        "role_name": manifest["name"],
+                        "status": "planned",
+                        "tools": tools,
+                        "unsupported_tools": unsupported_tools,
+                    }
+                )
+                continue
+            existed = await self.get_agent(agent_id) is not None
+            agent = await self.instantiate_role(
+                manifest["id"],
+                {
+                    **company_profile,
+                    "company_name": company_name,
+                    "provisioned_by": "company_builder",
+                },
+            )
+            instantiated.append(
+                {
+                    "agent_id": agent["id"],
+                    "role_family": agent["role_family"],
+                    "role_name": agent["role_name"],
+                    "status": "existing" if existed else "created",
+                    "tools": agent["tools"],
+                    "unsupported_tools": agent["config"].get("unsupported_tools", []),
+                }
+            )
+        blueprint = {
+            "recommended_roles": role_families,
+            "org_structure": self._org_structure(role_families),
+            "approval_policies": {
+                manifest["family"]: manifest["approval_policy"]
+                for manifest in manifests
+                if manifest["family"] in role_families
+            },
+            "missing_role_families": missing_families,
+        }
+        if self._audit:
+            await self._audit.record(
+                event_type="company_builder.run",
+                actor="owner",
+                actor_type="user",
+                resource_type="company_builder",
+                action="run",
+                outcome="success",
+                metadata={
+                    "company_name": company_name,
+                    "recommended_roles": role_families,
+                    "agents": instantiated,
+                    "missing_role_families": missing_families,
+                    "dry_run": dry_run,
+                },
+            )
+        return {
+            "dry_run": dry_run,
+            "blueprint": blueprint,
+            "company_profile": company_profile,
+            "instantiated_agents": instantiated,
+        }
 
     async def propose_new_role(self, gap_description: str) -> dict:
         prompt = f"""A gap has been identified in the current team: {gap_description}
@@ -287,7 +387,13 @@ Propose a new role to fill this gap. Return JSON with:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"{settings.opa_api_url}/v1/data/cyberteam/approval/needs_approval",
-                    json={"input": {"agent_id": agent_id, "action_type": action_type, "policy": policy}},
+                    json={
+                        "input": {
+                            "agent_id": agent_id,
+                            "action_type": action_type,
+                            "policy": policy,
+                        }
+                    },
                     timeout=5.0,
                 )
                 result = resp.json()
@@ -377,7 +483,13 @@ Propose a new role to fill this gap. Return JSON with:
                 for r in requests
             ]
 
-    async def resolve_approval(self, approval_id: str, decision: str, note: str = "", reviewer: str = "owner") -> dict:
+    async def resolve_approval(
+        self,
+        approval_id: str,
+        decision: str,
+        note: str = "",
+        reviewer: str = "owner",
+    ) -> dict:
         if decision not in {"approved", "rejected"}:
             raise ValueError("Decision must be 'approved' or 'rejected'")
         async with async_session() as session:
@@ -402,7 +514,10 @@ Propose a new role to fill this gap. Return JSON with:
                         resource_id=req.id,
                         action=req.action_type,
                         outcome="blocked",
-                        metadata={"target_type": req.target_type, "target_id": req.target_id},
+                        metadata={
+                            "target_type": req.target_type,
+                            "target_id": req.target_id,
+                        },
                     )
                 raise ValueError(f"Approval request {approval_id} has expired")
             req.status = decision
@@ -419,15 +534,29 @@ Propose a new role to fill this gap. Return JSON with:
                 resource_type="approval",
                 resource_id=approval_id,
                 action=decision,
-                metadata={"note": note, "target_type": req.target_type, "target_id": req.target_id, "risk_level": req.risk_level},
+                metadata={
+                    "note": note,
+                    "target_type": req.target_type,
+                    "target_id": req.target_id,
+                    "risk_level": req.risk_level,
+                },
             )
         return response
 
-    async def approval_is_executable(self, approval_id: Optional[str], target_type: Optional[str] = None, target_id: Optional[str] = None) -> bool:
+    async def approval_is_executable(
+        self,
+        approval_id: Optional[str],
+        target_type: Optional[str] = None,
+        target_id: Optional[str] = None,
+    ) -> bool:
         if not approval_id:
             return False
         async with async_session() as session:
-            req = (await session.execute(select(ApprovalRequest).where(ApprovalRequest.id == approval_id))).scalar_one_or_none()
+            req = (
+                await session.execute(
+                    select(ApprovalRequest).where(ApprovalRequest.id == approval_id)
+                )
+            ).scalar_one_or_none()
             if not req or req.status != "approved" or req.consumed_at is not None:
                 return False
             if req.expires_at and req.expires_at < datetime.utcnow():
@@ -441,9 +570,19 @@ Propose a new role to fill this gap. Return JSON with:
                 return False
             return True
 
-    async def consume_approval(self, approval_id: str, consumer: str = "system", target_type: Optional[str] = None, target_id: Optional[str] = None) -> None:
+    async def consume_approval(
+        self,
+        approval_id: str,
+        consumer: str = "system",
+        target_type: Optional[str] = None,
+        target_id: Optional[str] = None,
+    ) -> None:
         async with async_session() as session:
-            req = (await session.execute(select(ApprovalRequest).where(ApprovalRequest.id == approval_id))).scalar_one_or_none()
+            req = (
+                await session.execute(
+                    select(ApprovalRequest).where(ApprovalRequest.id == approval_id)
+                )
+            ).scalar_one_or_none()
             if not req:
                 raise ValueError(f"Approval request {approval_id} not found")
             if req.status != "approved":
@@ -517,6 +656,64 @@ Propose a new role to fill this gap. Return JSON with:
             "success_metrics": m.success_metrics,
             "is_core": m.is_core,
             "config": m.config,
+        }
+
+    def _resolve_tool_names(self, tool_names: list[str]) -> tuple[list[str], list[str]]:
+        if not self._tool_registry:
+            return list(tool_names), []
+        resolved = []
+        unsupported = []
+        for tool_name in tool_names:
+            resolved_name = self.TOOL_ALIASES.get(tool_name, tool_name)
+            if self._tool_registry.get_tool(resolved_name):
+                if resolved_name not in resolved:
+                    resolved.append(resolved_name)
+            elif tool_name not in unsupported:
+                unsupported.append(tool_name)
+        return resolved, unsupported
+
+    @staticmethod
+    def _render_template(template: str, values: dict) -> str:
+        rendered = template
+        for key, value in values.items():
+            rendered = rendered.replace("{" + key + "}", str(value))
+        return rendered
+
+    @staticmethod
+    def _recommended_role_families(company_profile: dict) -> list[str]:
+        text = " ".join(str(value).lower() for value in company_profile.values())
+        families = [
+            "company_builder",
+            "supervisor",
+            "finance",
+            "legal",
+            "sales",
+            "marketing",
+            "support",
+            "product",
+            "operations",
+            "knowledge",
+            "communications",
+        ]
+        if any(term in text for term in {"saas", "software", "tech", "platform", "app"}):
+            families.append("engineering")
+        if any(term in text for term in {"fintech", "finance", "health", "security", "legal"}):
+            families.append("security")
+        if any(term in text for term in {"hiring", "employees", "recruiting", "people"}):
+            families.append("hr")
+        return families
+
+    @staticmethod
+    def _org_structure(role_families: list[str]) -> dict:
+        specialists = [
+            family
+            for family in role_families
+            if family not in {"company_builder", "supervisor"}
+        ]
+        return {
+            "company_builder": "provisions and evolves the AI organization",
+            "supervisor": "coordinates specialist agents and escalates exceptions",
+            "specialists": specialists,
         }
 
 

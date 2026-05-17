@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI):
     app.state.agent_manager = AgentManager(
         memory_service=app.state.memory_service,
         audit_service=app.state.audit_service,
+        tool_registry=app.state.tool_registry,
     )
     app.state.orchestrator = Orchestrator(
         agent_manager=app.state.agent_manager,

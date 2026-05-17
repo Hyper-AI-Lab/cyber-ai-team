@@ -17,6 +17,19 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
   const [showBuilder, setShowBuilder] = useState(false)
   const [companyName, setCompanyName] = useState('')
   const [companyIndustry, setCompanyIndustry] = useState('')
+  const [builderResult, setBuilderResult] = useState<any | null>(null)
+  const inputClassName = [
+    'w-full rounded-lg border border-slate-600 bg-slate-700',
+    'px-3 py-2 text-white',
+  ].join(' ')
+  const textareaClassName = [
+    'h-32 w-full resize-none rounded-lg border border-slate-600',
+    'bg-slate-700 px-3 py-2 text-white',
+  ].join(' ')
+  const resultClassName = [
+    'mt-4 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg',
+    'bg-slate-900 p-4 font-mono text-sm',
+  ].join(' ')
 
   const handleInvoke = async () => {
     if (!invokeAgentId || !task) return
@@ -38,9 +51,8 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
         name: companyName,
         industry: companyIndustry,
       })
-      alert('Company blueprint generated! Check the agents list.')
+      setBuilderResult(res)
       onRefresh()
-      setShowBuilder(false)
     } catch (e: any) {
       alert(`Error: ${e.message}`)
     }
@@ -53,7 +65,10 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
           <h2 className="text-2xl font-bold">Agents</h2>
           <p className="text-slate-400 mt-1">Manage your AI team members</p>
         </div>
-        <button onClick={() => setShowBuilder(!showBuilder)} className="btn-primary flex items-center gap-2">
+        <button
+          onClick={() => setShowBuilder(!showBuilder)}
+          className="btn-primary flex items-center gap-2"
+        >
           <Plus className="w-4 h-4" />
           Company Builder
         </button>
@@ -73,7 +88,7 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
                 type="text"
                 value={companyName}
                 onChange={(e) => setCompanyName(e.target.value)}
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                className={inputClassName}
                 placeholder="Acme Corp"
               />
             </div>
@@ -83,7 +98,7 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
                 type="text"
                 value={companyIndustry}
                 onChange={(e) => setCompanyIndustry(e.target.value)}
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                className={inputClassName}
                 placeholder="SaaS, Fintech, E-commerce..."
               />
             </div>
@@ -91,6 +106,38 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
           <button onClick={handleCompanyBuilder} className="btn-primary">
             Generate Team Blueprint
           </button>
+          {builderResult && (
+            <div className="mt-4 rounded-lg border border-slate-700 bg-slate-900/60 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-white">Provisioning complete</p>
+                  <p className="text-xs text-slate-400">
+                    {builderResult.instantiated_agents?.length ?? 0} agents in blueprint
+                  </p>
+                </div>
+                <span className="badge badge-success">Activated</span>
+              </div>
+              <div className="mt-3 grid gap-2">
+                {builderResult.instantiated_agents?.map((agent: any) => (
+                  <div
+                    key={agent.agent_id}
+                    className="rounded border border-slate-700 bg-slate-800 px-3 py-2"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm text-white">{agent.role_name}</span>
+                      <span className="text-xs text-slate-400">{agent.status}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Tools: {agent.tools?.length ?? 0}
+                      {agent.unsupported_tools?.length
+                        ? ` • Unsupported: ${agent.unsupported_tools.length}`
+                        : ''}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -149,19 +196,26 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
             <textarea
               value={task}
               onChange={(e) => setTask(e.target.value)}
-              className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white h-32 resize-none"
+              className={textareaClassName}
               placeholder="Describe the task for this agent..."
             />
             <div className="flex gap-3 mt-4">
               <button onClick={handleInvoke} disabled={invoking} className="btn-primary">
                 {invoking ? 'Running...' : 'Execute'}
               </button>
-              <button onClick={() => { setInvokeAgentId(null); setTask(''); setResult(null) }} className="btn-secondary">
+              <button
+                onClick={() => {
+                  setInvokeAgentId(null)
+                  setTask('')
+                  setResult(null)
+                }}
+                className="btn-secondary"
+              >
                 Cancel
               </button>
             </div>
             {result && (
-              <div className="mt-4 bg-slate-900 rounded-lg p-4 text-sm font-mono whitespace-pre-wrap max-h-64 overflow-y-auto">
+              <div className={resultClassName}>
                 {result}
               </div>
             )}
