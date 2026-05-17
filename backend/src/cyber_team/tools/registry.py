@@ -799,6 +799,60 @@ class ToolRegistry:
                 risk_level=risk_level,
             )
 
+        insight_tools = {
+            "access_audit": (
+                "security",
+                "Summarize recent access and authorization audit events",
+                self._tool_access_audit,
+                [limit_param, query_param],
+            ),
+            "analytics_read": (
+                "marketing",
+                "Read local communication and execution analytics",
+                self._tool_analytics_read,
+                [limit_param],
+            ),
+            "compliance_check": (
+                "governance",
+                "Evaluate local governance controls and recent compliance signals",
+                self._tool_compliance_check,
+                [topic_param, limit_param],
+            ),
+            "process_audit": (
+                "operations",
+                "Summarize recent operational process audit events",
+                self._tool_process_audit,
+                [limit_param, query_param],
+            ),
+            "progress_report": (
+                "product",
+                "Generate a local progress report from agents and recent events",
+                self._tool_progress_report,
+                [topic_param, limit_param],
+            ),
+            "security_scan": (
+                "security",
+                "Inspect local agent and tool security posture",
+                self._tool_security_scan,
+                [limit_param],
+            ),
+            "sla_monitor": (
+                "operations",
+                "Summarize local communication SLA signals",
+                self._tool_sla_monitor,
+                [limit_param],
+            ),
+        }
+        for name, (category, description, executor, parameters) in insight_tools.items():
+            self._register_manifest_tool(
+                name,
+                description,
+                category,
+                executor,
+                parameters,
+                risk_level="low",
+            )
+
         for name in ["crm_contact_update", "crm_deal_update", "task_update"]:
             self._tools[name].parameters.extend([entity_id_param, updates_param])
 
@@ -1097,6 +1151,173 @@ class ToolRegistry:
             },
         )()
         return await self._memory_service.recall(data)
+
+    async def _tool_access_audit(self, limit: int = 20, query: str = ""):
+        events = await self._list_audit_events(limit=limit, query=query)
+        authz_events = [
+            event for event in events if event["event_type"].startswith("authorization.")
+        ]
+        denied = [event for event in authz_events if event["outcome"] != "success"]
+        return {
+            "status": "complete",
+            "events_reviewed": len(events),
+            "authorization_events": len(authz_events),
+            "denied_events": len(denied),
+            "recent_denials": [self._audit_event_summary(event) for event in denied[:5]],
+            "side_effects": False,
+        }
+
+    async def _tool_analytics_read(self, limit: int = 20):
+        events = await self._list_audit_events(limit=limit)
+        comms = await self._list_comm_logs(limit=limit)
+        outcomes: dict[str, int] = {}
+        event_types: dict[str, int] = {}
+        channels: dict[str, int] = {}
+        for event in events:
+            outcomes[event["outcome"]] = outcomes.get(event["outcome"], 0) + 1
+            event_type = event["event_type"]
+            event_types[event_type] = event_types.get(event_type, 0) + 1
+        for log in comms:
+            channel = log["channel"]
+            channels[channel] = channels.get(channel, 0) + 1
+        return {
+            "status": "complete",
+            "audit_events_reviewed": len(events),
+            "communication_logs_reviewed": len(comms),
+            "event_types": event_types,
+            "outcomes": outcomes,
+            "communication_channels": channels,
+            "side_effects": False,
+        }
+
+    async def _tool_compliance_check(self, topic: str = "general", limit: int = 20):
+        events = await self._list_audit_events(limit=limit)
+        approval_events = [
+            event for event in events if event["event_type"].startswith("approval.")
+        ]
+        denied_events = [
+            event for event in events if event["event_type"] == "authorization.denied"
+        ]
+        tool_events = [
+            event for event in events if event["resource_type"] == "tool"
+        ]
+        return {
+            "status": "complete",
+            "topic": topic,
+            "checks": {
+                "approval_events_present": bool(approval_events),
+                "authorization_denials_reviewed": len(denied_events),
+                "tool_events_reviewed": len(tool_events),
+            },
+            "recommendations": [
+                "Review denied authorization events before expanding privileges.",
+                "Keep high-risk tools approval-gated.",
+            ],
+            "side_effects": False,
+        }
+
+    async def _tool_process_audit(self, limit: int = 20, query: str = ""):
+        events = await self._list_audit_events(limit=limit, query=query)
+        resource_counts: dict[str, int] = {}
+        blocked = []
+        for event in events:
+            resource = event["resource_type"] or "unknown"
+            resource_counts[resource] = resource_counts.get(resource, 0) + 1
+            if event["outcome"] == "blocked":
+                blocked.append(event)
+        return {
+            "status": "complete",
+            "events_reviewed": len(events),
+            "resource_counts": resource_counts,
+            "blocked_events": [
+                self._audit_event_summary(event) for event in blocked[:5]
+            ],
+            "side_effects": False,
+        }
+
+    async def _tool_progress_report(self, topic: str = "general", limit: int = 20):
+        agents = []
+        if self._agent_manager:
+            agents = await self._agent_manager.get_all_agent_status()
+        events = await self._list_audit_events(limit=limit)
+        active_agents = [agent for agent in agents if agent["status"] == "active"]
+        return {
+            "status": "complete",
+            "topic": topic,
+            "active_agents": len(active_agents),
+            "total_agents": len(agents),
+            "recent_events": len(events),
+            "latest_events": [
+                self._audit_event_summary(event) for event in events[:5]
+            ],
+            "side_effects": False,
+        }
+
+    async def _tool_security_scan(self, limit: int = 20):
+        agents = []
+        if self._agent_manager:
+            agents = await self._agent_manager.list_agents()
+        events = await self._list_audit_events(limit=limit)
+        approval_gated_tools = [
+            tool.name for tool in self.list_tools() if tool.requires_approval
+        ]
+        denied_events = [
+            event for event in events if event["event_type"] == "authorization.denied"
+        ]
+        return {
+            "status": "complete",
+            "agents_reviewed": len(agents),
+            "approval_gated_tools": sorted(approval_gated_tools),
+            "authorization_denials": len(denied_events),
+            "side_effects": False,
+        }
+
+    async def _tool_sla_monitor(self, limit: int = 20):
+        comms = await self._list_comm_logs(limit=limit)
+        statuses: dict[str, int] = {}
+        channels: dict[str, int] = {}
+        for log in comms:
+            status = log["status"]
+            channel = log["channel"]
+            statuses[status] = statuses.get(status, 0) + 1
+            channels[channel] = channels.get(channel, 0) + 1
+        return {
+            "status": "complete",
+            "logs_reviewed": len(comms),
+            "communication_statuses": statuses,
+            "communication_channels": channels,
+            "side_effects": False,
+        }
+
+    async def _list_audit_events(self, limit: int = 20, query: str = "") -> list[dict]:
+        if not self._audit:
+            return []
+        events = await self._audit.list_events(limit=limit)
+        if not query:
+            return events
+        query_lower = query.lower()
+        return [
+            event
+            for event in events
+            if query_lower in event["event_type"].lower()
+            or query_lower in str(event.get("resource_type") or "").lower()
+            or query_lower in str(event.get("action") or "").lower()
+        ]
+
+    async def _list_comm_logs(self, limit: int = 20) -> list[dict]:
+        if not self._comms_gateway:
+            return []
+        return await self._comms_gateway.get_logs(limit=limit)
+
+    @staticmethod
+    def _audit_event_summary(event: dict) -> dict:
+        return {
+            "event_type": event.get("event_type"),
+            "resource_type": event.get("resource_type"),
+            "action": event.get("action"),
+            "outcome": event.get("outcome"),
+            "created_at": event.get("created_at"),
+        }
 
     def _make_manifest_stub(self, tool_name: str, description: str) -> Callable:
         async def execute_stub(**params):
