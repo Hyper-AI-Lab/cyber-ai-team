@@ -257,7 +257,7 @@ class AgentManager:
             raise ValueError(f"Role manifest {manifest_id} not found")
         existing = await self.get_agent(slug_id(manifest["name"]))
         if existing:
-            return existing
+            return await self._sync_manifest_tools(existing, manifest["default_tools"])
 
         instructions = self._render_template(manifest["instructions_template"], overrides)
 
@@ -671,6 +671,38 @@ Propose a new role to fill this gap. Return JSON with:
             elif tool_name not in unsupported:
                 unsupported.append(tool_name)
         return resolved, unsupported
+
+    async def _sync_manifest_tools(self, agent: dict, requested_tools: list[str]) -> dict:
+        resolved_tools, unsupported_tools = self._resolve_tool_names(requested_tools)
+        current_tools = list(agent.get("tools") or [])
+        next_tools = list(current_tools)
+        for tool_name in resolved_tools:
+            if tool_name not in next_tools:
+                next_tools.append(tool_name)
+
+        config = dict(agent.get("config") or {})
+        if unsupported_tools:
+            config["requested_tools"] = list(requested_tools)
+            config["unsupported_tools"] = unsupported_tools
+        else:
+            config.pop("requested_tools", None)
+            config.pop("unsupported_tools", None)
+
+        if next_tools == current_tools and config == (agent.get("config") or {}):
+            return agent
+
+        async with async_session() as session:
+            result = await session.execute(
+                select(Agent).where(Agent.id == agent["id"])
+            )
+            db_agent = result.scalar_one_or_none()
+            if not db_agent:
+                return agent
+            db_agent.tools = next_tools
+            db_agent.config = config
+            db_agent.updated_at = datetime.utcnow()
+            await session.commit()
+            return self._agent_to_dict(db_agent)
 
     @staticmethod
     def _render_template(template: str, values: dict) -> str:

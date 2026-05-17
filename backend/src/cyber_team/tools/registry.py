@@ -609,6 +609,221 @@ class ToolRegistry:
             self._tool_memory_read,
         )
 
+        self._register_manifest_parity_tools()
+
+    def _register_manifest_parity_tools(self) -> None:
+        filters_param = ToolParameter(
+            name="filters",
+            type="dict",
+            description="Optional filters",
+            required=False,
+            default={},
+        )
+        limit_param = ToolParameter(
+            name="limit",
+            type="int",
+            description="Maximum results",
+            required=False,
+            default=20,
+        )
+        query_param = ToolParameter(
+            name="query",
+            description="Search or analysis query",
+            required=False,
+            default="",
+        )
+        topic_param = ToolParameter(
+            name="topic",
+            description="Topic or objective",
+            required=False,
+            default="general",
+        )
+        context_param = ToolParameter(
+            name="context",
+            type="dict",
+            description="Additional structured context",
+            required=False,
+            default={},
+        )
+        content_param = ToolParameter(
+            name="content",
+            description="Content or notes",
+            required=False,
+            default="",
+        )
+        entity_id_param = ToolParameter(
+            name="entity_id",
+            description="Target entity identifier",
+            required=False,
+            default="",
+        )
+        updates_param = ToolParameter(
+            name="updates",
+            type="dict",
+            description="Proposed updates",
+            required=False,
+            default={},
+        )
+
+        self._register_manifest_tool(
+            "erpnext_invoice_create",
+            "Create a Sales Invoice in ERPNext",
+            "erpnext",
+            self._tool_erpnext_create_invoice,
+            [ToolParameter(name="invoice_data", type="dict", description="Invoice data")],
+            requires_approval=True,
+            risk_level="high",
+        )
+        self._register_manifest_tool(
+            "erpnext_expense_track",
+            "Read expense claims from ERPNext",
+            "erpnext",
+            self._tool_erpnext_get_expenses,
+            [filters_param],
+        )
+        self._register_manifest_tool(
+            "erpnext_hr_read",
+            "Read employee records from ERPNext",
+            "erpnext",
+            self._tool_erpnext_get_employees,
+            [filters_param],
+        )
+        self._register_manifest_tool(
+            "crm_lead_search",
+            "Search leads in ERPNext CRM",
+            "erpnext",
+            self._tool_erpnext_get_leads,
+            [filters_param],
+        )
+
+        for name, channel in {
+            "email_read": "email",
+            "sms_read": "sms",
+            "call_receive": "voice",
+            "message_read": "message",
+        }.items():
+            self._register_manifest_tool(
+                name,
+                f"Read recent {channel} communication logs",
+                "communications",
+                self._make_comm_log_reader(channel),
+                [limit_param],
+            )
+
+        self._register_manifest_tool(
+            "document_index",
+            "Index a document into semantic memory",
+            "memory",
+            self._tool_document_index,
+            [
+                ToolParameter(
+                    name="title",
+                    description="Document title",
+                    required=False,
+                    default="Untitled document",
+                ),
+                content_param,
+                ToolParameter(
+                    name="namespace",
+                    description="Memory namespace",
+                    required=False,
+                    default="knowledge",
+                ),
+            ],
+            risk_level="medium",
+        )
+        self._register_manifest_tool(
+            "knowledge_query",
+            "Query semantic memory for knowledge",
+            "memory",
+            self._tool_knowledge_query,
+            [
+                query_param,
+                ToolParameter(
+                    name="namespace",
+                    description="Memory namespace",
+                    required=False,
+                    default="knowledge",
+                ),
+                limit_param,
+            ],
+        )
+
+        generic_tools = {
+            "access_audit": ("security", "Produce an access audit summary", "medium"),
+            "analytics_read": ("marketing", "Read marketing analytics summary", "low"),
+            "brand_monitor": ("marketing", "Summarize brand monitoring signals", "low"),
+            "browser_automate": ("engineering", "Plan browser automation steps", "medium"),
+            "candidate_screen": ("hr", "Draft a candidate screening summary", "medium"),
+            "cashflow_forecast": ("finance", "Draft a cash-flow forecast", "medium"),
+            "ci_trigger": ("engineering", "Prepare a CI trigger request", "high"),
+            "compliance_check": ("governance", "Run a compliance checklist", "medium"),
+            "content_create": ("marketing", "Draft marketing content", "medium"),
+            "contract_draft": ("legal", "Draft a contract outline", "medium"),
+            "crm_contact_update": ("erpnext", "Prepare a CRM contact update", "high"),
+            "crm_deal_update": ("erpnext", "Prepare a CRM deal update", "high"),
+            "git_commit_draft": ("engineering", "Draft a git commit summary", "medium"),
+            "git_read": ("engineering", "Summarize repository read request", "low"),
+            "incident_report": ("security", "Draft a security incident report", "medium"),
+            "job_posting_draft": ("hr", "Draft a job posting", "medium"),
+            "nda_draft": ("legal", "Draft an NDA outline", "medium"),
+            "onboarding_checklist": ("hr", "Draft an onboarding checklist", "low"),
+            "policy_draft": ("legal", "Draft a policy outline", "medium"),
+            "process_audit": ("operations", "Produce a process audit summary", "medium"),
+            "procurement_request": ("operations", "Prepare a procurement request", "high"),
+            "progress_report": ("product", "Draft a progress report", "low"),
+            "regulation_search": ("legal", "Summarize regulatory research", "low"),
+            "research_report": ("knowledge", "Draft a research report", "low"),
+            "security_scan": ("security", "Prepare a security scan summary", "medium"),
+            "sla_monitor": ("operations", "Summarize SLA monitoring status", "low"),
+            "social_post_draft": ("marketing", "Draft a social media post", "medium"),
+            "sprint_plan": ("product", "Draft a sprint plan", "low"),
+            "task_create": ("product", "Prepare a task creation request", "medium"),
+            "task_update": ("product", "Prepare a task update request", "medium"),
+            "test_run": ("engineering", "Plan or summarize a test run", "medium"),
+            "ticket_create": ("support", "Prepare a support ticket creation request", "medium"),
+            "ticket_read": ("support", "Summarize a support ticket read request", "low"),
+            "ticket_update": ("support", "Prepare a support ticket update request", "medium"),
+            "vendor_search": ("operations", "Summarize vendor research", "low"),
+            "web_search": ("knowledge", "Summarize a web research request", "low"),
+        }
+        for name, (category, description, risk_level) in generic_tools.items():
+            requires_approval = risk_level == "high"
+            self._register_manifest_tool(
+                name,
+                description,
+                category,
+                self._make_manifest_stub(name, description),
+                [topic_param, query_param, context_param, content_param],
+                requires_approval=requires_approval,
+                risk_level=risk_level,
+            )
+
+        for name in ["crm_contact_update", "crm_deal_update", "task_update"]:
+            self._tools[name].parameters.extend([entity_id_param, updates_param])
+
+    def _register_manifest_tool(
+        self,
+        name: str,
+        description: str,
+        category: str,
+        executor: Callable,
+        parameters: Optional[list[ToolParameter]] = None,
+        requires_approval: bool = False,
+        risk_level: str = "low",
+    ) -> None:
+        self.register(
+            ToolDefinition(
+                name=name,
+                description=description,
+                parameters=parameters or [],
+                category=category,
+                requires_approval=requires_approval,
+                risk_level=risk_level,
+            ),
+            executor,
+        )
+
     # ─── Tool Executor Implementations ───────────────────────────────
     # These are stub implementations that delegate to the actual services.
     # The services are injected at startup via set_services().
@@ -809,3 +1024,88 @@ class ToolRegistry:
         if not self._memory_service:
             return "Memory service not available"
         return await self._memory_service.get_agent_memory(agent_id)
+
+    async def _tool_erpnext_create_invoice(self, invoice_data: dict):
+        if not self._erpnext_client:
+            return "ERPNext client not available"
+        return await self._erpnext_client.create_invoice(invoice_data)
+
+    async def _tool_erpnext_get_expenses(self, filters: dict = None):
+        if not self._erpnext_client:
+            return "ERPNext client not available"
+        return await self._erpnext_client.get_expenses(filters)
+
+    async def _tool_erpnext_get_employees(self, filters: dict = None):
+        if not self._erpnext_client:
+            return "ERPNext client not available"
+        return await self._erpnext_client.get_employees(filters)
+
+    async def _tool_erpnext_get_leads(self, filters: dict = None):
+        if not self._erpnext_client:
+            return "ERPNext client not available"
+        return await self._erpnext_client.get_leads(filters)
+
+    def _make_comm_log_reader(self, channel: str) -> Callable:
+        async def read_logs(limit: int = 20):
+            if not self._comms_gateway:
+                return "Communications gateway not available"
+            return await self._comms_gateway.get_logs(channel=channel, limit=limit)
+
+        return read_logs
+
+    async def _tool_document_index(
+        self,
+        title: str = "Untitled document",
+        content: str = "",
+        namespace: str = "knowledge",
+    ):
+        if not self._memory_service:
+            return "Memory service not available"
+        indexed_content = f"{title}\n\n{content}".strip()
+        data = type(
+            "MemW",
+            (),
+            {
+                "agent_id": None,
+                "memory_type": "semantic",
+                "namespace": namespace,
+                "content": indexed_content,
+                "metadata": {"title": title, "source": "document_index"},
+                "importance": 0.7,
+            },
+        )()
+        memory_id = await self._memory_service.remember(data)
+        return {"memory_id": memory_id, "title": title, "namespace": namespace}
+
+    async def _tool_knowledge_query(
+        self,
+        query: str = "",
+        namespace: str = "knowledge",
+        limit: int = 20,
+    ):
+        if not self._memory_service:
+            return "Memory service not available"
+        data = type(
+            "MemQ",
+            (),
+            {
+                "query": query,
+                "namespace": namespace,
+                "agent_id": None,
+                "memory_type": None,
+                "limit": limit,
+            },
+        )()
+        return await self._memory_service.recall(data)
+
+    def _make_manifest_stub(self, tool_name: str, description: str) -> Callable:
+        async def execute_stub(**params):
+            return {
+                "tool": tool_name,
+                "status": "prepared",
+                "description": description,
+                "inputs": params,
+                "side_effects": False,
+            }
+
+        return execute_stub
