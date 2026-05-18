@@ -645,6 +645,13 @@ class ToolRegistry:
             required=False,
             default={},
         )
+        fields_param = ToolParameter(
+            name="fields",
+            type="list",
+            description="Optional ERPNext fields to return",
+            required=False,
+            default=[],
+        )
         content_param = ToolParameter(
             name="content",
             description="Content or notes",
@@ -851,6 +858,65 @@ class ToolRegistry:
                 executor,
                 parameters,
                 risk_level="low",
+            )
+
+        erpnext_read_tools = {
+            "ticket_read": (
+                "support",
+                "Search ERPNext support ticket records",
+                "Issue",
+                ["name", "subject", "status", "priority", "modified"],
+            ),
+            "vendor_search": (
+                "operations",
+                "Search ERPNext supplier records",
+                "Supplier",
+                ["name", "supplier_name", "supplier_type", "modified"],
+            ),
+            "erpnext_customer_search": (
+                "erpnext",
+                "Search ERPNext customer records",
+                "Customer",
+                ["name", "customer_name", "customer_type", "modified"],
+            ),
+            "erpnext_contact_search": (
+                "erpnext",
+                "Search ERPNext contact records",
+                "Contact",
+                ["name", "first_name", "last_name", "email_id", "modified"],
+            ),
+            "erpnext_project_search": (
+                "erpnext",
+                "Search ERPNext project records",
+                "Project",
+                ["name", "project_name", "status", "modified"],
+            ),
+            "erpnext_task_search": (
+                "erpnext",
+                "Search ERPNext task records",
+                "Task",
+                ["name", "subject", "status", "priority", "modified"],
+            ),
+            "erpnext_supplier_search": (
+                "erpnext",
+                "Search ERPNext supplier records",
+                "Supplier",
+                ["name", "supplier_name", "supplier_type", "modified"],
+            ),
+            "erpnext_issue_search": (
+                "erpnext",
+                "Search ERPNext issue records",
+                "Issue",
+                ["name", "subject", "status", "priority", "modified"],
+            ),
+        }
+        for name, (category, description, doctype, default_fields) in erpnext_read_tools.items():
+            self._register_manifest_tool(
+                name,
+                description,
+                category,
+                self._make_erpnext_search_reader(doctype, default_fields),
+                [query_param, filters_param, fields_param, limit_param],
             )
 
         for name in ["crm_contact_update", "crm_deal_update", "task_update"]:
@@ -1099,6 +1165,41 @@ class ToolRegistry:
             return "ERPNext client not available"
         return await self._erpnext_client.get_leads(filters)
 
+    def _make_erpnext_search_reader(
+        self,
+        doctype: str,
+        default_fields: list[str],
+    ) -> Callable:
+        async def read_records(
+            query: str = "",
+            filters: dict = None,
+            fields: list = None,
+            limit: int = 20,
+        ):
+            if not self._erpnext_client:
+                return self._erpnext_unavailable_result(doctype)
+            search_filters = dict(filters or {})
+            try:
+                records = await self._erpnext_client.search(
+                    doctype,
+                    filters=search_filters,
+                    fields=fields or default_fields,
+                )
+            except Exception as exc:
+                return self._erpnext_unavailable_result(doctype, str(exc))
+            filtered_records = self._filter_erpnext_records(records, query)
+            return {
+                "status": "complete",
+                "doctype": doctype,
+                "filters": search_filters,
+                "query": query,
+                "count": len(filtered_records[:limit]),
+                "records": filtered_records[:limit],
+                "side_effects": False,
+            }
+
+        return read_records
+
     def _make_comm_log_reader(self, channel: str) -> Callable:
         async def read_logs(limit: int = 20):
             if not self._comms_gateway:
@@ -1308,6 +1409,30 @@ class ToolRegistry:
         if not self._comms_gateway:
             return []
         return await self._comms_gateway.get_logs(limit=limit)
+
+    @staticmethod
+    def _erpnext_unavailable_result(doctype: str, error: str = "") -> dict:
+        result = {
+            "status": "unavailable",
+            "doctype": doctype,
+            "count": 0,
+            "records": [],
+            "side_effects": False,
+        }
+        if error:
+            result["error"] = error
+        return result
+
+    @staticmethod
+    def _filter_erpnext_records(records: list[dict], query: str = "") -> list[dict]:
+        if not query:
+            return records
+        query_lower = query.lower()
+        return [
+            record
+            for record in records
+            if query_lower in " ".join(str(value).lower() for value in record.values())
+        ]
 
     @staticmethod
     def _audit_event_summary(event: dict) -> dict:
