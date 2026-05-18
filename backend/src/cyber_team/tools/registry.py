@@ -5,7 +5,9 @@ Agents reference tools by name; the registry resolves and executes them.
 """
 
 import logging
+import subprocess
 from copy import deepcopy
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, Field
@@ -919,6 +921,42 @@ class ToolRegistry:
                 [query_param, filters_param, fields_param, limit_param],
             )
 
+        engineering_tools = {
+            "git_read": (
+                "Summarize local repository state without modifying files",
+                self._tool_git_read,
+                [query_param, limit_param],
+                "low",
+            ),
+            "git_commit_draft": (
+                "Draft a commit summary from current repository metadata",
+                self._tool_git_commit_draft,
+                [topic_param, query_param, limit_param],
+                "medium",
+            ),
+            "test_run": (
+                "Plan a test run from discovered project metadata",
+                self._tool_test_run,
+                [topic_param, query_param],
+                "medium",
+            ),
+            "browser_automate": (
+                "Plan browser automation steps without launching a browser",
+                self._tool_browser_automate,
+                [topic_param, query_param, context_param],
+                "medium",
+            ),
+        }
+        for name, (description, executor, parameters, risk_level) in engineering_tools.items():
+            self._register_manifest_tool(
+                name,
+                description,
+                "engineering",
+                executor,
+                parameters,
+                risk_level=risk_level,
+            )
+
         for name in ["crm_contact_update", "crm_deal_update", "task_update"]:
             self._tools[name].parameters.extend([entity_id_param, updates_param])
 
@@ -1390,6 +1428,94 @@ class ToolRegistry:
             "side_effects": False,
         }
 
+    async def _tool_git_read(self, query: str = "", limit: int = 20):
+        result = self._local_repo_summary(query=query, limit=limit)
+        result["status"] = "complete"
+        result["side_effects"] = False
+        return result
+
+    async def _tool_git_commit_draft(
+        self,
+        topic: str = "general",
+        query: str = "",
+        limit: int = 20,
+    ):
+        summary = self._local_repo_summary(query=query, limit=limit)
+        status_lines = summary.get("status_lines", [])
+        changed_paths = [line[3:] for line in status_lines if len(line) > 3]
+        subject = topic if topic != "general" else "Update project implementation"
+        bullets = [
+            f"Review {len(changed_paths)} changed path(s).",
+            "Run static checks before committing.",
+            "Confirm no secrets or environment files are staged.",
+        ]
+        if changed_paths:
+            bullets.extend(f"Include changes in {path}." for path in changed_paths[:5])
+        return {
+            "status": "complete",
+            "repository_available": summary["repository_available"],
+            "proposed_subject": subject,
+            "query": query,
+            "changed_paths": changed_paths[:limit],
+            "recent_commits": summary.get("recent_commits", []),
+            "draft_body_bullets": bullets,
+            "executed": False,
+            "side_effects": False,
+        }
+
+    async def _tool_test_run(self, topic: str = "general", query: str = ""):
+        metadata = self._project_metadata_summary()
+        commands = []
+        if metadata["backend_available"]:
+            backend_path = metadata["paths"].get("backend_source", "src")
+            commands.append(f"python3 -m compileall -q {backend_path}")
+        if metadata["frontend_available"]:
+            commands.append("npm run lint")
+            commands.append("npm run build")
+        commands.extend(
+            [
+                "git diff --check",
+                "docker compose config --quiet",
+            ]
+        )
+        if query:
+            commands.append(f"Run focused checks related to: {query}")
+        return {
+            "status": "complete",
+            "topic": topic,
+            "query": query,
+            "metadata": metadata,
+            "recommended_commands": commands,
+            "executed": False,
+            "side_effects": False,
+        }
+
+    async def _tool_browser_automate(
+        self,
+        topic: str = "general",
+        query: str = "",
+        context: dict = None,
+    ):
+        context = context or {}
+        target = context.get("url") or context.get("target") or "application under test"
+        steps = [
+            {"step": 1, "action": "open_target", "target": target},
+            {"step": 2, "action": "verify_page_loaded", "target": target},
+            {"step": 3, "action": "perform_user_flow", "objective": query or topic},
+            {"step": 4, "action": "capture_console_and_network_errors"},
+            {"step": 5, "action": "summarize_findings_without_state_changes"},
+        ]
+        return {
+            "status": "complete",
+            "topic": topic,
+            "query": query,
+            "context": context,
+            "automation_plan": steps,
+            "launched_browser": False,
+            "executed": False,
+            "side_effects": False,
+        }
+
     async def _list_audit_events(self, limit: int = 20, query: str = "") -> list[dict]:
         if not self._audit:
             return []
@@ -1409,6 +1535,145 @@ class ToolRegistry:
         if not self._comms_gateway:
             return []
         return await self._comms_gateway.get_logs(limit=limit)
+
+    def _local_repo_summary(self, query: str = "", limit: int = 20) -> dict:
+        limit = self._safe_limit(limit)
+        repo_root = self._find_repo_root()
+        metadata = self._project_metadata_summary()
+        if not repo_root:
+            return {
+                "repository_available": False,
+                "root": str(Path.cwd()),
+                "query": query,
+                "branch": None,
+                "head": None,
+                "status_lines": [],
+                "recent_commits": [],
+                "matching_paths": self._matching_project_paths(query, limit),
+                "metadata": metadata,
+            }
+        branch = self._run_git(repo_root, ["rev-parse", "--abbrev-ref", "HEAD"])
+        head = self._run_git(repo_root, ["rev-parse", "--short", "HEAD"])
+        status_lines = self._run_git(repo_root, ["status", "--short"])
+        recent_commits = self._run_git(
+            repo_root,
+            ["log", f"--max-count={limit}", "--pretty=format:%h %s"],
+        )
+        tracked_paths = self._run_git(repo_root, ["ls-files"])
+        matching_paths = self._filter_path_list(tracked_paths, query, limit)
+        return {
+            "repository_available": True,
+            "root": str(repo_root),
+            "query": query,
+            "branch": branch[0] if branch else None,
+            "head": head[0] if head else None,
+            "status_lines": status_lines[:limit],
+            "recent_commits": recent_commits[:limit],
+            "matching_paths": matching_paths,
+            "metadata": metadata,
+        }
+
+    def _project_metadata_summary(self) -> dict:
+        repo_root = self._find_repo_root()
+        app_root = Path.cwd()
+        backend_root = repo_root / "backend" if repo_root else app_root
+        frontend_root = repo_root / "frontend" if repo_root else app_root / "frontend"
+        backend_source = backend_root / "src"
+        paths = {
+            "app_root": str(app_root),
+            "repo_root": str(repo_root) if repo_root else None,
+            "backend_source": str(backend_source)
+            if backend_source.exists()
+            else "src",
+            "frontend": str(frontend_root) if frontend_root.exists() else None,
+        }
+        files = {
+            "backend_pyproject": self._path_exists(backend_root / "pyproject.toml"),
+            "backend_requirements": self._path_exists(backend_root / "requirements.txt"),
+            "app_requirements": self._path_exists(app_root / "requirements.txt"),
+            "frontend_package": self._path_exists(frontend_root / "package.json"),
+            "docker_compose": self._path_exists(
+                (repo_root or app_root) / "docker-compose.yml"
+            ),
+        }
+        return {
+            "backend_available": bool(
+                files["backend_pyproject"]
+                or files["backend_requirements"]
+                or files["app_requirements"]
+            ),
+            "frontend_available": files["frontend_package"],
+            "docker_compose_available": files["docker_compose"],
+            "paths": paths,
+            "files": files,
+        }
+
+    @staticmethod
+    def _find_repo_root() -> Optional[Path]:
+        candidates = [Path.cwd(), *Path(__file__).resolve().parents]
+        for candidate in candidates:
+            for current in [candidate, *candidate.parents]:
+                if (current / ".git").exists():
+                    return current
+        return None
+
+    @staticmethod
+    def _run_git(repo_root: Path, args: list[str]) -> list[str]:
+        try:
+            completed = subprocess.run(
+                ["git", *args],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        if completed.returncode != 0:
+            return []
+        return [line for line in completed.stdout.splitlines() if line]
+
+    def _matching_project_paths(self, query: str = "", limit: int = 20) -> list[str]:
+        limit = self._safe_limit(limit)
+        roots = [Path.cwd(), Path(__file__).resolve().parents[2]]
+        seen: set[str] = set()
+        paths = []
+        for root in roots:
+            if not root.exists():
+                continue
+            for path in root.rglob("*"):
+                if len(paths) >= limit:
+                    return paths
+                if not path.is_file() or self._skip_path(path):
+                    continue
+                path_text = str(path)
+                if path_text in seen:
+                    continue
+                if query and query.lower() not in path_text.lower():
+                    continue
+                seen.add(path_text)
+                paths.append(path_text)
+        return paths
+
+    @staticmethod
+    def _filter_path_list(paths: list[str], query: str, limit: int) -> list[str]:
+        if query:
+            paths = [path for path in paths if query.lower() in path.lower()]
+        return paths[:limit]
+
+    @staticmethod
+    def _path_exists(path: Path) -> bool:
+        return path.exists()
+
+    @staticmethod
+    def _skip_path(path: Path) -> bool:
+        ignored = {".git", "__pycache__", "node_modules", ".pytest_cache"}
+        return any(part in ignored for part in path.parts)
+
+    @staticmethod
+    def _safe_limit(limit: int) -> int:
+        return max(1, min(limit, 100))
 
     @staticmethod
     def _erpnext_unavailable_result(doctype: str, error: str = "") -> dict:
