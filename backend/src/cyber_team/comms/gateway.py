@@ -1,12 +1,10 @@
 """Communications Gateway — telephony, SMS, email, messaging."""
 
-import uuid
-import logging
 import asyncio
-from datetime import datetime
-from typing import Optional
+import logging
+import uuid
 
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 
 from cyber_team.config import settings
 from cyber_team.db import async_session
@@ -136,26 +134,30 @@ class CommsGateway:
         )
         return {"message_id": msg_id, "platform": platform, "status": "simulated"}
 
-    async def get_logs(self, channel: Optional[str] = None, limit: int = 50) -> list[dict]:
+    async def get_logs(self, channel: str | None = None, limit: int = 50) -> list[dict]:
         async with async_session() as session:
-            query = select(CommunicationLog).order_by(desc(CommunicationLog.created_at)).limit(limit)
+            query = (
+                select(CommunicationLog)
+                .order_by(desc(CommunicationLog.created_at))
+                .limit(limit)
+            )
             if channel:
                 query = query.where(CommunicationLog.channel == channel)
             result = await session.execute(query)
             logs = result.scalars().all()
             return [
                 {
-                    "id": l.id,
-                    "agent_id": l.agent_id,
-                    "channel": l.channel,
-                    "direction": l.direction,
-                    "recipient": l.recipient,
-                    "content": l.content[:200],
-                    "metadata": l.metadata_,
-                    "status": l.status,
-                    "created_at": l.created_at.isoformat(),
+                    "id": log.id,
+                    "agent_id": log.agent_id,
+                    "channel": log.channel,
+                    "direction": log.direction,
+                    "recipient": log.recipient,
+                    "content": log.content[:200],
+                    "metadata": log.metadata_,
+                    "status": log.status,
+                    "created_at": log.created_at.isoformat(),
                 }
-                for l in logs
+                for log in logs
             ]
 
     async def _log_comm(self, agent_id, channel, direction, recipient, content, metadata, status):

@@ -1,14 +1,15 @@
 """FastAPI application entry point."""
 
 import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
-from typing import Callable
 
 from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
-from cyber_team.config import settings
+from cyber_team.agents.manager import AgentManager
+from cyber_team.agents.orchestrator import Orchestrator
 from cyber_team.api.routes import (
     agents,
     audit,
@@ -21,18 +22,17 @@ from cyber_team.api.routes import (
     tools,
     workflows,
 )
-from cyber_team.db import init_db
-from cyber_team.memory.service import MemoryService
-from cyber_team.agents.manager import AgentManager
-from cyber_team.agents.orchestrator import Orchestrator
-from cyber_team.comms.gateway import CommsGateway
-from cyber_team.integrations.erpnext import ERPNextClient
-from cyber_team.roles.loader import load_default_roles
-from cyber_team.tools.registry import ToolRegistry
 from cyber_team.api.security import get_current_principal
 from cyber_team.audit.service import AuditService
 from cyber_team.authorization.service import AuthorizationService
+from cyber_team.comms.gateway import CommsGateway
+from cyber_team.config import settings
+from cyber_team.db import init_db
+from cyber_team.integrations.erpnext import ERPNextClient
+from cyber_team.memory.service import MemoryService
 from cyber_team.observability.metrics import MetricsService
+from cyber_team.roles.loader import load_default_roles
+from cyber_team.tools.registry import ToolRegistry
 
 
 @asynccontextmanager

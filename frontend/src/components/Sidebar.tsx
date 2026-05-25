@@ -12,12 +12,14 @@ import {
   ScrollText,
   Settings,
   Zap,
+  LogOut,
 } from 'lucide-react'
 
 interface SidebarProps {
   activeView: ViewName
   onViewChange: (view: ViewName) => void
   approvalCount: number
+  onLogout: () => void
 }
 
 const navItems: { view: ViewName; label: string; icon: React.ElementType }[] = [
@@ -30,7 +32,12 @@ const navItems: { view: ViewName; label: string; icon: React.ElementType }[] = [
   { view: 'audit', label: 'Audit Trail', icon: ScrollText },
 ]
 
-export default function Sidebar({ activeView, onViewChange, approvalCount }: SidebarProps) {
+export default function Sidebar({
+  activeView,
+  onViewChange,
+  approvalCount,
+  onLogout,
+}: SidebarProps) {
   return (
     <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col">
       <div className="p-6 border-b border-slate-800">
@@ -69,9 +76,19 @@ export default function Sidebar({ activeView, onViewChange, approvalCount }: Sid
       </nav>
 
       <div className="p-4 border-t border-slate-800">
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <Settings className="w-4 h-4" />
-          <span>v0.1.0</span>
+        <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+          <div className="flex items-center gap-2">
+            <Settings className="w-4 h-4" />
+            <span>v0.1.0</span>
+          </div>
+          <button
+            onClick={onLogout}
+            className="rounded-md p-1 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-200"
+            title="Sign out"
+            aria-label="Sign out"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
         </div>
       </div>
     </aside>

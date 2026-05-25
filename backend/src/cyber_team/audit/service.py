@@ -1,6 +1,4 @@
 import uuid
-from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import select
 
@@ -10,7 +8,7 @@ from cyber_team.observability.metrics import MetricsService
 
 
 class AuditService:
-    def __init__(self, metrics_service: Optional[MetricsService] = None):
+    def __init__(self, metrics_service: MetricsService | None = None):
         self._metrics = metrics_service
 
     async def record(
@@ -18,11 +16,11 @@ class AuditService:
         event_type: str,
         actor: str = "system",
         actor_type: str = "system",
-        resource_type: Optional[str] = None,
-        resource_id: Optional[str] = None,
-        action: Optional[str] = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        action: str | None = None,
         outcome: str = "success",
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
     ) -> dict:
         event_id = str(uuid.uuid4())
         async with async_session() as session:
@@ -46,10 +44,10 @@ class AuditService:
     async def list_events(
         self,
         limit: int = 100,
-        event_type: Optional[str] = None,
-        actor: Optional[str] = None,
-        resource_type: Optional[str] = None,
-        resource_id: Optional[str] = None,
+        event_type: str | None = None,
+        actor: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
     ) -> list[dict]:
         limit = max(1, min(limit, 500))
         async with async_session() as session:

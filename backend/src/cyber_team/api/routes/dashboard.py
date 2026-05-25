@@ -1,9 +1,12 @@
 """Dashboard routes — KPIs, agent status, approval queues."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Query, Body
-from typing import Optional
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+
 from cyber_team.api.authorization import require_authorization
+from cyber_team.api.rate_limit import enforce_rate_limit
 from cyber_team.api.security import Principal, get_current_principal
+from cyber_team.config import settings
 
 router = APIRouter()
 
@@ -25,7 +28,7 @@ async def get_agent_status(request: Request, principal: Principal = Depends(get_
 @router.get("/approval-queue")
 async def get_approval_queue(
     request: Request,
-    status: Optional[str] = Query(None),
+    status: str | None = Query(None),
     principal: Principal = Depends(get_current_principal),
 ):
     await require_authorization(
@@ -46,10 +49,48 @@ async def approve_action(
     note: str = Body(default="", embed=True),
     principal: Principal = Depends(get_current_principal),
 ):
+    await enforce_rate_limit(
+        request,
+        "approval.resolve",
+        settings.rate_limit_approval_per_minute,
+        subject=principal.subject,
+    )
     await require_authorization(request, principal, "approve", "approval", approval_id)
     mgr = request.app.state.agent_manager
     try:
-        return await mgr.resolve_approval(approval_id, "approved", note)
+        res = await mgr.resolve_approval(approval_id, "approved", note)
+
+        # Automatically resume associated WorkflowRun if exists
+        from sqlalchemy import select
+
+        from cyber_team.db import async_session
+        from cyber_team.db.models import ApprovalRequest, WorkflowRun
+
+        async with async_session() as session:
+            app_req = (
+                await session.execute(
+                    select(ApprovalRequest).where(ApprovalRequest.id == approval_id)
+                )
+            ).scalar_one_or_none()
+            run_id = None
+            if app_req and app_req.target_type == "workflow_run":
+                run_id = app_req.target_id
+
+            if not run_id:
+                runs_res = await session.execute(
+                    select(WorkflowRun).where(WorkflowRun.status == "waiting_approval")
+                )
+                for r in runs_res.scalars().all():
+                    state_dict = r.state or {}
+                    if approval_id in state_dict.values():
+                        run_id = r.id
+                        break
+
+            if run_id:
+                orchestrator = request.app.state.orchestrator
+                await orchestrator.resume_workflow_run(run_id)
+
+        return res
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -61,10 +102,48 @@ async def reject_action(
     note: str = Body(default="", embed=True),
     principal: Principal = Depends(get_current_principal),
 ):
+    await enforce_rate_limit(
+        request,
+        "approval.resolve",
+        settings.rate_limit_approval_per_minute,
+        subject=principal.subject,
+    )
     await require_authorization(request, principal, "reject", "approval", approval_id)
     mgr = request.app.state.agent_manager
     try:
-        return await mgr.resolve_approval(approval_id, "rejected", note)
+        res = await mgr.resolve_approval(approval_id, "rejected", note)
+
+        # Automatically resume associated WorkflowRun if exists to signal rejection
+        from sqlalchemy import select
+
+        from cyber_team.db import async_session
+        from cyber_team.db.models import ApprovalRequest, WorkflowRun
+
+        async with async_session() as session:
+            app_req = (
+                await session.execute(
+                    select(ApprovalRequest).where(ApprovalRequest.id == approval_id)
+                )
+            ).scalar_one_or_none()
+            run_id = None
+            if app_req and app_req.target_type == "workflow_run":
+                run_id = app_req.target_id
+
+            if not run_id:
+                runs_res = await session.execute(
+                    select(WorkflowRun).where(WorkflowRun.status == "waiting_approval")
+                )
+                for r in runs_res.scalars().all():
+                    state_dict = r.state or {}
+                    if approval_id in state_dict.values():
+                        run_id = r.id
+                        break
+
+            if run_id:
+                orchestrator = request.app.state.orchestrator
+                await orchestrator.resume_workflow_run(run_id)
+
+        return res
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 

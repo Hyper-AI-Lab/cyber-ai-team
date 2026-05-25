@@ -1,13 +1,14 @@
 """Load default role manifests from YAML into the database on first startup."""
 
-import yaml
 import logging
 from pathlib import Path
 
+import yaml
 from sqlalchemy import select
+
+from cyber_team.agents.manager import AgentManager
 from cyber_team.db import async_session
 from cyber_team.db.models import RoleManifest
-from cyber_team.agents.manager import AgentManager
 
 logger = logging.getLogger(__name__)
 

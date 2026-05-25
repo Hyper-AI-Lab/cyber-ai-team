@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 from pydantic import BaseModel
@@ -13,14 +13,14 @@ class AuthorizationDecision(BaseModel):
     allowed: bool
     reason: str
     source: str = "local"
-    policy: Optional[str] = None
+    policy: str | None = None
 
 
 class AuthorizationService:
     def __init__(
         self,
-        audit_service: Optional[AuditService] = None,
-        metrics_service: Optional[MetricsService] = None,
+        audit_service: AuditService | None = None,
+        metrics_service: MetricsService | None = None,
     ):
         self._audit = audit_service
         self._metrics = metrics_service
@@ -30,8 +30,8 @@ class AuthorizationService:
         principal: Principal,
         action: str,
         resource_type: str,
-        resource_id: Optional[str] = None,
-        context: Optional[dict[str, Any]] = None,
+        resource_id: str | None = None,
+        context: dict[str, Any] | None = None,
         audit: bool = True,
     ) -> AuthorizationDecision:
         context = context or {}
@@ -71,9 +71,9 @@ class AuthorizationService:
         principal: Principal,
         action: str,
         resource_type: str,
-        resource_id: Optional[str],
+        resource_id: str | None,
         context: dict[str, Any],
-    ) -> Optional[AuthorizationDecision]:
+    ) -> AuthorizationDecision | None:
         payload = {
             "input": {
                 **context,
@@ -111,7 +111,7 @@ class AuthorizationService:
         principal: Principal,
         action: str,
         resource_type: str,
-        resource_id: Optional[str],
+        resource_id: str | None,
         context: dict[str, Any],
     ) -> AuthorizationDecision:
         if principal.role == "owner":

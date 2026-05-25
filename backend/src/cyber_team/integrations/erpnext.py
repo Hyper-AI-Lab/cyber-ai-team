@@ -2,7 +2,6 @@
 
 import json
 import logging
-from typing import Optional
 
 import httpx
 
@@ -16,7 +15,7 @@ class ERPNextClient:
         self._base_url = settings.erpnext_url
         self._api_key = settings.erpnext_api_key
         self._api_secret = settings.erpnext_api_secret
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if not self._client:

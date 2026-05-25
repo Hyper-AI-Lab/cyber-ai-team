@@ -1,8 +1,9 @@
 """Communication routes — telephony, SMS, email, messaging."""
 
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
-from typing import Optional
+
 from cyber_team.api.authorization import require_authorization
 from cyber_team.api.security import Principal, get_current_principal
 
@@ -11,23 +12,23 @@ router = APIRouter()
 
 class CallRequest(BaseModel):
     to_number: str
-    agent_id: Optional[str] = None
+    agent_id: str | None = None
     context: str = ""
-    from_number: Optional[str] = None
+    from_number: str | None = None
 
 
 class SMSRequest(BaseModel):
     to_number: str
     message: str
-    agent_id: Optional[str] = None
-    from_number: Optional[str] = None
+    agent_id: str | None = None
+    from_number: str | None = None
 
 
 class EmailRequest(BaseModel):
     to_address: str
     subject: str
     body: str
-    agent_id: Optional[str] = None
+    agent_id: str | None = None
     cc: list[str] = Field(default_factory=list)
 
 
@@ -35,7 +36,7 @@ class MessageRequest(BaseModel):
     platform: str  # telegram, whatsapp, slack
     recipient: str
     message: str
-    agent_id: Optional[str] = None
+    agent_id: str | None = None
 
 
 @router.post("/call")
@@ -113,7 +114,7 @@ async def send_message(
 @router.get("/logs")
 async def get_comm_logs(
     request: Request,
-    channel: Optional[str] = None,
+    channel: str | None = None,
     limit: int = 50,
     principal: Principal = Depends(get_current_principal),
 ):

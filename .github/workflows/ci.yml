@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cyberteam
+          POSTGRES_USER: cyberteam
+          POSTGRES_PASSWORD: changeme-postgres-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cyberteam -d cyberteam"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: cyberteam
+      POSTGRES_USER: cyberteam
+      POSTGRES_PASSWORD: changeme-postgres-password
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r requirements.txt pytest pytest-asyncio pytest-cov ruff alembic
+      - name: Lint
+        run: ruff check src tests alembic
+      - name: Compile
+        run: python -m compileall -q src tests alembic
+      - name: Test
+        run: pytest -q
+      - name: Alembic offline SQL
+        run: alembic upgrade head --sql >/tmp/cyberteam-alembic.sql
+      - name: Alembic real PostgreSQL upgrade
+        run: |
+          alembic upgrade head
+          alembic current
+      - name: Dependency audit
+        run: |
+          python -m venv /tmp/cyberteam-audit-venv
+          /tmp/cyberteam-audit-venv/bin/python -m pip install --upgrade pip setuptools wheel
+          /tmp/cyberteam-audit-venv/bin/python -m pip install pip-audit
+          /tmp/cyberteam-audit-venv/bin/pip-audit -r requirements.txt
+      - name: Migration rehearsal
+        run: ../scripts/migration-rehearsal.sh
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit --incremental false
+      - name: Test
+        run: npm test
+      - name: Dependency audit
+        run: npm audit --audit-level=moderate
+      - name: Build
+        run: npm run build
+
+  compose:
+    name: Compose, Secrets, And Diff Hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker Compose config
+        run: docker compose config --quiet
+      - name: Secret scan
+        run: python scripts/secret-scan.py
+      - name: Diff hygiene
+        run: git diff --check
+
+  smoke:
+    name: Docker Compose Smoke
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Compose smoke test
+        env:
+          COMPOSE_SMOKE_CLEANUP: "1"
+        run: ./scripts/compose-smoke.sh

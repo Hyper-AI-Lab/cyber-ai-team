@@ -2,7 +2,8 @@
 
 import json
 import logging
-from typing import Optional
+from collections import OrderedDict
+
 from cyber_team.config import settings
 
 logger = logging.getLogger(__name__)
@@ -11,15 +12,30 @@ logger = logging.getLogger(__name__)
 class LLMGateway:
     def __init__(self):
         self._default_model = "mistral/mistral-large-latest"
-        self._conversation_history: dict[str, list[dict]] = {}
+        self._conversation_history: OrderedDict[str, list[dict]] = OrderedDict()
+        self._max_conversations = max(1, settings.llm_history_max_conversations)
+        self._max_messages = max(2, settings.llm_history_max_messages)
+
+        # Integrate Langfuse tracing if API keys are configured
+        if settings.langfuse_public_key and settings.langfuse_secret_key:
+            import os
+
+            import litellm
+            os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
+            os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key
+            os.environ["LANGFUSE_HOST"] = settings.langfuse_host
+
+            # Register Langfuse callbacks
+            litellm.success_callback = (litellm.success_callback or []) + ["langfuse"]
+            litellm.failure_callback = (litellm.failure_callback or []) + ["langfuse"]
 
     async def invoke(
         self,
         system_prompt: str,
         user_message: str,
         agent_id: str = "default",
-        conversation_id: Optional[str] = None,
-        model: Optional[str] = None,
+        conversation_id: str | None = None,
+        model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
     ) -> str:
@@ -28,7 +44,9 @@ class LLMGateway:
         messages = [{"role": "system", "content": system_prompt}]
 
         if conversation_id and conversation_id in self._conversation_history:
-            messages.extend(self._conversation_history[conversation_id])
+            history = self._conversation_history[conversation_id]
+            self._conversation_history.move_to_end(conversation_id)
+            messages.extend(history[-self._max_messages:])
 
         messages.append({"role": "user", "content": user_message})
 
@@ -36,27 +54,35 @@ class LLMGateway:
             import litellm
             litellm.api_key = settings.mistral_api_key
 
+            # Construct trace metadata for Langfuse
+            metadata = {
+                "generation_name": f"{agent_id}-completion",
+                "tags": [agent_id, settings.environment],
+            }
+            if conversation_id:
+                metadata["trace_id"] = conversation_id
+                metadata["session_id"] = conversation_id
+
             response = await litellm.acompletion(
                 model=model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                metadata=metadata,
             )
 
             result = response.choices[0].message.content
 
             # Store conversation history
             if conversation_id:
-                if conversation_id not in self._conversation_history:
-                    self._conversation_history[conversation_id] = []
-                self._conversation_history[conversation_id].append(
-                    {"role": "user", "content": user_message}
-                )
-                self._conversation_history[conversation_id].append(
-                    {"role": "assistant", "content": result}
-                )
+                self._append_history(conversation_id, user_message, result)
 
-            logger.info(f"LLM invoke: agent={agent_id}, model={model}, tokens={response.usage.total_tokens}")
+            logger.info(
+                "LLM invoke: agent=%s, model=%s, tokens=%s",
+                agent_id,
+                model,
+                response.usage.total_tokens,
+            )
             return result
 
         except Exception as e:
@@ -68,7 +94,7 @@ class LLMGateway:
         system_prompt: str,
         user_message: str,
         agent_id: str = "default",
-        model: Optional[str] = None,
+        model: str | None = None,
     ) -> dict:
         response = await self.invoke(
             system_prompt=system_prompt + "\nAlways respond with valid JSON only.",
@@ -89,3 +115,19 @@ class LLMGateway:
         except json.JSONDecodeError:
             logger.warning(f"Failed to parse JSON response: {response[:200]}")
             return {"raw_response": response}
+
+    def _append_history(self, conversation_id: str, user_message: str, result: str) -> None:
+        if conversation_id not in self._conversation_history:
+            self._conversation_history[conversation_id] = []
+        self._conversation_history.move_to_end(conversation_id)
+        self._conversation_history[conversation_id].extend(
+            [
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": result},
+            ]
+        )
+        self._conversation_history[conversation_id] = self._conversation_history[
+            conversation_id
+        ][-self._max_messages:]
+        while len(self._conversation_history) > self._max_conversations:
+            self._conversation_history.popitem(last=False)

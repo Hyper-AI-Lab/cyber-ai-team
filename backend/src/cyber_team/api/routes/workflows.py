@@ -1,8 +1,9 @@
 """Workflow management routes."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Body
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from typing import Optional
+
 from cyber_team.api.authorization import require_authorization
 from cyber_team.api.security import Principal, get_current_principal
 
@@ -11,7 +12,7 @@ router = APIRouter()
 
 class WorkflowCreate(BaseModel):
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     graph_definition: dict
     trigger_type: str = "manual"
     trigger_config: dict = Field(default_factory=dict)
@@ -20,7 +21,7 @@ class WorkflowCreate(BaseModel):
 class WorkflowResponse(BaseModel):
     id: str
     name: str
-    description: Optional[str]
+    description: str | None
     graph_definition: dict
     status: str
     trigger_type: str
@@ -31,10 +32,10 @@ class WorkflowRunResponse(BaseModel):
     id: str
     workflow_id: str
     status: str
-    current_node: Optional[str]
+    current_node: str | None
     state: dict
-    result: Optional[dict]
-    error: Optional[str]
+    result: dict | None
+    error: str | None
 
 
 @router.get("/", response_model=list[WorkflowResponse])
@@ -84,7 +85,10 @@ async def run_workflow(
 ):
     await require_authorization(request, principal, "run", "workflow", workflow_id)
     orchestrator = request.app.state.orchestrator
-    return await orchestrator.run_workflow(workflow_id, input_data)
+    try:
+        return await orchestrator.run_workflow(workflow_id, input_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{workflow_id}/runs", response_model=list[WorkflowRunResponse])

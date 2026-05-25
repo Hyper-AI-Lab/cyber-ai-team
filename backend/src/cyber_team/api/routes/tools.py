@@ -1,10 +1,13 @@
 """Tool registry routes — list and execute tools."""
 
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
-from typing import Optional
+
 from cyber_team.api.authorization import require_authorization
+from cyber_team.api.rate_limit import enforce_rate_limit
 from cyber_team.api.security import Principal, get_current_principal
+from cyber_team.config import settings
 
 router = APIRouter()
 
@@ -17,7 +20,7 @@ class ToolExecuteRequest(BaseModel):
 @router.get("/")
 async def list_tools(
     request: Request,
-    category: Optional[str] = None,
+    category: str | None = None,
     principal: Principal = Depends(get_current_principal),
 ):
     registry = request.app.state.tool_registry
@@ -38,6 +41,12 @@ async def execute_tool(
     request: Request,
     principal: Principal = Depends(get_current_principal),
 ):
+    await enforce_rate_limit(
+        request,
+        "tool.execute",
+        settings.rate_limit_tool_execute_per_minute,
+        subject=principal.subject,
+    )
     allowed_tools = await _allowed_tools_for_principal(request, principal)
     await require_authorization(
         request,
@@ -60,7 +69,7 @@ async def execute_tool(
 async def _allowed_tools_for_principal(
     request: Request,
     principal: Principal,
-) -> Optional[list[str]]:
+) -> list[str] | None:
     if principal.role != "agent":
         return None
     agent = await request.app.state.agent_manager.get_agent(principal.subject)

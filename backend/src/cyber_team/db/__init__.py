@@ -1,11 +1,22 @@
 """Database setup and session management."""
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+import asyncio
+import logging
+from pathlib import Path
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+
 from cyber_team.config import settings
 
-engine = create_async_engine(settings.postgres_dsn, echo=False, pool_size=20, max_overflow=10)
+logger = logging.getLogger(__name__)
+
+engine = create_async_engine(
+    settings.postgres_dsn,
+    echo=False,
+    pool_size=20,
+    max_overflow=10,
+)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -13,18 +24,28 @@ class Base(DeclarativeBase):
     pass
 
 
+def run_migrations() -> None:
+    from alembic.config import Config
+
+    from alembic import command
+
+    backend_root = Path(__file__).resolve().parents[3]
+    config_path = backend_root / "alembic.ini"
+    script_location = backend_root / "alembic"
+    alembic_cfg = Config(str(config_path))
+    alembic_cfg.set_main_option("script_location", str(script_location))
+    command.upgrade(alembic_cfg, "head")
+
+
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.execute(text("ALTER TABLE approval_requests ALTER COLUMN agent_id DROP NOT NULL"))
-        await conn.execute(text("ALTER TABLE approval_requests DROP CONSTRAINT IF EXISTS approval_requests_agent_id_fkey"))
-        await conn.execute(text("ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS requester VARCHAR(200) DEFAULT 'system' NOT NULL"))
-        await conn.execute(text("ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS requester_type VARCHAR(30) DEFAULT 'system' NOT NULL"))
-        await conn.execute(text("ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS risk_level VARCHAR(20) DEFAULT 'medium' NOT NULL"))
-        await conn.execute(text("ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS target_type VARCHAR(100)"))
-        await conn.execute(text("ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS target_id VARCHAR(200)"))
-        await conn.execute(text("ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS consumed_at TIMESTAMP"))
-        await conn.execute(text("ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP"))
+    if settings.database_migrations_on_startup:
+        await asyncio.to_thread(run_migrations)
+        return
+
+    if settings.database_create_all_fallback:
+        logger.warning("Using create_all database fallback; Alembic migrations are disabled")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
 
 async def get_session() -> AsyncSession:

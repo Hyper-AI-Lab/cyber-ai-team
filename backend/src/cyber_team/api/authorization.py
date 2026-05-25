@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import HTTPException, Request, status
 
@@ -10,8 +10,8 @@ async def require_authorization(
     principal: Principal,
     action: str,
     resource_type: str,
-    resource_id: Optional[str] = None,
-    context: Optional[dict[str, Any]] = None,
+    resource_id: str | None = None,
+    context: dict[str, Any] | None = None,
 ) -> None:
     authorization = request.app.state.authorization_service
     decision = await authorization.authorize(

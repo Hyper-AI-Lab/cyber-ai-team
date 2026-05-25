@@ -6,11 +6,18 @@ Agents reference tools by name; the registry resolves and executes them.
 
 import logging
 import subprocess
+from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
+from sqlalchemy import desc, select
+
+from cyber_team.clock import utc_now
+from cyber_team.config import settings
+from cyber_team.db import async_session
+from cyber_team.db.models import MemoryEntry
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +28,7 @@ class ToolParameter(BaseModel):
     description: str = ""
     required: bool = True
     default: Any = None
-    enum: Optional[list[Any]] = None
+    enum: list[Any] | None = None
 
     def to_schema(self) -> dict[str, Any]:
         schema: dict[str, Any] = {
@@ -80,7 +87,7 @@ class ToolDefinition(BaseModel):
 class ToolResult(BaseModel):
     success: bool
     output: Any = None
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class ToolRegistry:
@@ -97,10 +104,10 @@ class ToolRegistry:
         self._executors[tool.name] = executor
         logger.debug(f"Registered tool: {tool.name}")
 
-    def get_tool(self, name: str) -> Optional[ToolDefinition]:
+    def get_tool(self, name: str) -> ToolDefinition | None:
         return self._tools.get(name)
 
-    def list_tools(self, category: Optional[str] = None) -> list[ToolDefinition]:
+    def list_tools(self, category: str | None = None) -> list[ToolDefinition]:
         tools = list(self._tools.values())
         if category:
             tools = [t for t in tools if t.category == category]
@@ -108,8 +115,8 @@ class ToolRegistry:
 
     def list_tool_contracts(
         self,
-        category: Optional[str] = None,
-        allowed_tools: Optional[list[str]] = None,
+        category: str | None = None,
+        allowed_tools: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         allowed = set(allowed_tools) if allowed_tools is not None else None
         return [
@@ -122,7 +129,7 @@ class ToolRegistry:
         self,
         tool_name: str,
         params: dict | None,
-    ) -> tuple[bool, dict, Optional[str]]:
+    ) -> tuple[bool, dict, str | None]:
         if tool_name not in self._tools:
             return False, {}, f"Tool not found: {tool_name}"
         tool = self._tools[tool_name]
@@ -157,8 +164,7 @@ class ToolRegistry:
 
     async def execute(self, tool_name: str, params: dict = None) -> ToolResult:
         """Execute a tool by name with given parameters."""
-        if params is None:
-            params = {}
+        params = dict(params or {})
 
         agent_id = params.pop("_agent_id", None)
         approval_id = params.pop("_approval_id", None)
@@ -768,7 +774,6 @@ class ToolRegistry:
             "ci_trigger": ("engineering", "Prepare a CI trigger request", "high"),
             "compliance_check": ("governance", "Run a compliance checklist", "medium"),
             "content_create": ("marketing", "Draft marketing content", "medium"),
-            "contract_draft": ("legal", "Draft a contract outline", "medium"),
             "crm_contact_update": ("erpnext", "Prepare a CRM contact update", "high"),
             "crm_deal_update": ("erpnext", "Prepare a CRM deal update", "high"),
             "git_commit_draft": ("engineering", "Draft a git commit summary", "medium"),
@@ -777,7 +782,6 @@ class ToolRegistry:
             "job_posting_draft": ("hr", "Draft a job posting", "medium"),
             "nda_draft": ("legal", "Draft an NDA outline", "medium"),
             "onboarding_checklist": ("hr", "Draft an onboarding checklist", "low"),
-            "policy_draft": ("legal", "Draft a policy outline", "medium"),
             "process_audit": ("operations", "Produce a process audit summary", "medium"),
             "procurement_request": ("operations", "Prepare a procurement request", "high"),
             "progress_report": ("product", "Draft a progress report", "low"),
@@ -807,6 +811,26 @@ class ToolRegistry:
                 requires_approval=requires_approval,
                 risk_level=risk_level,
             )
+
+        # Real legal tool registrations
+        self._register_manifest_tool(
+            "contract_draft",
+            "Draft a professional contract document with custom provisions and details",
+            "legal",
+            self._tool_contract_draft,
+            [topic_param, query_param, context_param, content_param],
+            requires_approval=False,
+            risk_level="medium",
+        )
+        self._register_manifest_tool(
+            "policy_draft",
+            "Draft a comprehensive company policy or guideline document",
+            "legal",
+            self._tool_policy_draft,
+            [topic_param, query_param, context_param, content_param],
+            requires_approval=False,
+            risk_level="medium",
+        )
 
         insight_tools = {
             "access_audit": (
@@ -957,6 +981,42 @@ class ToolRegistry:
                 risk_level=risk_level,
             )
 
+        knowledge_tools = {
+            "web_search": (
+                "Search local knowledge and prepare an external web research plan",
+                "knowledge",
+                self._tool_web_search,
+                [query_param, topic_param, context_param, limit_param],
+            ),
+            "research_report": (
+                "Generate a local evidence-backed research report draft",
+                "knowledge",
+                self._tool_research_report,
+                [topic_param, query_param, context_param, limit_param],
+            ),
+            "regulation_search": (
+                "Search local regulatory knowledge and produce review checklist",
+                "legal",
+                self._tool_regulation_search,
+                [topic_param, query_param, context_param, limit_param],
+            ),
+            "brand_monitor": (
+                "Summarize local brand signals from knowledge and communications",
+                "marketing",
+                self._tool_brand_monitor,
+                [topic_param, query_param, context_param, limit_param],
+            ),
+        }
+        for name, (description, category, executor, parameters) in knowledge_tools.items():
+            self._register_manifest_tool(
+                name,
+                description,
+                category,
+                executor,
+                parameters,
+                risk_level="low",
+            )
+
         for name in ["crm_contact_update", "crm_deal_update", "task_update"]:
             self._tools[name].parameters.extend([entity_id_param, updates_param])
 
@@ -966,7 +1026,7 @@ class ToolRegistry:
         description: str,
         category: str,
         executor: Callable,
-        parameters: Optional[list[ToolParameter]] = None,
+        parameters: list[ToolParameter] | None = None,
         requires_approval: bool = False,
         risk_level: str = "low",
     ) -> None:
@@ -1000,7 +1060,7 @@ class ToolRegistry:
         self._erpnext_client = erpnext
         self._audit = audit
 
-    async def _approval_granted(self, approval_id: Optional[str], tool_name: str) -> bool:
+    async def _approval_granted(self, approval_id: str | None, tool_name: str) -> bool:
         if not approval_id or not self._agent_manager:
             return False
         return await self._agent_manager.approval_is_executable(
@@ -1267,8 +1327,8 @@ class ToolRegistry:
                 "importance": 0.7,
             },
         )()
-        memory_id = await self._memory_service.remember(data)
-        return {"memory_id": memory_id, "title": title, "namespace": namespace}
+        memory_result = await self._memory_service.remember(data)
+        return {"memory_id": memory_result["id"], "title": title, "namespace": namespace}
 
     async def _tool_knowledge_query(
         self,
@@ -1516,6 +1576,124 @@ class ToolRegistry:
             "side_effects": False,
         }
 
+    async def _tool_web_search(
+        self,
+        query: str = "",
+        topic: str = "general",
+        context: dict = None,
+        limit: int = 20,
+    ):
+        context = context or {}
+        search_query = query or topic
+        evidence = await self._search_local_memories(
+            search_query,
+            namespace=context.get("namespace"),
+            limit=limit,
+        )
+        return {
+            "status": "complete",
+            "mode": "local_knowledge_only",
+            "topic": topic,
+            "query": search_query,
+            "local_results": evidence,
+            "external_research_plan": self._research_plan(search_query, context),
+            "external_requests": False,
+            "side_effects": False,
+        }
+
+    async def _tool_research_report(
+        self,
+        topic: str = "general",
+        query: str = "",
+        context: dict = None,
+        limit: int = 20,
+    ):
+        context = context or {}
+        search_query = query or topic
+        evidence = await self._search_local_memories(
+            search_query,
+            namespace=context.get("namespace"),
+            limit=limit,
+        )
+        findings = self._evidence_findings(evidence)
+        return {
+            "status": "complete",
+            "title": topic,
+            "query": search_query,
+            "summary": self._report_summary(topic, evidence),
+            "key_findings": findings,
+            "evidence_count": len(evidence),
+            "evidence": evidence,
+            "open_questions": self._open_research_questions(search_query, findings),
+            "external_requests": False,
+            "side_effects": False,
+        }
+
+    async def _tool_regulation_search(
+        self,
+        topic: str = "general",
+        query: str = "",
+        context: dict = None,
+        limit: int = 20,
+    ):
+        context = context or {}
+        jurisdiction = context.get("jurisdiction") or "unspecified"
+        search_query = " ".join(
+            part
+            for part in [topic, query, jurisdiction, "regulation compliance policy"]
+            if part
+        )
+        evidence = await self._search_local_memories(
+            search_query,
+            namespace=context.get("namespace"),
+            limit=limit,
+        )
+        return {
+            "status": "complete",
+            "topic": topic,
+            "query": query,
+            "jurisdiction": jurisdiction,
+            "local_results": evidence,
+            "review_checklist": [
+                "Confirm applicable jurisdiction and regulatory scope.",
+                "Identify required disclosures, consent, and retention rules.",
+                "Check approval gates before legal or policy commitments.",
+                "Escalate material legal ambiguity to the human owner.",
+            ],
+            "external_requests": False,
+            "side_effects": False,
+        }
+
+    async def _tool_brand_monitor(
+        self,
+        topic: str = "general",
+        query: str = "",
+        context: dict = None,
+        limit: int = 20,
+    ):
+        context = context or {}
+        search_query = query or topic
+        evidence = await self._search_local_memories(
+            search_query,
+            namespace=context.get("namespace"),
+            limit=limit,
+        )
+        comm_signals = await self._communication_signals(search_query, limit)
+        return {
+            "status": "complete",
+            "topic": topic,
+            "query": search_query,
+            "knowledge_signals": evidence,
+            "communication_signals": comm_signals,
+            "recommendations": [
+                "Review recent customer-facing communication for consistency.",
+                "Escalate negative or ambiguous sentiment to marketing/owner review.",
+                "Use external monitoring only after explicit approval/configuration.",
+            ],
+            "external_requests": False,
+            "side_effects": False,
+        }
+
     async def _list_audit_events(self, limit: int = 20, query: str = "") -> list[dict]:
         if not self._audit:
             return []
@@ -1535,6 +1713,109 @@ class ToolRegistry:
         if not self._comms_gateway:
             return []
         return await self._comms_gateway.get_logs(limit=limit)
+
+    async def _search_local_memories(
+        self,
+        query: str,
+        namespace: str | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        limit = self._safe_limit(limit)
+        query_text = (query or "").strip()
+        async with async_session() as session:
+            statement = select(MemoryEntry)
+            if namespace:
+                statement = statement.where(MemoryEntry.namespace == namespace)
+            if query_text:
+                statement = statement.where(MemoryEntry.content.ilike(f"%{query_text}%"))
+            statement = statement.order_by(desc(MemoryEntry.importance)).limit(limit)
+            rows = (await session.execute(statement)).scalars().all()
+        return [self._memory_summary(row) for row in rows]
+
+    async def _communication_signals(self, query: str, limit: int = 20) -> dict:
+        logs = await self._list_comm_logs(limit=limit)
+        query_lower = (query or "").lower()
+        matching_logs = []
+        channels: dict[str, int] = {}
+        statuses: dict[str, int] = {}
+        for log in logs:
+            channels[log["channel"]] = channels.get(log["channel"], 0) + 1
+            statuses[log["status"]] = statuses.get(log["status"], 0) + 1
+            content = " ".join(
+                str(log.get(key) or "")
+                for key in ["recipient", "content", "status", "channel"]
+            ).lower()
+            if not query_lower or query_lower in content:
+                matching_logs.append(
+                    {
+                        "channel": log.get("channel"),
+                        "direction": log.get("direction"),
+                        "status": log.get("status"),
+                        "created_at": log.get("created_at"),
+                    }
+                )
+        return {
+            "logs_reviewed": len(logs),
+            "matches": matching_logs[: self._safe_limit(limit)],
+            "channels": channels,
+            "statuses": statuses,
+        }
+
+    @staticmethod
+    def _memory_summary(entry: MemoryEntry) -> dict:
+        return {
+            "id": entry.id,
+            "namespace": entry.namespace,
+            "memory_type": entry.memory_type,
+            "content": entry.content[:500],
+            "importance": entry.importance,
+            "created_at": entry.created_at.isoformat(),
+        }
+
+    @staticmethod
+    def _research_plan(query: str, context: dict) -> list[dict]:
+        source_types = context.get("source_types") or [
+            "official documentation",
+            "regulatory or standards sources",
+            "vendor/product documentation",
+            "recent reputable analysis",
+        ]
+        return [
+            {
+                "step": index + 1,
+                "objective": f"Search {source_type} for {query}",
+                "requires_external_access": True,
+            }
+            for index, source_type in enumerate(source_types)
+        ]
+
+    @staticmethod
+    def _evidence_findings(evidence: list[dict]) -> list[str]:
+        if not evidence:
+            return ["No matching local evidence was found."]
+        findings = []
+        for item in evidence[:5]:
+            content = item.get("content", "").replace("\n", " ").strip()
+            findings.append(content[:180] or f"Memory {item.get('id')} matched.")
+        return findings
+
+    @staticmethod
+    def _report_summary(topic: str, evidence: list[dict]) -> str:
+        if not evidence:
+            return f"No local evidence is currently available for {topic}."
+        return f"Found {len(evidence)} local evidence item(s) related to {topic}."
+
+    @staticmethod
+    def _open_research_questions(query: str, findings: list[str]) -> list[str]:
+        if findings and findings[0] != "No matching local evidence was found.":
+            return [
+                f"What external sources can corroborate the local findings for {query}?",
+                "Are there conflicting or more recent authoritative sources?",
+            ]
+        return [
+            f"Which authoritative sources should be consulted for {query}?",
+            "What internal documents or memories should be indexed next?",
+        ]
 
     def _local_repo_summary(self, query: str = "", limit: int = 20) -> dict:
         limit = self._safe_limit(limit)
@@ -1609,7 +1890,7 @@ class ToolRegistry:
         }
 
     @staticmethod
-    def _find_repo_root() -> Optional[Path]:
+    def _find_repo_root() -> Path | None:
         candidates = [Path.cwd(), *Path(__file__).resolve().parents]
         for candidate in candidates:
             for current in [candidate, *candidate.parents]:
@@ -1720,3 +2001,154 @@ class ToolRegistry:
             }
 
         return execute_stub
+
+    async def _tool_contract_draft(
+        self,
+        topic: str = "",
+        query: str = "",
+        context: dict = None,
+        content: str = "",
+    ) -> dict:
+        import os
+        import uuid
+        from pathlib import Path
+
+        if ".." in topic or "/" in topic or "\\" in topic:
+            raise ValueError("Path traversal detected")
+
+        base_dir = Path(settings.data_dir).resolve()
+        sub_dir = (base_dir / "contracts").resolve()
+        sub_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_topic = "".join(c for c in topic if c.isalnum() or c in (" ", "-", "_")).strip()
+        safe_topic = safe_topic.replace(" ", "_")[:30] or "contract"
+        generated_at = utc_now()
+        timestamp = generated_at.strftime("%Y%m%d_%H%M%S")
+        filename = f"{safe_topic}_{timestamp}_{uuid.uuid4().hex[:6]}.md"
+
+        target_path = (sub_dir / filename).resolve()
+
+        # Enforce trail boundary prefix checks for sandbox boundary
+        if (
+            not str(target_path).startswith(str(sub_dir) + os.sep)
+            and target_path.parent != sub_dir
+        ):
+            raise ValueError("Path traversal detected")
+
+        # Handle structured dictionary context securely
+        if isinstance(context, dict):
+            context_str = (
+                context.get("description")
+                or context.get("notes")
+                or context.get("details")
+                or str(context)
+            )
+        else:
+            context_str = str(context or "")
+
+        doc_content = (
+            f"""# CONTRACT DRAFT: {topic or 'General Service Agreement'}
+Generated on: {generated_at.isoformat()}
+
+## 1. Context & Purpose
+{context_str or 'No additional context provided.'}
+
+## 2. Core Clauses & Scope of Work
+{content or query or 'Default startup service outline.'}
+
+## 3. Standard Boilerplate & General Provisions
+"""
+            "- **Governing Law**: This contract shall be governed and interpreted under the "
+            "laws of the jurisdiction of the Company's primary registration.\n"
+            "- **Severability**: If any provision of this contract is found invalid or "
+            "unenforceable, the remaining provisions will continue to be in full force and "
+            "effect.\n"
+            """
+- **Entire Agreement**: This document constitutes the entire agreement between the parties.
+"""
+        )
+
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(doc_content)
+
+        return {
+            "status": "completed",
+            "file_path": str(target_path),
+            "file_size": target_path.stat().st_size,
+            "topic": topic,
+            "preview": doc_content[:300] + "...",
+            "side_effects": True,
+        }
+
+    async def _tool_policy_draft(
+        self,
+        topic: str = "",
+        query: str = "",
+        context: dict = None,
+        content: str = "",
+    ) -> dict:
+        import os
+        import uuid
+        from pathlib import Path
+
+        if ".." in topic or "/" in topic or "\\" in topic:
+            raise ValueError("Path traversal detected")
+
+        base_dir = Path(settings.data_dir).resolve()
+        sub_dir = (base_dir / "policies").resolve()
+        sub_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_topic = "".join(c for c in topic if c.isalnum() or c in (" ", "-", "_")).strip()
+        safe_topic = safe_topic.replace(" ", "_")[:30] or "policy"
+        generated_at = utc_now()
+        timestamp = generated_at.strftime("%Y%m%d_%H%M%S")
+        filename = f"{safe_topic}_{timestamp}_{uuid.uuid4().hex[:6]}.md"
+
+        target_path = (sub_dir / filename).resolve()
+
+        # Enforce trail boundary prefix checks for sandbox boundary
+        if (
+            not str(target_path).startswith(str(sub_dir) + os.sep)
+            and target_path.parent != sub_dir
+        ):
+            raise ValueError("Path traversal detected")
+
+        # Handle structured dictionary context securely
+        if isinstance(context, dict):
+            context_str = (
+                context.get("description")
+                or context.get("notes")
+                or context.get("details")
+                or str(context)
+            )
+        else:
+            context_str = str(context or "")
+
+        doc_content = (
+            f"""# COMPANY POLICY: {topic or 'Acceptable Use Policy'}
+Generated on: {generated_at.isoformat()}
+
+## 1. Objective & Scope
+{context_str or 'No additional context provided.'}
+
+## 2. Guidelines & Compliance Criteria
+{content or query or 'Default startup policy guidelines.'}
+
+## 3. Enforcement & Revisions
+- **Violations**: Failure to adhere to this policy may result in disciplinary action.
+"""
+            "- **Review Period**: This policy is subject to annual review and updates as "
+            "operational requirements dictate.\n"
+        )
+
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(doc_content)
+
+        return {
+            "status": "completed",
+            "file_path": str(target_path),
+            "file_size": target_path.stat().st_size,
+            "topic": topic,
+            "preview": doc_content[:300] + "...",
+            "side_effects": True,
+        }

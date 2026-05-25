@@ -1,8 +1,10 @@
 """Role catalog and role factory routes."""
 
-from fastapi import APIRouter, Depends, Request, HTTPException, Body
+from typing import Any
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from typing import Optional, Any
+
 from cyber_team.api.authorization import require_authorization
 from cyber_team.api.security import Principal, get_current_principal
 
@@ -15,7 +17,7 @@ class RoleManifestCreate(BaseModel):
     description: str
     instructions_template: str
     default_tools: list[str] = Field(default_factory=list)
-    memory_namespace: Optional[str] = None
+    memory_namespace: str | None = None
     approval_policy: str = "auto"
     success_metrics: Any = Field(default_factory=list)
     is_core: bool = True
@@ -79,6 +81,41 @@ async def create_role_manifest(
     )
     mgr = request.app.state.agent_manager
     return await mgr.create_role_manifest(data)
+
+
+@router.post("/provision", response_model=RoleManifestResponse, status_code=201)
+async def provision_role(
+    data: RoleManifestCreate,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "create",
+        "role_manifest",
+        context={
+            "family": data.family,
+            "name": data.name,
+            "default_tools": data.default_tools,
+        },
+    )
+    from cyber_team.agents.manager import slug_id
+    mgr = request.app.state.agent_manager
+
+    # Validate duplicate manifest name
+    manifest_id = slug_id(data.name)
+    existing = await mgr.get_role_manifest(manifest_id)
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Role manifest '{data.name}' already exists.")
+
+    # 1. Create role manifest record in PostgreSQL
+    manifest = await mgr.create_role_manifest(data)
+
+    # 2. Instantiate agent instantly
+    await mgr.instantiate_role(manifest["id"])
+
+    return manifest
 
 
 @router.post("/instantiate/{manifest_id}")

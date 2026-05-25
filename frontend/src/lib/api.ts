@@ -1,5 +1,8 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL
   || `http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:8000`;
+const WS_BASE = process.env.NEXT_PUBLIC_WS_URL
+  || API_BASE.replace(/^http/, 'ws');
+const CHAT_WS_BASE = WS_BASE.replace(/\/ws\/?$/, '').replace(/\/$/, '');
 
 class ApiClient {
   private baseUrl: string;
@@ -14,7 +17,11 @@ class ApiClient {
     }
   }
 
-  private async request(path: string, options: RequestInit = {}): Promise<any> {
+  private async request(
+    path: string,
+    options: RequestInit = {},
+    retryOnUnauthorized: boolean = true
+  ): Promise<any> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -27,9 +34,29 @@ class ApiClient {
       ...options,
       headers,
     });
+    if (
+      res.status === 401
+      && retryOnUnauthorized
+      && this.refreshToken
+      && path !== '/api/auth/login'
+    ) {
+      try {
+        await this.refreshSession();
+        return this.request(path, options, false);
+      } catch {
+        this.clearTokens();
+      }
+    }
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`API error ${res.status}: ${text}`);
+    }
+    if (res.status === 204) {
+      return null;
+    }
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      return res.text();
     }
     return res.json();
   }
@@ -70,6 +97,18 @@ class ApiClient {
     return Boolean(this.accessToken);
   }
 
+  getAccessToken() {
+    return this.accessToken;
+  }
+
+  async getChatWebSocketUrl() {
+    if (!this.accessToken) {
+      return `${CHAT_WS_BASE}/api/chat/ws`;
+    }
+    const response = await this.request('/api/auth/ws-ticket', { method: 'POST' });
+    return `${CHAT_WS_BASE}/api/chat/ws?ticket=${encodeURIComponent(response.ticket)}`;
+  }
+
   async refreshSession() {
     if (!this.refreshToken) {
       throw new Error('No refresh token available');
@@ -77,7 +116,7 @@ class ApiClient {
     const response = await this.request('/api/auth/refresh', {
       method: 'POST',
       body: JSON.stringify({ refresh_token: this.refreshToken }),
-    });
+    }, false);
     this.setTokens(response.access_token, response.refresh_token);
     return response;
   }
@@ -149,6 +188,13 @@ class ApiClient {
     });
   }
 
+  async provisionRole(data: Record<string, any>) {
+    return this.request('/api/roles/provision', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   // Memory
   async recallMemory(query: string, namespace?: string, limit: number = 10) {
     return this.request('/api/memory/recall', {
@@ -174,6 +220,20 @@ class ApiClient {
     return this.request(`/api/workflows/${id}/run`, {
       method: 'POST',
       body: JSON.stringify(inputData),
+    });
+  }
+
+  async listWorkflowRuns(workflowId: string) {
+    return this.request(`/api/workflows/${workflowId}/runs`);
+  }
+
+  async getWorkflowRun(runId: string) {
+    return this.request(`/api/workflows/runs/${runId}`);
+  }
+
+  async resumeWorkflowRun(runId: string) {
+    return this.request(`/api/workflows/runs/${runId}/resume`, {
+      method: 'POST',
     });
   }
 

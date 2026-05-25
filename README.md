@@ -155,6 +155,43 @@ npm install
 npm run dev
 ```
 
+### Quality Gate
+
+Run the local production-readiness gate before opening a pull request:
+
+```bash
+./scripts/quality-gate.sh
+```
+
+If dependencies are already installed, reuse them for a faster check:
+
+```bash
+BACKEND_VENV=/tmp/cyberteam-venv \
+SKIP_BACKEND_INSTALL=1 \
+SKIP_FRONTEND_INSTALL=1 \
+./scripts/quality-gate.sh
+```
+
+The gate runs backend Ruff lint, backend tests, Python compile checks, Alembic SQL
+generation, backend and frontend dependency audits, frontend TypeScript checks,
+frontend tests, frontend production build, Docker Compose configuration validation,
+high-confidence secret scanning, and `git diff --check`.
+
+Heavyweight checks can be added when needed:
+
+```bash
+RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 ./scripts/quality-gate.sh
+```
+
+Operational runbooks live in [`docs/runbooks`](docs/runbooks):
+
+- [`compose-smoke-test.md`](docs/runbooks/compose-smoke-test.md)
+- [`migration-rehearsal.md`](docs/runbooks/migration-rehearsal.md)
+- [`backup-restore.md`](docs/runbooks/backup-restore.md)
+
+The production readiness roadmap is tracked in
+[`docs/production-readiness-plan.md`](docs/production-readiness-plan.md).
+
 ## Stopping
 
 ```bash

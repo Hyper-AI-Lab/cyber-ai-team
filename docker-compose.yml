@@ -59,6 +59,8 @@ services:
         condition: service_healthy
       temporal:
         condition: service_started
+    volumes:
+      - core-data:/app/data
     restart: unless-stopped
     logging:
       driver: json-file
@@ -76,7 +78,7 @@ services:
       - "3001:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://${HOST_IP:-localhost}:8000
-      - NEXT_PUBLIC_WS_URL=ws://${HOST_IP:-localhost}:8000/ws
+      - NEXT_PUBLIC_WS_URL=ws://${HOST_IP:-localhost}:8000
     depends_on:
       core:
         condition: service_healthy
@@ -238,7 +240,7 @@ services:
 
   # ─── Langfuse (Traces & Observability) ────────────────────────────
   langfuse:
-    image: langfuse/langfuse:latest
+    image: langfuse/langfuse:2
     container_name: cyberteam-langfuse
     profiles: ["observability"]
     environment:

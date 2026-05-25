@@ -1,18 +1,25 @@
 """LangGraph-based Orchestrator — workflow engine with stateful graph execution."""
 
 import uuid
-from datetime import datetime
-from typing import Optional
-from sqlalchemy import select
 
+from sqlalchemy import select
+from temporalio.client import Client
+
+from cyber_team.agents.manager import AgentManager
+from cyber_team.clock import utc_now
+from cyber_team.config import settings
 from cyber_team.db import async_session
 from cyber_team.db.models import ApprovalRequest, Workflow, WorkflowRun
-from cyber_team.agents.manager import AgentManager
 from cyber_team.memory.service import MemoryService
 
 
 class Orchestrator:
-    def __init__(self, agent_manager: AgentManager, memory_service: MemoryService, tool_registry=None):
+    def __init__(
+        self,
+        agent_manager: AgentManager,
+        memory_service: MemoryService,
+        tool_registry=None,
+    ):
         self.agent_manager = agent_manager
         self.memory_service = memory_service
         self._tool_registry = tool_registry
@@ -24,7 +31,7 @@ class Orchestrator:
             workflows = result.scalars().all()
             return [self._workflow_to_dict(w) for w in workflows]
 
-    async def get_workflow(self, workflow_id: str) -> Optional[dict]:
+    async def get_workflow(self, workflow_id: str) -> dict | None:
         async with async_session() as session:
             result = await session.execute(
                 select(Workflow).where(Workflow.id == workflow_id)
@@ -58,7 +65,7 @@ class Orchestrator:
             )
         return workflow
 
-    async def run_workflow(self, workflow_id: str, input_data: Optional[dict] = None) -> dict:
+    async def run_workflow(self, workflow_id: str, input_data: dict | None = None) -> dict:
         if input_data is None:
             input_data = {}
         wf = await self.get_workflow(workflow_id)
@@ -68,7 +75,7 @@ class Orchestrator:
         run_id = str(uuid.uuid4())
         graph = wf["graph_definition"]
 
-        # Create run record
+        # Create run record in the database first
         async with async_session() as session:
             run = WorkflowRun(
                 id=run_id,
@@ -79,6 +86,8 @@ class Orchestrator:
             )
             session.add(run)
             await session.commit()
+            run_dict = self._run_to_dict(run)
+
         if self._audit:
             await self._audit.record(
                 event_type="workflow.run_started",
@@ -90,35 +99,32 @@ class Orchestrator:
                 metadata={"workflow_id": workflow_id},
             )
 
-        # Execute the graph
+        # Dispatch the dynamic durable execution to Temporal
         try:
-            result, status = await self._execute_graph(graph, input_data, run_id)
-            async with async_session() as session:
-                run_obj = (await session.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))).scalar_one()
-                run_obj.status = status
-                if status == "completed":
-                    run_obj.result = result
-                    run_obj.completed_at = datetime.utcnow()
-                else:
-                    run_obj.state = result
-                await session.commit()
-            if self._audit:
-                await self._audit.record(
-                    event_type=f"workflow.run_{status}",
-                    actor="system",
-                    actor_type="system",
-                    resource_type="workflow_run",
-                    resource_id=run_id,
-                    action="run",
-                    metadata={"workflow_id": workflow_id},
-                )
-            return self._run_to_dict(run_obj)
+            client = await Client.connect(
+                settings.temporal_url,
+                namespace=settings.temporal_namespace,
+            )
+            graph_copy = dict(graph)
+            graph_copy["workflow_id"] = workflow_id
+
+            await client.start_workflow(
+                "DynamicGraphWorkflow",
+                args=[graph_copy, input_data, run_id],
+                id=run_id,
+                task_queue="cyberteam-tasks",
+            )
+            return run_dict
         except Exception as e:
             async with async_session() as session:
-                run_obj = (await session.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))).scalar_one()
+                run_obj = (
+                    await session.execute(
+                        select(WorkflowRun).where(WorkflowRun.id == run_id)
+                    )
+                ).scalar_one()
                 run_obj.status = "failed"
                 run_obj.error = str(e)
-                run_obj.completed_at = datetime.utcnow()
+                run_obj.completed_at = utc_now()
                 await session.commit()
             if self._audit:
                 await self._audit.record(
@@ -133,121 +139,17 @@ class Orchestrator:
                 )
             raise
 
-    async def _execute_graph(self, graph: dict, input_data: dict, run_id: str, start_node: Optional[str] = None) -> tuple[dict, str]:
-        """Execute a workflow graph by iterating through nodes."""
-        nodes = graph.get("nodes", [])
-        edges = graph.get("edges", [])
-        entry_node = graph.get("entry_node")
-
-        if not nodes or not entry_node:
-            raise ValueError("Invalid graph: missing nodes or entry_node")
-
-        state = dict(input_data)
-        current = start_node or entry_node
-        node_map = {n["id"]: n for n in nodes}
-
-        while current:
-            node = node_map.get(current)
-            if not node:
-                break
-
-            # Update run state
-            async with async_session() as session:
-                run_obj = (await session.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))).scalar_one()
-                run_obj.current_node = current
-                run_obj.state = state
-                await session.commit()
-
-            node_type = node.get("type", "agent")
-
-            if node_type == "agent":
-                agent_id = node.get("agent_id")
-                task = node.get("task_template", "").format(**state)
-                result = await self.agent_manager.invoke_agent(agent_id, task)
-                state[f"{current}_output"] = result
-
-            elif node_type == "tool":
-                tool_name = node.get("tool_name")
-                tool_args = node.get("args_template", {}).copy()
-                for k, v in tool_args.items():
-                    if isinstance(v, str):
-                        try:
-                            tool_args[k] = v.format(**state)
-                        except KeyError:
-                            pass  # Leave template as-is if key missing
-                # Execute via tool registry
-                if self._tool_registry:
-                    approval_id = state.get(f"{current}_approval_id")
-                    if approval_id:
-                        tool_args["_approval_id"] = approval_id
-                    result = await self._tool_registry.execute(tool_name, tool_args)
-                    result_data = result.model_dump()
-                    state[f"{current}_output"] = result_data
-                    approval_id = (result_data.get("output") or {}).get("approval_id")
-                    if approval_id:
-                        state[f"{current}_approval_id"] = approval_id
-                        state[f"{current}_tool_args"] = tool_args
-                        async with async_session() as session:
-                            run_obj = (await session.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))).scalar_one()
-                            run_obj.status = "waiting_approval"
-                            run_obj.current_node = current
-                            run_obj.state = state
-                            await session.commit()
-                        return state, "waiting_approval"
-                else:
-                    state[f"{current}_output"] = {"tool": tool_name, "args": tool_args, "note": "tool_registry_not_available"}
-
-            elif node_type == "decision":
-                condition_key = node.get("condition_key")
-                condition_value = state.get(condition_key)
-                # Find matching edge
-                next_node = None
-                for edge in edges:
-                    if edge.get("from") == current:
-                        if edge.get("condition") == condition_value or not edge.get("condition"):
-                            next_node = edge.get("to")
-                            break
-                current = next_node
-                continue
-
-            elif node_type == "approval":
-                agent_id = node.get("agent_id", "supervisor")
-                description = node.get("description_template", "").format(**state)
-                approval_id = await self.agent_manager._request_approval(
-                    agent_id,
-                    "workflow_step",
-                    description,
-                    state,
-                    requester="workflow",
-                    requester_type="system",
-                    risk_level=node.get("risk_level", "medium"),
-                    target_type="workflow_run",
-                    target_id=run_id,
-                )
-                state[f"{current}_approval_id"] = approval_id
-                async with async_session() as session:
-                    run_obj = (await session.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))).scalar_one()
-                    run_obj.status = "waiting_approval"
-                    run_obj.current_node = current
-                    run_obj.state = state
-                    await session.commit()
-                return state, "waiting_approval"
-
-            # Find next node via edges
-            next_nodes = [e.get("to") for e in edges if e.get("from") == current and not e.get("condition")]
-            current = next_nodes[0] if next_nodes else None
-
-        return state, "completed"
-
     async def resume_workflow_run(self, run_id: str) -> dict:
         async with async_session() as session:
-            run_obj = (await session.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))).scalar_one_or_none()
+            run_obj = (
+                await session.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == run_id)
+                )
+            ).scalar_one_or_none()
             if not run_obj:
                 raise ValueError(f"Workflow run {run_id} not found")
             if run_obj.status != "waiting_approval":
                 raise ValueError(f"Workflow run {run_id} is not waiting for approval")
-            wf = (await session.execute(select(Workflow).where(Workflow.id == run_obj.workflow_id))).scalar_one()
-            graph = wf.graph_definition
             current = run_obj.current_node
             state = dict(run_obj.state or {})
 
@@ -259,104 +161,71 @@ class Orchestrator:
             raise ValueError(f"Workflow run {run_id} has no pending approval")
 
         async with async_session() as session:
-            approval = (await session.execute(select(ApprovalRequest).where(ApprovalRequest.id == approval_id))).scalar_one_or_none()
+            approval = (
+                await session.execute(
+                    select(ApprovalRequest).where(ApprovalRequest.id == approval_id)
+                )
+            ).scalar_one_or_none()
             if not approval:
                 raise ValueError(f"Approval request {approval_id} not found")
             if approval.status == "pending":
                 raise ValueError(f"Approval request {approval_id} is still pending")
-            if approval.status == "rejected":
-                run_obj = (await session.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))).scalar_one()
+
+        # Connect to Temporal to signal the resumed approval decision
+        client = await Client.connect(
+            settings.temporal_url,
+            namespace=settings.temporal_namespace,
+        )
+        handle = client.get_workflow_handle(run_id)
+
+        if approval.status == "rejected":
+            await handle.signal("approval_signal", "rejected")
+            async with async_session() as session:
+                run_obj = (
+                    await session.execute(
+                        select(WorkflowRun).where(WorkflowRun.id == run_id)
+                    )
+                ).scalar_one()
                 run_obj.status = "rejected"
                 run_obj.error = approval.review_note or "Approval rejected"
-                run_obj.completed_at = datetime.utcnow()
+                run_obj.completed_at = utc_now()
                 await session.commit()
-                if self._audit:
-                    await self._audit.record(
-                        event_type="workflow.run_rejected",
-                        actor="system",
-                        actor_type="system",
-                        resource_type="workflow_run",
-                        resource_id=run_id,
-                        action="resume",
-                        outcome="blocked",
-                        metadata={"approval_id": approval_id},
-                    )
-                return self._run_to_dict(run_obj)
-
-        nodes = {node["id"]: node for node in graph.get("nodes", [])}
-        node = nodes.get(current, {})
-        node_type = node.get("type", "agent")
-        if node_type == "approval":
-            if not await self.agent_manager.approval_is_executable(
-                approval_id,
-                target_type="workflow_run",
-                target_id=run_id,
-            ):
-                raise ValueError(f"Approval request {approval_id} is not executable")
-            await self.agent_manager.consume_approval(
-                approval_id,
-                consumer="workflow",
-                target_type="workflow_run",
-                target_id=run_id,
-            )
-        elif node_type == "tool":
-            tool_name = node.get("tool_name")
-            if not await self.agent_manager.approval_is_executable(
-                approval_id,
-                target_type="tool",
-                target_id=tool_name,
-            ):
-                raise ValueError(f"Approval request {approval_id} is not executable")
-        else:
-            if not await self.agent_manager.approval_is_executable(approval_id):
-                raise ValueError(f"Approval request {approval_id} is not executable")
-        if node_type == "approval":
-            edges = graph.get("edges", [])
-            next_nodes = [edge.get("to") for edge in edges if edge.get("from") == current and not edge.get("condition")]
-            start_node = next_nodes[0] if next_nodes else None
-        else:
-            start_node = current
-
-        if not start_node:
-            async with async_session() as session:
-                run_obj = (await session.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))).scalar_one()
-                run_obj.status = "completed"
-                run_obj.result = state
-                run_obj.completed_at = datetime.utcnow()
-                await session.commit()
-                if self._audit:
-                    await self._audit.record(
-                        event_type="workflow.run_completed",
-                        actor="system",
-                        actor_type="system",
-                        resource_type="workflow_run",
-                        resource_id=run_id,
-                        action="resume",
-                        metadata={"approval_id": approval_id},
-                    )
-                return self._run_to_dict(run_obj)
-
-        result, status = await self._execute_graph(graph, state, run_id, start_node=start_node)
-        async with async_session() as session:
-            run_obj = (await session.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))).scalar_one()
-            run_obj.status = status
-            if status == "completed":
-                run_obj.result = result
-                run_obj.completed_at = datetime.utcnow()
-            else:
-                run_obj.state = result
-            await session.commit()
+                run_dict = self._run_to_dict(run_obj)
             if self._audit:
                 await self._audit.record(
-                    event_type=f"workflow.run_{status}",
+                    event_type="workflow.run_rejected",
                     actor="system",
                     actor_type="system",
                     resource_type="workflow_run",
                     resource_id=run_id,
                     action="resume",
+                    outcome="blocked",
                     metadata={"approval_id": approval_id},
                 )
-            return self._run_to_dict(run_obj)
+            return run_dict
+
+        # Signal "approved" to the running Temporal Workflow condition
+        await handle.signal("approval_signal", "approved")
+
+        async with async_session() as session:
+            run_obj = (
+                await session.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == run_id)
+                )
+            ).scalar_one()
+            run_dict = self._run_to_dict(run_obj)
+
+        if self._audit:
+            await self._audit.record(
+                event_type="workflow.run_resumed",
+                actor="system",
+                actor_type="system",
+                resource_type="workflow_run",
+                resource_id=run_id,
+                action="resume",
+                metadata={"approval_id": approval_id},
+            )
+        return run_dict
 
     async def list_workflow_runs(self, workflow_id: str) -> list[dict]:
         async with async_session() as session:
@@ -367,7 +236,7 @@ class Orchestrator:
             runs = result.scalars().all()
             return [self._run_to_dict(r) for r in runs]
 
-    async def get_workflow_run(self, run_id: str) -> Optional[dict]:
+    async def get_workflow_run(self, run_id: str) -> dict | None:
         async with async_session() as session:
             result = await session.execute(
                 select(WorkflowRun).where(WorkflowRun.id == run_id)

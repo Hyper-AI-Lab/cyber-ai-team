@@ -1,7 +1,7 @@
 """Cyber-Team configuration via environment variables."""
 
+
 from pydantic_settings import BaseSettings
-from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     secret_key: str = "changeme-app-secret-key"
     cors_allowed_origins: str = "*"
+    data_dir: str = "/app/data"
 
     # Owner
     owner_email: str = "owner@example.com"
@@ -18,10 +19,19 @@ class Settings(BaseSettings):
     owner_password_hash: str = ""
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 7
+    websocket_ticket_expire_seconds: int = 30
+    rate_limit_login_per_minute: int = 10
+    rate_limit_refresh_per_minute: int = 30
+    rate_limit_websocket_ticket_per_minute: int = 30
+    rate_limit_chat_per_minute: int = 60
+    rate_limit_tool_execute_per_minute: int = 30
+    rate_limit_approval_per_minute: int = 30
 
     # Mistral / LLM
     mistral_api_key: str = ""
     litellm_log: str = "INFO"
+    llm_history_max_conversations: int = 100
+    llm_history_max_messages: int = 20
 
     # PostgreSQL
     postgres_host: str = "localhost"
@@ -29,6 +39,8 @@ class Settings(BaseSettings):
     postgres_db: str = "cyberteam"
     postgres_user: str = "cyberteam"
     postgres_password: str = "changeme-postgres-password"
+    database_migrations_on_startup: bool = True
+    database_create_all_fallback: bool = False
 
     # Redis
     redis_host: str = "localhost"
@@ -109,13 +121,15 @@ class Settings(BaseSettings):
             return
         insecure_values = {
             "SECRET_KEY": self.secret_key == "changeme-app-secret-key",
-            "OWNER_PASSWORD": self.owner_password == "changeme-owner-password" and not self.owner_password_hash,
+            "OWNER_PASSWORD_HASH": not self.owner_password_hash,
             "POSTGRES_PASSWORD": self.postgres_password == "changeme-postgres-password",
             "REDIS_PASSWORD": self.redis_password == "changeme-redis-password",
         }
         invalid = [name for name, is_invalid in insecure_values.items() if is_invalid]
         if invalid:
-            raise RuntimeError(f"Refusing production startup with insecure defaults: {', '.join(invalid)}")
+            raise RuntimeError(
+                f"Refusing production startup with insecure defaults: {', '.join(invalid)}"
+            )
         if self.cors_allows_wildcard:
             raise RuntimeError("Refusing production startup with wildcard CORS_ALLOWED_ORIGINS")
 

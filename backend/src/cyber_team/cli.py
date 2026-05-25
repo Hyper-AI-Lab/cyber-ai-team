@@ -1,9 +1,10 @@
 """Cyber-Team CLI entry point."""
 
-import click
-import subprocess
 import os
+import subprocess
 import sys
+
+import click
 
 
 @click.group()
@@ -47,6 +48,18 @@ def status():
     subprocess.run(["docker", "compose", "ps"], cwd=_project_root())
 
 
+@main.command("hash-password")
+@click.password_option(
+    confirmation_prompt=True,
+    help="Owner password to hash for OWNER_PASSWORD_HASH.",
+)
+def hash_password(password):
+    """Generate a bcrypt hash for OWNER_PASSWORD_HASH."""
+    from cyber_team.api.security import pwd_context
+
+    click.echo(pwd_context.hash(password))
+
+
 @main.command()
 @click.option("--reset-db", is_flag=True, help="Reset the database")
 def setup(reset_db):
@@ -73,15 +86,23 @@ def setup(reset_db):
 @main.command()
 def screen_start():
     """Start Cyber-Team in a screen session (screen -r cyber-team)."""
-    root = _project_root()
-    cmd = f"screen -dmS cyber-team bash -c 'docker compose up --build 2>&1 | tee /tmp/cyber-team.log'"
+    cmd = [
+        "screen",
+        "-dmS",
+        "cyber-team",
+        "bash",
+        "-c",
+        "docker compose up --build 2>&1 | tee /tmp/cyber-team.log",
+    ]
     click.echo("Starting Cyber-Team in screen session 'cyber-team'...")
     click.echo("Attach with: screen -r cyber-team")
-    os.system(cmd)
+    subprocess.run(cmd, cwd=_project_root())
 
 
 def _project_root() -> str:
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    return os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    )
 
 
 if __name__ == "__main__":

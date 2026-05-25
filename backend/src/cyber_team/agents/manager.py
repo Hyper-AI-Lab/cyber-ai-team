@@ -1,17 +1,18 @@
 """Agent Manager — registration, lifecycle, and configuration of agents."""
 
 import uuid
-from datetime import datetime, timedelta
-from typing import Any, Optional
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import timedelta
+from typing import Any
 
+from sqlalchemy import select, update
+
+from cyber_team.audit.service import AuditService
+from cyber_team.clock import utc_now
+from cyber_team.config import settings
 from cyber_team.db import async_session
-from cyber_team.db.models import Agent, RoleManifest, ApprovalRequest
+from cyber_team.db.models import Agent, ApprovalRequest, RoleManifest
 from cyber_team.llm.gateway import LLMGateway
 from cyber_team.memory.service import MemoryService
-from cyber_team.config import settings
-from cyber_team.audit.service import AuditService
 
 
 class AgentManager:
@@ -27,9 +28,9 @@ class AgentManager:
 
     def __init__(
         self,
-        memory_service: Optional[MemoryService] = None,
-        audit_service: Optional[AuditService] = None,
-        tool_registry: Optional[Any] = None,
+        memory_service: MemoryService | None = None,
+        audit_service: AuditService | None = None,
+        tool_registry: Any | None = None,
     ):
         self._llm = LLMGateway()
         self._memory = memory_service
@@ -45,7 +46,7 @@ class AgentManager:
             agents = result.scalars().all()
             return [self._agent_to_dict(a) for a in agents]
 
-    async def get_agent(self, agent_id: str) -> Optional[dict]:
+    async def get_agent(self, agent_id: str) -> dict | None:
         async with async_session() as session:
             result = await session.execute(
                 select(Agent).where(Agent.id == agent_id)
@@ -75,7 +76,7 @@ class AgentManager:
             await session.commit()
             return self._agent_to_dict(agent)
 
-    async def update_agent(self, agent_id: str, data) -> Optional[dict]:
+    async def update_agent(self, agent_id: str, data) -> dict | None:
         async with async_session() as session:
             result = await session.execute(
                 select(Agent).where(Agent.id == agent_id)
@@ -95,7 +96,7 @@ class AgentManager:
                         config.pop("unsupported_tools", None)
                     agent.config = config
                 setattr(agent, field, value)
-            agent.updated_at = datetime.utcnow()
+            agent.updated_at = utc_now()
             await session.commit()
             return self._agent_to_dict(agent)
 
@@ -177,9 +178,9 @@ class AgentManager:
 
     async def chat(
         self,
-        agent_id: Optional[str],
+        agent_id: str | None,
         message: str,
-        conversation_id: Optional[str] = None,
+        conversation_id: str | None = None,
     ) -> dict:
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
@@ -221,7 +222,7 @@ class AgentManager:
             manifests = result.scalars().all()
             return [self._manifest_to_dict(m) for m in manifests]
 
-    async def get_role_manifest(self, manifest_id: str) -> Optional[dict]:
+    async def get_role_manifest(self, manifest_id: str) -> dict | None:
         async with async_session() as session:
             result = await session.execute(
                 select(RoleManifest).where(RoleManifest.id == manifest_id)
@@ -249,7 +250,7 @@ class AgentManager:
             await session.commit()
             return self._manifest_to_dict(manifest)
 
-    async def instantiate_role(self, manifest_id: str, overrides: Optional[dict] = None) -> dict:
+    async def instantiate_role(self, manifest_id: str, overrides: dict | None = None) -> dict:
         if overrides is None:
             overrides = {}
         manifest = await self.get_role_manifest(manifest_id)
@@ -404,19 +405,19 @@ Propose a new role to fill this gap. Return JSON with:
 
     async def _request_approval(
         self,
-        agent_id: Optional[str],
+        agent_id: str | None,
         action_type: str,
         description: str,
         payload: dict,
         requester: str = "system",
         requester_type: str = "system",
         risk_level: str = "medium",
-        target_type: Optional[str] = None,
-        target_id: Optional[str] = None,
+        target_type: str | None = None,
+        target_id: str | None = None,
         expires_in_minutes: int = 1440,
     ) -> str:
         approval_id = str(uuid.uuid4())
-        expires_at = datetime.utcnow() + timedelta(minutes=expires_in_minutes)
+        expires_at = utc_now() + timedelta(minutes=expires_in_minutes)
         async with async_session() as session:
             req = ApprovalRequest(
                 id=approval_id,
@@ -451,7 +452,7 @@ Propose a new role to fill this gap. Return JSON with:
             )
         return approval_id
 
-    async def get_approval_queue(self, status: Optional[str] = None) -> list[dict]:
+    async def get_approval_queue(self, status: str | None = None) -> list[dict]:
         async with async_session() as session:
             query = select(ApprovalRequest)
             if status:
@@ -494,16 +495,18 @@ Propose a new role to fill this gap. Return JSON with:
             raise ValueError("Decision must be 'approved' or 'rejected'")
         async with async_session() as session:
             result = await session.execute(
-                select(ApprovalRequest).where(ApprovalRequest.id == approval_id)
+                select(ApprovalRequest)
+                .where(ApprovalRequest.id == approval_id)
+                .with_for_update()
             )
             req = result.scalar_one_or_none()
             if not req:
                 raise ValueError(f"Approval request {approval_id} not found")
             if req.status != "pending":
                 raise ValueError(f"Approval request {approval_id} is already {req.status}")
-            if req.expires_at and req.expires_at < datetime.utcnow():
+            if req.expires_at and req.expires_at < utc_now():
                 req.status = "expired"
-                req.resolved_at = datetime.utcnow()
+                req.resolved_at = utc_now()
                 await session.commit()
                 if self._audit:
                     await self._audit.record(
@@ -523,7 +526,7 @@ Propose a new role to fill this gap. Return JSON with:
             req.status = decision
             req.reviewer = reviewer
             req.review_note = note
-            req.resolved_at = datetime.utcnow()
+            req.resolved_at = utc_now()
             await session.commit()
             response = {"id": req.id, "status": decision}
         if self._audit:
@@ -545,23 +548,25 @@ Propose a new role to fill this gap. Return JSON with:
 
     async def approval_is_executable(
         self,
-        approval_id: Optional[str],
-        target_type: Optional[str] = None,
-        target_id: Optional[str] = None,
+        approval_id: str | None,
+        target_type: str | None = None,
+        target_id: str | None = None,
     ) -> bool:
         if not approval_id:
             return False
         async with async_session() as session:
             req = (
                 await session.execute(
-                    select(ApprovalRequest).where(ApprovalRequest.id == approval_id)
+                    select(ApprovalRequest)
+                    .where(ApprovalRequest.id == approval_id)
+                    .with_for_update()
                 )
             ).scalar_one_or_none()
             if not req or req.status != "approved" or req.consumed_at is not None:
                 return False
-            if req.expires_at and req.expires_at < datetime.utcnow():
+            if req.expires_at and req.expires_at < utc_now():
                 req.status = "expired"
-                req.resolved_at = datetime.utcnow()
+                req.resolved_at = utc_now()
                 await session.commit()
                 return False
             if target_type and req.target_type and req.target_type != target_type:
@@ -574,13 +579,15 @@ Propose a new role to fill this gap. Return JSON with:
         self,
         approval_id: str,
         consumer: str = "system",
-        target_type: Optional[str] = None,
-        target_id: Optional[str] = None,
+        target_type: str | None = None,
+        target_id: str | None = None,
     ) -> None:
         async with async_session() as session:
             req = (
                 await session.execute(
-                    select(ApprovalRequest).where(ApprovalRequest.id == approval_id)
+                    select(ApprovalRequest)
+                    .where(ApprovalRequest.id == approval_id)
+                    .with_for_update()
                 )
             ).scalar_one_or_none()
             if not req:
@@ -589,16 +596,16 @@ Propose a new role to fill this gap. Return JSON with:
                 raise ValueError(f"Approval request {approval_id} is not approved")
             if req.consumed_at is not None:
                 raise ValueError(f"Approval request {approval_id} was already consumed")
-            if req.expires_at and req.expires_at < datetime.utcnow():
+            if req.expires_at and req.expires_at < utc_now():
                 req.status = "expired"
-                req.resolved_at = datetime.utcnow()
+                req.resolved_at = utc_now()
                 await session.commit()
                 raise ValueError(f"Approval request {approval_id} has expired")
             if target_type and req.target_type and req.target_type != target_type:
                 raise ValueError(f"Approval request {approval_id} is not valid for {target_type}")
             if target_id and req.target_id and req.target_id != target_id:
                 raise ValueError(f"Approval request {approval_id} is not valid for {target_id}")
-            req.consumed_at = datetime.utcnow()
+            req.consumed_at = utc_now()
             await session.commit()
         if self._audit:
             await self._audit.record(
@@ -700,7 +707,7 @@ Propose a new role to fill this gap. Return JSON with:
                 return agent
             db_agent.tools = next_tools
             db_agent.config = config
-            db_agent.updated_at = datetime.utcnow()
+            db_agent.updated_at = utc_now()
             await session.commit()
             return self._agent_to_dict(db_agent)
 

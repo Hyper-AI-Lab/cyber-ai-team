@@ -1,15 +1,21 @@
 """4-Layer Memory Service — pinned, workflow, retrieval, canonical records."""
 
-import uuid
-import logging
 import asyncio
-from datetime import datetime
-from typing import Optional
+import logging
+import uuid
 
-from sqlalchemy import select, and_, desc
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PointStruct,
+    VectorParams,
+)
+from sqlalchemy import and_, desc, select
 
+from cyber_team.clock import utc_now
 from cyber_team.config import settings
 from cyber_team.db import async_session
 from cyber_team.db.models import MemoryEntry
@@ -22,22 +28,32 @@ VECTOR_SIZE = 1024  # mistral-embed dimension
 
 class MemoryService:
     def __init__(self):
-        self._qdrant: Optional[QdrantClient] = None
+        self._qdrant: QdrantClient | None = None
 
     async def startup(self):
-        self._qdrant = QdrantClient(
-            url=settings.qdrant_url,
-            api_key=settings.qdrant_api_key or None,
-        )
-        # Ensure collection exists
         try:
-            self._qdrant.get_collection(COLLECTION_NAME)
-        except Exception:
-            self._qdrant.create_collection(
-                collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+            self._qdrant = QdrantClient(
+                url=settings.qdrant_url,
+                api_key=settings.qdrant_api_key or None,
             )
-            logger.info(f"Created Qdrant collection: {COLLECTION_NAME}")
+            # Ensure collection exists
+            try:
+                self._qdrant.get_collection(COLLECTION_NAME)
+            except Exception:
+                self._qdrant.create_collection(
+                    collection_name=COLLECTION_NAME,
+                    vectors_config=VectorParams(
+                        size=VECTOR_SIZE,
+                        distance=Distance.COSINE,
+                    ),
+                )
+                logger.info(f"Created Qdrant collection: {COLLECTION_NAME}")
+        except Exception as exc:
+            logger.warning(
+                "Qdrant unavailable; memory retrieval will use PostgreSQL fallback: %s",
+                exc,
+            )
+            self._qdrant = None
         logger.info("Memory service started")
 
     async def shutdown(self):
@@ -48,7 +64,7 @@ class MemoryService:
 
     async def remember(self, data) -> dict:
         entry_id = str(uuid.uuid4())
-        now = datetime.utcnow()
+        now = utc_now()
 
         # Store in PostgreSQL (canonical)
         async with async_session() as session:
@@ -67,28 +83,29 @@ class MemoryService:
             await session.commit()
 
         # Store in Qdrant (semantic retrieval)
-        try:
+        if self._qdrant:
             embedding = await self._embed(data.content)
-            await asyncio.to_thread(
-                self._qdrant.upsert,
-                collection_name=COLLECTION_NAME,
-                points=[
-                    PointStruct(
-                        id=entry_id,
-                        vector=embedding,
-                        payload={
-                            "agent_id": data.agent_id,
-                            "memory_type": data.memory_type,
-                            "namespace": data.namespace,
-                            "content": data.content[:500],
-                            "importance": data.importance,
-                            "created_at": now.isoformat(),
-                        },
-                    )
-                ],
-            )
-        except Exception as e:
-            logger.warning(f"Failed to store in Qdrant: {e}")
+            try:
+                await asyncio.to_thread(
+                    self._qdrant.upsert,
+                    collection_name=COLLECTION_NAME,
+                    points=[
+                        PointStruct(
+                            id=entry_id,
+                            vector=embedding,
+                            payload={
+                                "agent_id": data.agent_id,
+                                "memory_type": data.memory_type,
+                                "namespace": data.namespace,
+                                "content": data.content[:500],
+                                "importance": data.importance,
+                                "created_at": now.isoformat(),
+                            },
+                        )
+                    ],
+                )
+            except Exception as e:
+                logger.warning(f"Failed to store in Qdrant: {e}")
 
         return {
             "id": entry_id,
@@ -104,59 +121,79 @@ class MemoryService:
         results = []
 
         # Semantic search via Qdrant
-        try:
-            query_vector = await self._embed(data.query)
-            qdrant_filter = None
-            conditions = []
-            if data.agent_id:
-                conditions.append(FieldCondition(key="agent_id", match=MatchValue(value=data.agent_id)))
-            if data.memory_type:
-                conditions.append(FieldCondition(key="memory_type", match=MatchValue(value=data.memory_type)))
-            if data.namespace:
-                conditions.append(FieldCondition(key="namespace", match=MatchValue(value=data.namespace)))
-            if conditions:
-                qdrant_filter = Filter(must=conditions)
-
-            hits = await asyncio.to_thread(
-                self._qdrant.search,
-                collection_name=COLLECTION_NAME,
-                query_vector=query_vector,
-                query_filter=qdrant_filter,
-                limit=data.limit,
-            )
-            for hit in hits:
-                results.append({
-                    "id": str(hit.id),
-                    "content": hit.payload.get("content", ""),
-                    "score": hit.score,
-                    "memory_type": hit.payload.get("memory_type"),
-                    "namespace": hit.payload.get("namespace"),
-                    "agent_id": hit.payload.get("agent_id"),
-                    "importance": hit.payload.get("importance", 0.5),
-                })
-        except Exception as e:
-            logger.warning(f"Qdrant search failed, falling back to DB: {e}")
-            # Fallback to PostgreSQL text search
-            async with async_session() as session:
-                query = select(MemoryEntry).where(
-                    MemoryEntry.content.ilike(f"%{data.query}%")
-                )
+        if self._qdrant:
+            try:
+                query_vector = await self._embed(data.query)
+                qdrant_filter = None
+                conditions = []
                 if data.agent_id:
-                    query = query.where(MemoryEntry.agent_id == data.agent_id)
+                    conditions.append(
+                        FieldCondition(
+                            key="agent_id",
+                            match=MatchValue(value=data.agent_id),
+                        )
+                    )
                 if data.memory_type:
-                    query = query.where(MemoryEntry.memory_type == data.memory_type)
-                query = query.order_by(desc(MemoryEntry.importance)).limit(data.limit)
-                db_results = (await session.execute(query)).scalars().all()
-                for r in db_results:
+                    conditions.append(
+                        FieldCondition(
+                            key="memory_type",
+                            match=MatchValue(value=data.memory_type),
+                        )
+                    )
+                if data.namespace:
+                    conditions.append(
+                        FieldCondition(
+                            key="namespace",
+                            match=MatchValue(value=data.namespace),
+                        )
+                    )
+                if conditions:
+                    qdrant_filter = Filter(must=conditions)
+
+                hits = await asyncio.to_thread(
+                    self._qdrant.search,
+                    collection_name=COLLECTION_NAME,
+                    query_vector=query_vector,
+                    query_filter=qdrant_filter,
+                    limit=data.limit,
+                )
+                for hit in hits:
                     results.append({
-                        "id": r.id,
-                        "content": r.content,
-                        "score": 1.0,
-                        "memory_type": r.memory_type,
-                        "namespace": r.namespace,
-                        "agent_id": r.agent_id,
-                        "importance": r.importance,
+                        "id": str(hit.id),
+                        "content": hit.payload.get("content", ""),
+                        "score": hit.score,
+                        "memory_type": hit.payload.get("memory_type"),
+                        "namespace": hit.payload.get("namespace"),
+                        "agent_id": hit.payload.get("agent_id"),
+                        "importance": hit.payload.get("importance", 0.5),
                     })
+                return results
+            except Exception as e:
+                logger.warning(f"Qdrant search failed, falling back to DB: {e}")
+
+        # Fallback to PostgreSQL text search
+        async with async_session() as session:
+            query = select(MemoryEntry).where(
+                MemoryEntry.content.ilike(f"%{data.query}%")
+            )
+            if data.agent_id:
+                query = query.where(MemoryEntry.agent_id == data.agent_id)
+            if data.memory_type:
+                query = query.where(MemoryEntry.memory_type == data.memory_type)
+            if data.namespace:
+                query = query.where(MemoryEntry.namespace == data.namespace)
+            query = query.order_by(desc(MemoryEntry.importance)).limit(data.limit)
+            db_results = (await session.execute(query)).scalars().all()
+            for r in db_results:
+                results.append({
+                    "id": r.id,
+                    "content": r.content,
+                    "score": 1.0,
+                    "memory_type": r.memory_type,
+                    "namespace": r.namespace,
+                    "agent_id": r.agent_id,
+                    "importance": r.importance,
+                })
 
         return results
 
@@ -212,6 +249,8 @@ class MemoryService:
                 await session.delete(entry)
                 await session.commit()
 
+        if not self._qdrant:
+            return
         try:
             await asyncio.to_thread(
                 self._qdrant.delete,

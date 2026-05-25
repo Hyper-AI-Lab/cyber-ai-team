@@ -1,7 +1,6 @@
 import time
 from collections import defaultdict
 from threading import Lock
-from typing import Optional
 
 
 class MetricsService:
@@ -56,13 +55,13 @@ class MetricsService:
     def increment(
         self,
         name: str,
-        labels: Optional[dict[str, str]] = None,
+        labels: dict[str, str] | None = None,
         value: float = 1.0,
     ) -> None:
         with self._lock:
             self._counters[(name, self._label_tuple(labels))] += value
 
-    def observe(self, name: str, value: float, labels: Optional[dict[str, str]] = None) -> None:
+    def observe(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
         key = (name, self._label_tuple(labels))
         with self._lock:
             histogram = self._histograms[key]
@@ -131,7 +130,7 @@ class MetricsService:
         return {"count": 0.0, "sum": 0.0, "buckets": [0.0 for _ in self._http_buckets]}
 
     @staticmethod
-    def _label_tuple(labels: Optional[dict[str, str]]) -> tuple[tuple[str, str], ...]:
+    def _label_tuple(labels: dict[str, str] | None) -> tuple[tuple[str, str], ...]:
         return tuple(sorted((key, str(value)) for key, value in (labels or {}).items()))
 
     @staticmethod

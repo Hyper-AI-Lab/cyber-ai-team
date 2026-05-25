@@ -1,11 +1,12 @@
 """Agent management routes."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Body
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from typing import Optional
+
+from cyber_team.agents.manager import AgentManager
 from cyber_team.api.authorization import require_authorization
 from cyber_team.api.security import Principal, get_current_principal
-from cyber_team.agents.manager import AgentManager
 
 router = APIRouter()
 
@@ -15,17 +16,17 @@ class AgentCreate(BaseModel):
     role_name: str
     instructions: str
     tools: list[str] = Field(default_factory=list)
-    memory_namespace: Optional[str] = None
+    memory_namespace: str | None = None
     approval_policy: str = "auto"
     config: dict = Field(default_factory=dict)
 
 
 class AgentUpdate(BaseModel):
-    instructions: Optional[str] = None
-    tools: Optional[list[str]] = None
-    approval_policy: Optional[str] = None
-    status: Optional[str] = None
-    config: Optional[dict] = None
+    instructions: str | None = None
+    tools: list[str] | None = None
+    approval_policy: str | None = None
+    status: str | None = None
+    config: dict | None = None
 
 
 class AgentResponse(BaseModel):
@@ -117,5 +118,8 @@ async def invoke_agent(
 ):
     await require_authorization(request, principal, "invoke", "agent", agent_id)
     mgr: AgentManager = request.app.state.agent_manager
-    result = await mgr.invoke_agent(agent_id, task)
+    try:
+        result = await mgr.invoke_agent(agent_id, task)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"result": result}
