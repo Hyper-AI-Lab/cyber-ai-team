@@ -12,7 +12,7 @@ Compositional stack built on open-source components:
 | Durable Workflows | Temporal |
 | Memory | 4-layer: Pinned → Workflow → Retrieval (Mem0+Qdrant) → Canonical (PostgreSQL+ERPNext) |
 | Interoperability | MCP (agent↔tool), A2A (agent↔agent) |
-| Communications | Runtime: Twilio voice/SMS, SMTP email, simulated fallback; optional profiles: Asterisk, Jasmin |
+| Communications | Runtime: Twilio voice/SMS/WhatsApp, Jasmin SMS, SMTP email, Slack, Telegram, simulated fallback; optional profile: Asterisk |
 | System of Record | PostgreSQL; ERPNext client and optional Compose profile |
 | Owner Console | Next.js + TailwindCSS |
 | Governance | Runtime: owner JWT auth + OPA/local authorization; optional profiles: Keycloak, OpenFGA |
@@ -130,12 +130,17 @@ Runtime communication support is explicit in the **Integrations** console view a
 
 - **Voice**: Twilio outbound calls when `TWILIO_*` credentials are configured;
   otherwise simulated in development if `COMMUNICATIONS_ALLOW_SIMULATION=true`.
-- **SMS**: Twilio outbound SMS under the same credential and simulation rules.
+- **SMS**: Twilio outbound SMS when `TWILIO_*` credentials are configured, or
+  Jasmin SMS when `JASMIN_*` gateway credentials are configured.
 - **Email**: SMTP outbound email when `SMTP_HOST` and `SMTP_FROM_EMAIL` are set.
-- **Messaging**: Telegram, WhatsApp, and Slack adapters are planned; current
-  runtime behavior is simulated only when simulation is enabled.
-- **Asterisk/Jasmin**: Docker Compose profiles are present for experimentation,
-  but the runtime gateways do not route through them yet.
+- **Messaging**: Slack incoming webhooks, Telegram Bot API, and Twilio WhatsApp
+  are supported when their provider credentials are configured.
+- **Asterisk**: A Docker Compose profile is present for experimentation, but
+  runtime call routing still uses Twilio.
+
+All outbound communication tools accept an optional `idempotency_key`. Reusing
+the same key returns the stored communication result instead of producing another
+external send.
 
 ## API
 

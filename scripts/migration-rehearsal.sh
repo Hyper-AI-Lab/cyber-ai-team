@@ -58,7 +58,7 @@ docker exec -i "$CONTAINER_NAME" \
 )
 
 current_revision="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT version_num FROM alembic_version")"
-if [ "$current_revision" != "0001_initial_schema" ]; then
+if [ "$current_revision" != "0002_communication_idempotency" ]; then
   echo "Unexpected Alembic revision: $current_revision" >&2
   exit 1
 fi
@@ -84,6 +84,18 @@ fi
 workflow_tables="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('workflows', 'workflow_runs', 'memory_entries', 'audit_events', 'communication_logs', 'role_manifests')")"
 if [ "$workflow_tables" != "6" ]; then
   echo "Expected new Cyber-Team tables were not created" >&2
+  exit 1
+fi
+
+idempotency_column="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT is_nullable FROM information_schema.columns WHERE table_name = 'communication_logs' AND column_name = 'idempotency_key'")"
+if [ "$idempotency_column" != "YES" ]; then
+  echo "communication_logs.idempotency_key should exist and be nullable" >&2
+  exit 1
+fi
+
+idempotency_index="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_indexes WHERE tablename = 'communication_logs' AND indexname = 'ix_communication_logs_idempotency_key'")"
+if [ "$idempotency_index" != "1" ]; then
+  echo "communication_logs idempotency index is missing" >&2
   exit 1
 fi
 

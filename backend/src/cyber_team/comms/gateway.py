@@ -5,10 +5,12 @@ import logging
 import smtplib
 import ssl
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from email.message import EmailMessage
 
+import httpx
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 
 from cyber_team.config import settings
 from cyber_team.db import async_session
@@ -28,9 +30,8 @@ class CommsGateway:
         return self._twilio_client
 
     def integration_status(self) -> list[dict]:
-        twilio_ready = self._twilio_configured()
-        smtp_ready = self._smtp_configured()
         simulation_enabled = settings.communications_allow_simulation
+        twilio_ready = self._twilio_configured()
         return [
             self._status_item(
                 channel="voice",
@@ -46,23 +47,47 @@ class CommsGateway:
                 configured=twilio_ready,
                 implementation="implemented",
                 simulation_enabled=simulation_enabled,
-                detail="Outbound SMS uses Twilio messages when credentials are configured.",
+                detail="Outbound SMS uses Twilio when credentials are configured.",
+            ),
+            self._status_item(
+                channel="sms",
+                provider="jasmin",
+                configured=self._jasmin_configured(),
+                implementation="implemented",
+                simulation_enabled=simulation_enabled,
+                detail="Outbound SMS can use Jasmin when gateway credentials are configured.",
             ),
             self._status_item(
                 channel="email",
                 provider="smtp",
-                configured=smtp_ready,
+                configured=self._smtp_configured(),
                 implementation="implemented",
                 simulation_enabled=simulation_enabled,
                 detail="Outbound email uses SMTP when host and sender are configured.",
             ),
             self._status_item(
-                channel="messaging",
-                provider="none",
-                configured=False,
-                implementation="planned",
+                channel="slack",
+                provider="slack_webhook",
+                configured=self._slack_configured(),
+                implementation="implemented",
                 simulation_enabled=simulation_enabled,
-                detail="Telegram, WhatsApp, and Slack provider adapters are not wired yet.",
+                detail="Slack messages use an incoming webhook when configured.",
+            ),
+            self._status_item(
+                channel="telegram",
+                provider="telegram_bot",
+                configured=self._telegram_configured(),
+                implementation="implemented",
+                simulation_enabled=simulation_enabled,
+                detail="Telegram messages use the Bot API when a bot token is configured.",
+            ),
+            self._status_item(
+                channel="whatsapp",
+                provider="twilio_whatsapp",
+                configured=self._twilio_whatsapp_configured(),
+                implementation="implemented",
+                simulation_enabled=simulation_enabled,
+                detail="WhatsApp messages use Twilio when a WhatsApp sender is configured.",
             ),
             {
                 "channel": "asterisk",
@@ -74,20 +99,24 @@ class CommsGateway:
                     "Asterisk can be started from Docker Compose, but runtime calls use Twilio."
                 ),
             },
-            {
-                "channel": "jasmin",
-                "provider": "jasmin",
-                "configured": bool(getattr(settings, "jasmin_host", "")),
-                "mode": "profile_only",
-                "implementation": "compose_profile",
-                "detail": "Jasmin can be started from Docker Compose, but runtime SMS uses Twilio.",
-            },
         ]
 
     async def make_call(self, data) -> dict:
         call_id = str(uuid.uuid4())
         from_number = data.from_number or settings.twilio_phone_number
+        key = self._idempotency_key(data)
+        reserved_log, replay = await self._reserve_comm(
+            agent_id=data.agent_id,
+            channel="voice",
+            recipient=data.to_number,
+            content=data.context,
+            metadata={"from": from_number, "provider": "twilio"},
+            idempotency_key=key,
+        )
+        if replay:
+            return self._idempotent_response(reserved_log, id_field="call_id")
 
+        metadata = {"from": from_number, "provider": "twilio"}
         try:
             client = self._get_twilio()
             if client:
@@ -110,26 +139,51 @@ class CommsGateway:
                 )
             else:
                 raise RuntimeError("Twilio voice is not configured and simulation is disabled")
+            metadata["call_sid"] = call_sid
         except Exception as e:
             logger.error("Call failed: %s", e)
             call_sid = "failed"
+            metadata.update({"call_sid": call_sid, "error": str(e)})
             status = "failed"
 
-        await self._log_comm(
+        response = self._with_idempotency(
+            {"call_id": call_id, "call_sid": call_sid, "status": status},
+            key,
+        )
+        await self._record_comm(
             agent_id=data.agent_id,
             channel="voice",
             direction="outbound",
             recipient=data.to_number,
             content=data.context,
-            metadata={"call_sid": call_sid, "from": from_number},
+            metadata=metadata,
             status=status,
+            idempotency_key=key,
+            response=response,
+            reserved_log=reserved_log,
         )
-        return {"call_id": call_id, "call_sid": call_sid, "status": status}
+        return response
 
     async def send_sms(self, data) -> dict:
         sms_id = str(uuid.uuid4())
-        from_number = data.from_number or settings.twilio_phone_number
+        from_number = (
+            data.from_number
+            or settings.twilio_phone_number
+            or settings.jasmin_from_number
+        )
+        key = self._idempotency_key(data)
+        reserved_log, replay = await self._reserve_comm(
+            agent_id=data.agent_id,
+            channel="sms",
+            recipient=data.to_number,
+            content=data.message,
+            metadata={"from": from_number},
+            idempotency_key=key,
+        )
+        if replay:
+            return self._idempotent_response(reserved_log, id_field="sms_id")
 
+        metadata = {"from": from_number}
         try:
             client = self._get_twilio()
             if client:
@@ -140,34 +194,60 @@ class CommsGateway:
                         body=data.message,
                     )
                 )
-                msg_sid = message.sid
+                provider = "twilio"
+                provider_id = message.sid
+                status = "sent"
+            elif self._jasmin_configured():
+                provider = "jasmin"
+                provider_id = await self._send_sms_jasmin(data, from_number)
                 status = "sent"
             elif settings.communications_allow_simulation:
-                msg_sid = "local-only"
+                provider = "simulation"
+                provider_id = "local-only"
                 status = "simulated"
                 logger.info("[SIMULATED SMS] to=%s, msg=%s", data.to_number, data.message[:100])
             else:
-                raise RuntimeError("Twilio SMS is not configured and simulation is disabled")
+                raise RuntimeError("SMS provider is not configured and simulation is disabled")
+            metadata.update({"provider": provider, "provider_id": provider_id})
         except Exception as e:
             logger.error("SMS failed: %s", e)
-            msg_sid = "failed"
+            provider_id = "failed"
+            metadata.update({"provider_id": provider_id, "error": str(e)})
             status = "failed"
 
-        await self._log_comm(
+        response = self._with_idempotency(
+            {"sms_id": sms_id, "message_sid": provider_id, "status": status},
+            key,
+        )
+        await self._record_comm(
             agent_id=data.agent_id,
             channel="sms",
             direction="outbound",
             recipient=data.to_number,
             content=data.message,
-            metadata={"message_sid": msg_sid, "from": from_number},
+            metadata=metadata,
             status=status,
+            idempotency_key=key,
+            response=response,
+            reserved_log=reserved_log,
         )
-        return {"sms_id": sms_id, "message_sid": msg_sid, "status": status}
+        return response
 
     async def send_email(self, data) -> dict:
         email_id = str(uuid.uuid4())
-        metadata = {"subject": data.subject, "cc": data.cc, "provider": "smtp"}
+        key = self._idempotency_key(data)
+        reserved_log, replay = await self._reserve_comm(
+            agent_id=data.agent_id,
+            channel="email",
+            recipient=data.to_address,
+            content=data.body[:500],
+            metadata={"subject": data.subject, "cc": data.cc, "provider": "smtp"},
+            idempotency_key=key,
+        )
+        if replay:
+            return self._idempotent_response(reserved_log, id_field="email_id")
 
+        metadata = {"subject": data.subject, "cc": data.cc, "provider": "smtp"}
         try:
             if self._smtp_configured():
                 provider_id = await self._send_email_smtp(data)
@@ -184,7 +264,11 @@ class CommsGateway:
             metadata["error"] = str(e)
             status = "failed"
 
-        await self._log_comm(
+        response = self._with_idempotency(
+            {"email_id": email_id, "status": status, "provider": "smtp"},
+            key,
+        )
+        await self._record_comm(
             agent_id=data.agent_id,
             channel="email",
             direction="outbound",
@@ -192,47 +276,83 @@ class CommsGateway:
             content=data.body[:500],
             metadata=metadata,
             status=status,
+            idempotency_key=key,
+            response=response,
+            reserved_log=reserved_log,
         )
-        return {"email_id": email_id, "status": status, "provider": "smtp"}
+        return response
 
     async def send_message(self, data) -> dict:
         msg_id = str(uuid.uuid4())
-        platform = data.platform
+        platform = data.platform.lower()
+        key = self._idempotency_key(data)
+        reserved_log, replay = await self._reserve_comm(
+            agent_id=data.agent_id,
+            channel=platform,
+            recipient=data.recipient,
+            content=data.message,
+            metadata={"platform": platform},
+            idempotency_key=key,
+        )
+        if replay:
+            return self._idempotent_response(reserved_log, id_field="message_id")
 
-        if not settings.communications_allow_simulation:
-            await self._log_comm(
-                agent_id=data.agent_id,
-                channel=platform,
-                direction="outbound",
-                recipient=data.recipient,
-                content=data.message,
-                metadata={"platform": platform, "error": "provider_not_configured"},
-                status="failed",
-            )
-            return {
+        metadata = {"platform": platform}
+        try:
+            if platform == "slack" and self._slack_configured():
+                provider = "slack_webhook"
+                provider_id = await self._send_slack_message(data)
+                status = "sent"
+            elif platform == "telegram" and self._telegram_configured():
+                provider = "telegram_bot"
+                provider_id = await self._send_telegram_message(data)
+                status = "sent"
+            elif platform == "whatsapp" and self._twilio_whatsapp_configured():
+                provider = "twilio_whatsapp"
+                provider_id = await self._send_twilio_whatsapp(data)
+                status = "sent"
+            elif settings.communications_allow_simulation:
+                provider = "simulation"
+                provider_id = "local-only"
+                status = "simulated"
+                logger.info(
+                    "[SIMULATED %s] to=%s, msg=%s",
+                    platform.upper(),
+                    data.recipient,
+                    data.message[:100],
+                )
+            else:
+                raise RuntimeError(
+                    f"{platform} provider is not configured and simulation is disabled"
+                )
+            metadata.update({"provider": provider, "provider_id": provider_id})
+        except Exception as e:
+            logger.error("%s message failed: %s", platform, e)
+            metadata.update({"error": str(e), "provider_id": "failed"})
+            status = "failed"
+
+        response = self._with_idempotency(
+            {
                 "message_id": msg_id,
                 "platform": platform,
-                "status": "failed",
-                "error": "Messaging provider is not configured and simulation is disabled",
-            }
-
-        logger.info(
-            "[SIMULATED %s] to=%s, msg=%s",
-            platform.upper(),
-            data.recipient,
-            data.message[:100],
+                "status": status,
+                "provider": metadata.get("provider"),
+            },
+            key,
         )
-
-        await self._log_comm(
+        await self._record_comm(
             agent_id=data.agent_id,
             channel=platform,
             direction="outbound",
             recipient=data.recipient,
             content=data.message,
-            metadata={"platform": platform},
-            status="simulated",
+            metadata=metadata,
+            status=status,
+            idempotency_key=key,
+            response=response,
+            reserved_log=reserved_log,
         )
-        return {"message_id": msg_id, "platform": platform, "status": "simulated"}
+        return response
 
     async def get_logs(self, channel: str | None = None, limit: int = 50) -> list[dict]:
         async with async_session() as session:
@@ -255,25 +375,130 @@ class CommsGateway:
                     "content": log.content[:200],
                     "metadata": log.metadata_,
                     "status": log.status,
+                    "idempotency_key": log.idempotency_key,
                     "created_at": log.created_at.isoformat(),
                 }
                 for log in logs
             ]
 
-    async def _log_comm(self, agent_id, channel, direction, recipient, content, metadata, status):
+    async def _reserve_comm(
+        self,
+        agent_id,
+        channel: str,
+        recipient: str,
+        content: str,
+        metadata: dict,
+        idempotency_key: str | None,
+    ) -> tuple[CommunicationLog | None, bool]:
+        if not idempotency_key:
+            return None, False
+
         async with async_session() as session:
+            existing = await self._get_log_by_idempotency_key(session, idempotency_key)
+            if existing:
+                return existing, True
             log = CommunicationLog(
                 id=str(uuid.uuid4()),
                 agent_id=agent_id,
                 channel=channel,
-                direction=direction,
+                direction="outbound",
                 recipient=recipient,
                 content=content,
-                metadata_=metadata,
-                status=status,
+                metadata_={**metadata, "idempotency_key": idempotency_key},
+                status="pending",
+                idempotency_key=idempotency_key,
             )
             session.add(log)
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                existing = await self._get_log_by_idempotency_key(session, idempotency_key)
+                if existing:
+                    return existing, True
+                raise
+            return log, False
+
+    async def _record_comm(
+        self,
+        agent_id,
+        channel: str,
+        direction: str,
+        recipient: str,
+        content: str,
+        metadata: dict,
+        status: str,
+        idempotency_key: str | None = None,
+        response: dict | None = None,
+        reserved_log: CommunicationLog | None = None,
+    ) -> None:
+        metadata = dict(metadata)
+        if response:
+            metadata["response"] = response
+        if idempotency_key:
+            metadata["idempotency_key"] = idempotency_key
+
+        async with async_session() as session:
+            if reserved_log:
+                log = (
+                    await session.execute(
+                        select(CommunicationLog).where(CommunicationLog.id == reserved_log.id)
+                    )
+                ).scalar_one()
+                log.agent_id = agent_id
+                log.channel = channel
+                log.direction = direction
+                log.recipient = recipient
+                log.content = content
+                log.metadata_ = metadata
+                log.status = status
+            else:
+                log = CommunicationLog(
+                    id=str(uuid.uuid4()),
+                    agent_id=agent_id,
+                    channel=channel,
+                    direction=direction,
+                    recipient=recipient,
+                    content=content,
+                    metadata_=metadata,
+                    status=status,
+                    idempotency_key=idempotency_key,
+                )
+                session.add(log)
             await session.commit()
+
+    @staticmethod
+    async def _get_log_by_idempotency_key(session, idempotency_key: str):
+        return (
+            await session.execute(
+                select(CommunicationLog).where(
+                    CommunicationLog.idempotency_key == idempotency_key
+                )
+            )
+        ).scalar_one_or_none()
+
+    @staticmethod
+    def _idempotency_key(data) -> str | None:
+        value = getattr(data, "idempotency_key", None)
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    @staticmethod
+    def _with_idempotency(response: dict, key: str | None) -> dict:
+        if not key:
+            return response
+        return {**response, "idempotency_key": key, "idempotent_replay": False}
+
+    @staticmethod
+    def _idempotent_response(log: CommunicationLog | None, id_field: str) -> dict:
+        if not log:
+            return {id_field: None, "status": "pending", "idempotent_replay": True}
+        metadata = log.metadata_ or {}
+        response = dict(metadata.get("response") or {})
+        if not response:
+            response = {id_field: log.id, "status": log.status}
+        response["idempotency_key"] = log.idempotency_key
+        response["idempotent_replay"] = True
+        return response
 
     @staticmethod
     def _twilio_configured() -> bool:
@@ -284,8 +509,29 @@ class CommsGateway:
         )
 
     @staticmethod
+    def _twilio_whatsapp_configured() -> bool:
+        return bool(CommsGateway._twilio_configured() and settings.twilio_whatsapp_from_number)
+
+    @staticmethod
     def _smtp_configured() -> bool:
         return bool(settings.smtp_host and settings.smtp_from_email)
+
+    @staticmethod
+    def _jasmin_configured() -> bool:
+        return bool(
+            settings.jasmin_host
+            and settings.jasmin_username
+            and settings.jasmin_password
+            and settings.jasmin_from_number
+        )
+
+    @staticmethod
+    def _slack_configured() -> bool:
+        return bool(settings.slack_webhook_url)
+
+    @staticmethod
+    def _telegram_configured() -> bool:
+        return bool(settings.telegram_bot_token)
 
     @staticmethod
     def _status_item(
@@ -318,6 +564,21 @@ class CommsGateway:
             try:
                 return await asyncio.wait_for(
                     asyncio.to_thread(operation),
+                    timeout=settings.communications_provider_timeout_seconds,
+                )
+            except Exception as exc:
+                last_error = exc
+                if attempt < attempts - 1:
+                    await asyncio.sleep(settings.communications_retry_backoff_seconds)
+        raise last_error or RuntimeError("Provider operation failed")
+
+    async def _with_async_retries(self, operation: Callable[[], Awaitable[object]]) -> object:
+        attempts = max(1, settings.communications_retry_attempts)
+        last_error = None
+        for attempt in range(attempts):
+            try:
+                return await asyncio.wait_for(
+                    operation(),
                     timeout=settings.communications_provider_timeout_seconds,
                 )
             except Exception as exc:
@@ -373,3 +634,75 @@ class CommsGateway:
     def _smtp_login_if_configured(server) -> None:
         if settings.smtp_username or settings.smtp_password:
             server.login(settings.smtp_username, settings.smtp_password)
+
+    async def _send_sms_jasmin(self, data, from_number: str | None) -> str:
+        scheme = "https" if settings.jasmin_use_tls else "http"
+        params = {
+            "username": settings.jasmin_username,
+            "password": settings.jasmin_password,
+            "from": from_number or settings.jasmin_from_number,
+            "to": data.to_number,
+            "content": data.message,
+        }
+        response = await self._with_async_retries(
+            lambda: self._http_request(
+                "GET",
+                f"{scheme}://{settings.jasmin_host}:{settings.jasmin_port}/send",
+                params=params,
+            )
+        )
+        return str(response.get("id") or response.get("text") or "jasmin-submitted")
+
+    async def _send_slack_message(self, data) -> str:
+        payload = {"text": data.message}
+        if data.recipient:
+            payload["channel"] = data.recipient
+        response = await self._with_async_retries(
+            lambda: self._http_request("POST", settings.slack_webhook_url, json=payload)
+        )
+        return str(response.get("text") or "slack-submitted")
+
+    async def _send_telegram_message(self, data) -> str:
+        response = await self._with_async_retries(
+            lambda: self._http_request(
+                "POST",
+                f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage",
+                json={"chat_id": data.recipient, "text": data.message},
+            )
+        )
+        result = response.get("result") if isinstance(response.get("result"), dict) else {}
+        return str(result.get("message_id") or "telegram-submitted")
+
+    async def _send_twilio_whatsapp(self, data) -> str:
+        client = self._get_twilio()
+        if not client:
+            raise RuntimeError("Twilio client is not configured")
+        message = await self._with_retries(
+            lambda: client.messages.create(
+                to=self._normalize_whatsapp_number(data.recipient),
+                from_=self._normalize_whatsapp_number(settings.twilio_whatsapp_from_number),
+                body=data.message,
+            )
+        )
+        return message.sid
+
+    @staticmethod
+    def _normalize_whatsapp_number(number: str) -> str:
+        return number if number.startswith("whatsapp:") else f"whatsapp:{number}"
+
+    @staticmethod
+    async def _http_request(
+        method: str,
+        url: str,
+        *,
+        params: dict | None = None,
+        json: dict | None = None,
+    ) -> dict:
+        timeout = settings.communications_provider_timeout_seconds
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.request(method, url, params=params, json=json)
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            if "application/json" in content_type:
+                return response.json()
+            return {"text": response.text}

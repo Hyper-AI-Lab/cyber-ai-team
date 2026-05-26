@@ -47,6 +47,8 @@ def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
     assert "CREATE INDEX IF NOT EXISTS ix_agents_role_family" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_memory_entries_namespace" in sql
     assert "CREATE UNIQUE INDEX IF NOT EXISTS ix_role_manifests_name" in sql
+    assert "ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128)" in sql
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS ix_communication_logs_idempotency_key" in sql
 
 
 def test_initial_migration_preserves_pre_alembic_approval_compatibility():

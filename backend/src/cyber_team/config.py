@@ -83,12 +83,21 @@ class Settings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
+    twilio_whatsapp_from_number: str = ""
     asterisk_host: str = "localhost"
     asterisk_port: int = 8089
     asterisk_ari_user: str = "cyberteam"
     asterisk_ari_password: str = "changeme-ari-password"
     jasmin_host: str = "localhost"
     jasmin_port: int = 1401
+    jasmin_username: str = ""
+    jasmin_password: str = ""
+    jasmin_from_number: str = ""
+    jasmin_use_tls: bool = False
+
+    # Messaging
+    slack_webhook_url: str = ""
+    telegram_bot_token: str = ""
 
     # Email
     smtp_host: str = ""

@@ -65,3 +65,173 @@ async def test_with_retries_retries_provider_failures(monkeypatch):
 
     assert result == "ok"
     assert attempts["count"] == 2
+
+
+def test_idempotent_response_replays_stored_provider_result():
+    log = SimpleNamespace(
+        id="log-1",
+        status="sent",
+        idempotency_key="email:welcome:customer-1",
+        metadata_={
+            "response": {
+                "email_id": "email-1",
+                "status": "sent",
+                "provider": "smtp",
+            }
+        },
+    )
+
+    response = CommsGateway._idempotent_response(log, id_field="email_id")
+
+    assert response["email_id"] == "email-1"
+    assert response["status"] == "sent"
+    assert response["idempotency_key"] == "email:welcome:customer-1"
+    assert response["idempotent_replay"] is True
+
+
+def test_integration_status_reports_live_messaging_providers(monkeypatch):
+    monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.test/abc")
+    monkeypatch.setattr(settings, "telegram_bot_token", "telegram-token")
+    monkeypatch.setattr(settings, "twilio_account_sid", "sid")
+    monkeypatch.setattr(settings, "twilio_auth_token", "token")
+    monkeypatch.setattr(settings, "twilio_phone_number", "+15550000000")
+    monkeypatch.setattr(settings, "twilio_whatsapp_from_number", "+15551112222")
+
+    status = CommsGateway().integration_status()
+    modes = {
+        (item["channel"], item["provider"]): item["mode"]
+        for item in status
+    }
+
+    assert modes[("slack", "slack_webhook")] == "live"
+    assert modes[("telegram", "telegram_bot")] == "live"
+    assert modes[("whatsapp", "twilio_whatsapp")] == "live"
+
+
+@pytest.mark.asyncio
+async def test_send_slack_message_uses_configured_webhook(monkeypatch):
+    monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.test/abc")
+    monkeypatch.setattr(settings, "communications_allow_simulation", False)
+    gateway = CommsGateway()
+    calls = []
+    records = []
+
+    async def fake_reserve_comm(**kwargs):
+        return None, False
+
+    async def fake_record_comm(**kwargs):
+        records.append(kwargs)
+
+    async def fake_http_request(method, url, *, params=None, json=None):
+        calls.append({"method": method, "url": url, "params": params, "json": json})
+        return {"text": "ok"}
+
+    monkeypatch.setattr(gateway, "_reserve_comm", fake_reserve_comm)
+    monkeypatch.setattr(gateway, "_record_comm", fake_record_comm)
+    monkeypatch.setattr(gateway, "_http_request", fake_http_request)
+
+    result = await gateway.send_message(
+        SimpleNamespace(
+            platform="slack",
+            recipient="#sales",
+            message="Pipeline update",
+            agent_id="sales",
+            idempotency_key="slack:sales:update-1",
+        )
+    )
+
+    assert result["status"] == "sent"
+    assert result["provider"] == "slack_webhook"
+    assert result["idempotency_key"] == "slack:sales:update-1"
+    assert calls == [
+        {
+            "method": "POST",
+            "url": "https://hooks.slack.test/abc",
+            "params": None,
+            "json": {"text": "Pipeline update", "channel": "#sales"},
+        }
+    ]
+    assert records[0]["metadata"]["provider"] == "slack_webhook"
+
+
+@pytest.mark.asyncio
+async def test_send_telegram_message_uses_bot_api(monkeypatch):
+    monkeypatch.setattr(settings, "telegram_bot_token", "telegram-token")
+    monkeypatch.setattr(settings, "communications_allow_simulation", False)
+    gateway = CommsGateway()
+    calls = []
+
+    async def fake_reserve_comm(**kwargs):
+        return None, False
+
+    async def fake_record_comm(**kwargs):
+        return None
+
+    async def fake_http_request(method, url, *, params=None, json=None):
+        calls.append({"method": method, "url": url, "params": params, "json": json})
+        return {"result": {"message_id": 42}}
+
+    monkeypatch.setattr(gateway, "_reserve_comm", fake_reserve_comm)
+    monkeypatch.setattr(gateway, "_record_comm", fake_record_comm)
+    monkeypatch.setattr(gateway, "_http_request", fake_http_request)
+
+    result = await gateway.send_message(
+        SimpleNamespace(
+            platform="telegram",
+            recipient="12345",
+            message="Status update",
+            agent_id="support",
+            idempotency_key=None,
+        )
+    )
+
+    assert result["status"] == "sent"
+    assert result["provider"] == "telegram_bot"
+    assert calls[0]["url"] == "https://api.telegram.org/bottelegram-token/sendMessage"
+    assert calls[0]["json"] == {"chat_id": "12345", "text": "Status update"}
+
+
+@pytest.mark.asyncio
+async def test_send_sms_uses_jasmin_when_twilio_missing(monkeypatch):
+    monkeypatch.setattr(settings, "twilio_account_sid", "")
+    monkeypatch.setattr(settings, "twilio_auth_token", "")
+    monkeypatch.setattr(settings, "twilio_phone_number", "")
+    monkeypatch.setattr(settings, "jasmin_host", "jasmin")
+    monkeypatch.setattr(settings, "jasmin_port", 1401)
+    monkeypatch.setattr(settings, "jasmin_username", "api-user")
+    monkeypatch.setattr(settings, "jasmin_password", "api-password")
+    monkeypatch.setattr(settings, "jasmin_from_number", "CYBER")
+    monkeypatch.setattr(settings, "jasmin_use_tls", False)
+    monkeypatch.setattr(settings, "communications_allow_simulation", False)
+    gateway = CommsGateway()
+    calls = []
+
+    async def fake_reserve_comm(**kwargs):
+        return None, False
+
+    async def fake_record_comm(**kwargs):
+        return None
+
+    async def fake_http_request(method, url, *, params=None, json=None):
+        calls.append({"method": method, "url": url, "params": params, "json": json})
+        return {"text": "Success \"abc123\""}
+
+    monkeypatch.setattr(gateway, "_reserve_comm", fake_reserve_comm)
+    monkeypatch.setattr(gateway, "_record_comm", fake_record_comm)
+    monkeypatch.setattr(gateway, "_http_request", fake_http_request)
+
+    result = await gateway.send_sms(
+        SimpleNamespace(
+            to_number="+15551230000",
+            message="Hello",
+            from_number=None,
+            agent_id="support",
+            idempotency_key=None,
+        )
+    )
+
+    assert result["status"] == "sent"
+    assert result["message_sid"] == 'Success "abc123"'
+    assert calls[0]["url"] == "http://jasmin:1401/send"
+    assert calls[0]["params"]["username"] == "api-user"
+    assert calls[0]["params"]["from"] == "CYBER"

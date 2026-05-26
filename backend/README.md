@@ -47,6 +47,12 @@ through the `RATE_LIMIT_*` environment variables.
 `CommsGateway` reports runtime provider status through `GET /api/integrations/status`.
 Twilio is used for voice and SMS when `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
 and `TWILIO_PHONE_NUMBER` are set. SMTP is used for email when `SMTP_HOST` and
-`SMTP_FROM_EMAIL` are set. Telegram, WhatsApp, Slack, Asterisk, and Jasmin are not
-runtime send providers yet; their current status is reported as simulated, disabled,
-or Compose-profile-only depending on configuration.
+`SMTP_FROM_EMAIL` are set. Jasmin SMS is used when `JASMIN_USERNAME`,
+`JASMIN_PASSWORD`, and `JASMIN_FROM_NUMBER` are set and Twilio SMS is not
+configured. Slack incoming webhooks, Telegram Bot API, and Twilio WhatsApp are
+runtime messaging providers when their credentials are configured. Asterisk is
+still Compose-profile-only; runtime voice calls use Twilio.
+
+Outbound communication tools accept an optional `idempotency_key`. The gateway
+reserves that key in `communication_logs` before contacting a provider and stores
+the final response for replay, so client retries do not duplicate external sends.

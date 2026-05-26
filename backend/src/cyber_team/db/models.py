@@ -122,6 +122,7 @@ class CommunicationLog(Base):
     content: Mapped[str] = mapped_column(Text)
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
     status: Mapped[str] = mapped_column(String(20), default="sent")
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 

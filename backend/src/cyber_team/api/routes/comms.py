@@ -15,6 +15,7 @@ class CallRequest(BaseModel):
     agent_id: str | None = None
     context: str = ""
     from_number: str | None = None
+    idempotency_key: str | None = None
 
 
 class SMSRequest(BaseModel):
@@ -22,6 +23,7 @@ class SMSRequest(BaseModel):
     message: str
     agent_id: str | None = None
     from_number: str | None = None
+    idempotency_key: str | None = None
 
 
 class EmailRequest(BaseModel):
@@ -30,6 +32,7 @@ class EmailRequest(BaseModel):
     body: str
     agent_id: str | None = None
     cc: list[str] = Field(default_factory=list)
+    idempotency_key: str | None = None
 
 
 class MessageRequest(BaseModel):
@@ -37,6 +40,7 @@ class MessageRequest(BaseModel):
     recipient: str
     message: str
     agent_id: str | None = None
+    idempotency_key: str | None = None
 
 
 @router.post("/call")

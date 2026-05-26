@@ -322,6 +322,11 @@ class ToolRegistry:
                         required=False,
                         default=[],
                     ),
+                    ToolParameter(
+                        name="idempotency_key",
+                        description="Optional stable key to prevent duplicate sends",
+                        required=False,
+                    ),
                 ],
                 category="communications",
                 requires_approval=True,
@@ -337,6 +342,11 @@ class ToolRegistry:
                 parameters=[
                     ToolParameter(name="to_number", description="Recipient phone number"),
                     ToolParameter(name="message", description="SMS message text"),
+                    ToolParameter(
+                        name="idempotency_key",
+                        description="Optional stable key to prevent duplicate sends",
+                        required=False,
+                    ),
                 ],
                 category="communications",
                 requires_approval=True,
@@ -352,6 +362,11 @@ class ToolRegistry:
                 parameters=[
                     ToolParameter(name="to_number", description="Recipient phone number"),
                     ToolParameter(name="context", description="What to say on the call"),
+                    ToolParameter(
+                        name="idempotency_key",
+                        description="Optional stable key to prevent duplicate calls",
+                        required=False,
+                    ),
                 ],
                 category="communications",
                 requires_approval=True,
@@ -372,6 +387,11 @@ class ToolRegistry:
                     ),
                     ToolParameter(name="recipient", description="Recipient identifier"),
                     ToolParameter(name="message", description="Message text"),
+                    ToolParameter(
+                        name="idempotency_key",
+                        description="Optional stable key to prevent duplicate sends",
+                        required=False,
+                    ),
                 ],
                 category="communications",
                 requires_approval=True,
@@ -1075,6 +1095,7 @@ class ToolRegistry:
         subject: str,
         body: str,
         cc: list = None,
+        idempotency_key: str = None,
     ):
         if not self._comms_gateway:
             return "Communications gateway not available"
@@ -1087,11 +1108,17 @@ class ToolRegistry:
                 "body": body,
                 "agent_id": None,
                 "cc": cc or [],
+                "idempotency_key": idempotency_key,
             },
         )()
         return await self._comms_gateway.send_email(data)
 
-    async def _tool_send_sms(self, to_number: str, message: str):
+    async def _tool_send_sms(
+        self,
+        to_number: str,
+        message: str,
+        idempotency_key: str = None,
+    ):
         if not self._comms_gateway:
             return "Communications gateway not available"
         data = type(
@@ -1102,11 +1129,17 @@ class ToolRegistry:
                 "message": message,
                 "agent_id": None,
                 "from_number": None,
+                "idempotency_key": idempotency_key,
             },
         )()
         return await self._comms_gateway.send_sms(data)
 
-    async def _tool_make_call(self, to_number: str, context: str):
+    async def _tool_make_call(
+        self,
+        to_number: str,
+        context: str,
+        idempotency_key: str = None,
+    ):
         if not self._comms_gateway:
             return "Communications gateway not available"
         data = type(
@@ -1117,11 +1150,18 @@ class ToolRegistry:
                 "context": context,
                 "agent_id": None,
                 "from_number": None,
+                "idempotency_key": idempotency_key,
             },
         )()
         return await self._comms_gateway.make_call(data)
 
-    async def _tool_send_message(self, platform: str, recipient: str, message: str):
+    async def _tool_send_message(
+        self,
+        platform: str,
+        recipient: str,
+        message: str,
+        idempotency_key: str = None,
+    ):
         if not self._comms_gateway:
             return "Communications gateway not available"
         data = type(
@@ -1132,6 +1172,7 @@ class ToolRegistry:
                 "recipient": recipient,
                 "message": message,
                 "agent_id": None,
+                "idempotency_key": idempotency_key,
             },
         )()
         return await self._comms_gateway.send_message(data)
