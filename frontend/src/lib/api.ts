@@ -153,6 +153,10 @@ class ApiClient {
     return this.request(`/api/dashboard/recent-activity?limit=${limit}`);
   }
 
+  async getIntegrationStatus() {
+    return this.request('/api/integrations/status');
+  }
+
   // Agents
   async listAgents() {
     return this.request('/api/agents/');

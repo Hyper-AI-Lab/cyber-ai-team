@@ -48,15 +48,20 @@ Completed in the current implementation pass:
 - A disposable migration rehearsal script now validates Alembic upgrade behavior against
   a pre-Alembic approval schema.
 - PostgreSQL/Qdrant backup and restore runbooks are documented.
+- Runtime communication status is now exposed through the API and console, SMTP email
+  sending is implemented, and production startup rejects simulated communications.
+- Liveness and readiness endpoints now distinguish process health from dependency
+  readiness for PostgreSQL, Redis, Qdrant, Temporal, and OPA.
 
 Still pending:
 
 - Scheduled/staging execution and alerting around Compose smoke failures.
 - Migration rehearsal against a representative production-like data volume.
 - Formal retention/data deletion policies.
-- External integration timeout/retry/circuit-breaker policy.
+- Circuit-breaker policy for repeated external integration failures.
 - Deeper observability dashboards, alert rules, and operational runbooks.
 - Release promotion, rollback, image scanning, and staging deployment flow.
+- Runtime provider adapters for Telegram, WhatsApp, Slack, Asterisk, and Jasmin.
 
 ## Phase 1: Repeatable Quality Gates
 
@@ -144,6 +149,7 @@ Goal: operators can detect, diagnose, and recover from failures.
 - Add readiness endpoints distinct from liveness.
 - Add request IDs and structured logs.
 - Add retry/timeouts/circuit breaker policy for external calls.
+- [x] Add initial timeout/retry policy for outbound communication providers.
 - Add idempotency keys for side-effectful tool execution where applicable.
 - Add Prometheus metrics for approvals, tool executions, LLM failures, workflow states,
   queue delays, and auth failures.

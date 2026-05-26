@@ -25,6 +25,8 @@ services:
         condition: service_started
       temporal:
         condition: service_started
+      opa:
+        condition: service_started
     volumes:
       - core-data:/app/data
     healthcheck:
@@ -191,7 +193,7 @@ services:
   opa:
     image: openpolicyagent/opa:latest
     container_name: cyberteam-opa
-    command: run --server /policies
+    command: run --server --addr=0.0.0.0:8181 /policies
     ports:
       - "8181:8181"
     volumes:

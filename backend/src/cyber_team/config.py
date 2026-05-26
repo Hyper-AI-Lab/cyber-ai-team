@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     rate_limit_chat_per_minute: int = 60
     rate_limit_tool_execute_per_minute: int = 30
     rate_limit_approval_per_minute: int = 30
+    communications_allow_simulation: bool = True
+    communications_retry_attempts: int = 2
+    communications_retry_backoff_seconds: float = 0.25
+    communications_provider_timeout_seconds: float = 10.0
 
     # Mistral / LLM
     mistral_api_key: str = ""
@@ -83,6 +87,17 @@ class Settings(BaseSettings):
     asterisk_port: int = 8089
     asterisk_ari_user: str = "cyberteam"
     asterisk_ari_password: str = "changeme-ari-password"
+    jasmin_host: str = "localhost"
+    jasmin_port: int = 1401
+
+    # Email
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_use_tls: bool = False
+    smtp_starttls: bool = True
 
     # Langfuse
     langfuse_public_key: str = ""
@@ -124,6 +139,7 @@ class Settings(BaseSettings):
             "OWNER_PASSWORD_HASH": not self.owner_password_hash,
             "POSTGRES_PASSWORD": self.postgres_password == "changeme-postgres-password",
             "REDIS_PASSWORD": self.redis_password == "changeme-redis-password",
+            "COMMUNICATIONS_ALLOW_SIMULATION": self.communications_allow_simulation,
         }
         invalid = [name for name, is_invalid in insecure_values.items() if is_invalid]
         if invalid:

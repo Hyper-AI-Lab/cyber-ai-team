@@ -91,4 +91,17 @@ describe('ApiClient', () => {
       'Bearer token with spaces',
     )
   })
+
+  it('fetches integration status through the authenticated API client', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ communications: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.getIntegrationStatus()
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/integrations/status')
+    expect(fetchMock.mock.calls[0][1]?.headers.Authorization).toBe('Bearer access-1')
+  })
 })

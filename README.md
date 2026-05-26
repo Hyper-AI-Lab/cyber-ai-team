@@ -12,11 +12,11 @@ Compositional stack built on open-source components:
 | Durable Workflows | Temporal |
 | Memory | 4-layer: Pinned → Workflow → Retrieval (Mem0+Qdrant) → Canonical (PostgreSQL+ERPNext) |
 | Interoperability | MCP (agent↔tool), A2A (agent↔agent) |
-| Communications | Asterisk (voice), Jasmin (SMS), Twilio, Pipecat |
-| System of Record | ERPNext, PostgreSQL |
-| Owner Console | React + TailwindCSS |
-| Governance | Keycloak, OpenFGA, OPA, Infisical |
-| Observability | Langfuse, Prometheus, Grafana |
+| Communications | Runtime: Twilio voice/SMS, SMTP email, simulated fallback; optional profiles: Asterisk, Jasmin |
+| System of Record | PostgreSQL; ERPNext client and optional Compose profile |
+| Owner Console | Next.js + TailwindCSS |
+| Governance | Runtime: owner JWT auth + OPA/local authorization; optional profiles: Keycloak, OpenFGA |
+| Observability | Runtime: `/metrics`; optional profiles: Langfuse, Prometheus, Grafana |
 | LLM Gateway | LiteLLM (Mistral default) |
 | Deployment | Docker Compose (~15 containers) |
 
@@ -68,7 +68,10 @@ cyber-team start --build
 
 > Make sure your firewall allows ports: 3001, 8000, 3500, 3100
 
-Sign in with `OWNER_EMAIL` and `OWNER_PASSWORD` from `.env`. For production, set `ENVIRONMENT=production`, replace all default secrets, set `OWNER_PASSWORD_HASH`, and configure `CORS_ALLOWED_ORIGINS` to the exact console URL instead of `*`.
+Sign in with `OWNER_EMAIL` and `OWNER_PASSWORD` from `.env`. For production, set
+`ENVIRONMENT=production`, replace all default secrets, set `OWNER_PASSWORD_HASH`,
+set `COMMUNICATIONS_ALLOW_SIMULATION=false`, and configure `CORS_ALLOWED_ORIGINS`
+to the exact console URL instead of `*`.
 
 ### 4. Set Up Your Team
 
@@ -122,11 +125,17 @@ Approval policies are enforced via OPA and managed through the **Approvals** pan
 
 ## Communications
 
-The system supports multiple channels:
-- **Voice**: Asterisk PBX + Pipecat for real-time STT-LLM-TTS
-- **SMS**: Jasmin gateway or Twilio
-- **Email**: SMTP/IMAP integration
-- **Messaging**: Telegram, WhatsApp webhooks
+Runtime communication support is explicit in the **Integrations** console view and
+`GET /api/integrations/status`.
+
+- **Voice**: Twilio outbound calls when `TWILIO_*` credentials are configured;
+  otherwise simulated in development if `COMMUNICATIONS_ALLOW_SIMULATION=true`.
+- **SMS**: Twilio outbound SMS under the same credential and simulation rules.
+- **Email**: SMTP outbound email when `SMTP_HOST` and `SMTP_FROM_EMAIL` are set.
+- **Messaging**: Telegram, WhatsApp, and Slack adapters are planned; current
+  runtime behavior is simulated only when simulation is enabled.
+- **Asterisk/Jasmin**: Docker Compose profiles are present for experimentation,
+  but the runtime gateways do not route through them yet.
 
 ## API
 
@@ -140,6 +149,8 @@ Key endpoints:
 - `POST /api/memory/recall` — Search memories
 - `GET /api/dashboard/kpis` — Dashboard KPIs
 - `GET /api/dashboard/approval-queue` — Pending approvals
+- `GET /api/integrations/status` — Runtime integration modes
+- `GET /live` and `GET /ready` — Liveness and dependency readiness
 
 ## Development
 

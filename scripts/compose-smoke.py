@@ -89,6 +89,8 @@ def main() -> int:
     print(f"Waiting for API health at {API_BASE}/health")
     health = wait_for_json(f"{API_BASE}/health")
     assert_true(health.get("status") == "ok", f"Unexpected health response: {health}")
+    readiness = wait_for_json(f"{API_BASE}/ready")
+    assert_true(readiness.get("status") == "ready", f"Unexpected readiness response: {readiness}")
 
     print(f"Waiting for UI at {UI_BASE}")
     wait_for_ui(UI_BASE)
@@ -108,6 +110,18 @@ def main() -> int:
     assert_true(status == 200, f"KPI request failed: {status} {kpis}")
     for key in ["total_agents", "total_workflows", "pending_approvals", "running_workflows"]:
         assert_true(key in kpis, f"Missing KPI key {key}: {kpis}")
+
+    print("Reading integration status")
+    status, integrations = request_json(
+        "GET",
+        f"{API_BASE}/api/integrations/status",
+        token=access_token,
+    )
+    assert_true(status == 200, f"Integration status failed: {status} {integrations}")
+    assert_true(
+        any(item.get("channel") == "email" for item in integrations.get("communications", [])),
+        f"Unexpected integration payload: {integrations}",
+    )
 
     print("Minting one-time WebSocket ticket")
     status, ticket_response = request_json(
@@ -167,7 +181,7 @@ def main() -> int:
     )
     assert_true(status == 200, f"Tool replay failed: {status} {replay}")
     assert_true(replay.get("success") is True, f"Expected tool replay success: {replay}")
-    assert_true((replay.get("output") or {}).get("status") == "simulated", replay)
+    assert_true((replay.get("output") or {}).get("status") in {"simulated", "sent"}, replay)
 
     print("Checking communication log side effect")
     status, logs = request_json(

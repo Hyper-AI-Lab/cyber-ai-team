@@ -13,6 +13,7 @@ import {
   Settings,
   Zap,
   LogOut,
+  PlugZap,
 } from 'lucide-react'
 
 interface SidebarProps {
@@ -29,6 +30,7 @@ const navItems: { view: ViewName; label: string; icon: React.ElementType }[] = [
   { view: 'workflows', label: 'Workflows', icon: GitBranch },
   { view: 'chat', label: 'Chat', icon: MessageSquare },
   { view: 'approvals', label: 'Approvals', icon: ShieldCheck },
+  { view: 'integrations', label: 'Integrations', icon: PlugZap },
   { view: 'audit', label: 'Audit Trail', icon: ScrollText },
 ]
 

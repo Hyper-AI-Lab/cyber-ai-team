@@ -12,6 +12,7 @@ def production_settings(**overrides):
         "postgres_password": "prod-postgres-password",
         "redis_password": "prod-redis-password",
         "cors_allowed_origins": "https://console.example.com",
+        "communications_allow_simulation": False,
     }
     values.update(overrides)
     return Settings(**values)
@@ -28,6 +29,13 @@ def test_production_runtime_config_rejects_wildcard_cors():
     settings = production_settings(cors_allowed_origins="*")
 
     with pytest.raises(RuntimeError, match="wildcard CORS"):
+        settings.validate_runtime_config()
+
+
+def test_production_runtime_config_rejects_simulated_communications():
+    settings = production_settings(communications_allow_simulation=True)
+
+    with pytest.raises(RuntimeError, match="COMMUNICATIONS_ALLOW_SIMULATION"):
         settings.validate_runtime_config()
 
 

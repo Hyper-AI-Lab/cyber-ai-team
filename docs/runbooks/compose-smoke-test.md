@@ -8,10 +8,10 @@ minimal owner workflow.
 `scripts/compose-smoke.sh` starts the core Compose services and runs
 `scripts/compose-smoke.py`, which checks:
 
-- API health endpoint returns `ok`.
+- API health endpoint returns `ok` and readiness dependencies report `ready`.
 - Owner console UI serves a page.
 - Owner login returns an access token.
-- Dashboard KPIs are readable with the token.
+- Dashboard KPIs and integration status are readable with the token.
 - A one-time WebSocket ticket can be minted.
 - An approval-gated `send_email` tool creates an approval request.
 - The approval appears in the queue, can be approved, and can be replayed once.
@@ -41,7 +41,8 @@ Docker Compose stack.
 
 ## Troubleshooting
 
-- If API health times out, inspect `docker compose logs core postgres temporal`.
+- If API health or readiness times out, inspect `docker compose logs core postgres redis
+  qdrant temporal opa`.
 - If login fails, verify `OWNER_EMAIL` and `OWNER_PASSWORD` match the Compose
   environment.
 - If approval replay fails, inspect `docker compose logs core` and the latest

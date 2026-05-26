@@ -1,12 +1,18 @@
 """FastAPI application entry point."""
 
+import asyncio
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from redis.asyncio import Redis
+from sqlalchemy import text
 from starlette.requests import Request
+from starlette.responses import JSONResponse
+from temporalio.client import Client
 
 from cyber_team.agents.manager import AgentManager
 from cyber_team.agents.orchestrator import Orchestrator
@@ -17,6 +23,7 @@ from cyber_team.api.routes import (
     chat,
     comms,
     dashboard,
+    integrations,
     memory,
     roles,
     tools,
@@ -27,7 +34,7 @@ from cyber_team.audit.service import AuditService
 from cyber_team.authorization.service import AuthorizationService
 from cyber_team.comms.gateway import CommsGateway
 from cyber_team.config import settings
-from cyber_team.db import init_db
+from cyber_team.db import async_session, init_db
 from cyber_team.integrations.erpnext import ERPNextClient
 from cyber_team.memory.service import MemoryService
 from cyber_team.observability.metrics import MetricsService
@@ -166,11 +173,42 @@ app.include_router(
     tags=["audit"],
     dependencies=protected_dependencies,
 )
+app.include_router(
+    integrations.router,
+    prefix="/api/integrations",
+    tags=["integrations"],
+    dependencies=protected_dependencies,
+)
 
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "0.1.0"}
+
+
+@app.get("/live")
+async def live():
+    return {"status": "ok", "version": "0.1.0"}
+
+
+@app.get("/ready")
+async def ready():
+    checks = [
+        await _readiness_check("postgres", _check_postgres),
+        await _readiness_check("redis", _check_redis),
+        await _readiness_check("qdrant", _check_qdrant),
+        await _readiness_check("temporal", _check_temporal),
+        await _readiness_check("opa", _check_opa),
+    ]
+    ready_status = all(check["status"] == "ok" for check in checks)
+    return JSONResponse(
+        status_code=200 if ready_status else 503,
+        content={
+            "status": "ready" if ready_status else "degraded",
+            "version": "0.1.0",
+            "checks": checks,
+        },
+    )
 
 
 @app.get("/metrics")
@@ -179,3 +217,47 @@ async def metrics():
         app.state.metrics_service.render_prometheus(),
         media_type="text/plain; version=0.0.4",
     )
+
+
+async def _readiness_check(name: str, checker: Callable[[], object]) -> dict:
+    try:
+        await checker()
+        return {"name": name, "status": "ok"}
+    except Exception as exc:
+        return {"name": name, "status": "failed", "error": str(exc)}
+
+
+async def _check_postgres() -> None:
+    async with async_session() as session:
+        await session.execute(text("SELECT 1"))
+
+
+async def _check_redis() -> None:
+    client = Redis.from_url(
+        settings.redis_url,
+        socket_connect_timeout=2,
+        socket_timeout=2,
+    )
+    try:
+        await client.ping()
+    finally:
+        await client.aclose()
+
+
+async def _check_qdrant() -> None:
+    async with httpx.AsyncClient(timeout=2.0) as client:
+        response = await client.get(f"{settings.qdrant_url}/healthz")
+        response.raise_for_status()
+
+
+async def _check_temporal() -> None:
+    await asyncio.wait_for(
+        Client.connect(settings.temporal_url, namespace=settings.temporal_namespace),
+        timeout=2.0,
+    )
+
+
+async def _check_opa() -> None:
+    async with httpx.AsyncClient(timeout=2.0) as client:
+        response = await client.get(f"{settings.opa_api_url}/health")
+        response.raise_for_status()

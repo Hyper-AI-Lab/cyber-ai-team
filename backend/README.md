@@ -28,7 +28,10 @@ fallback is disabled by default and can be enabled for local experiments with
 ## Security Defaults
 
 Production startup requires `OWNER_PASSWORD_HASH`; plaintext `OWNER_PASSWORD` is only
-for development. Generate a bcrypt hash with:
+for development. Production also refuses to start while
+`COMMUNICATIONS_ALLOW_SIMULATION=true`, so real outbound providers must be configured
+or communication tools will fail closed instead of pretending to send. Generate a bcrypt
+hash with:
 
 ```bash
 python -m cyber_team.cli hash-password
@@ -38,3 +41,12 @@ The backend issues short-lived one-time WebSocket tickets through
 `POST /api/auth/ws-ticket` instead of putting long-lived access tokens in WebSocket
 query strings. High-risk actions have in-memory per-minute rate limits configurable
 through the `RATE_LIMIT_*` environment variables.
+
+## Communications
+
+`CommsGateway` reports runtime provider status through `GET /api/integrations/status`.
+Twilio is used for voice and SMS when `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
+and `TWILIO_PHONE_NUMBER` are set. SMTP is used for email when `SMTP_HOST` and
+`SMTP_FROM_EMAIL` are set. Telegram, WhatsApp, Slack, Asterisk, and Jasmin are not
+runtime send providers yet; their current status is reported as simulated, disabled,
+or Compose-profile-only depending on configuration.

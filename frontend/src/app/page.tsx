@@ -10,6 +10,7 @@ import WorkflowsView from '@/components/WorkflowsView'
 import ChatView from '@/components/ChatView'
 import ApprovalsView from '@/components/ApprovalsView'
 import AuditView from '@/components/AuditView'
+import IntegrationsView from '@/components/IntegrationsView'
 
 export type ViewName =
   | 'dashboard'
@@ -19,6 +20,7 @@ export type ViewName =
   | 'chat'
   | 'approvals'
   | 'audit'
+  | 'integrations'
 
 export default function Home() {
   const [activeView, setActiveView] = useState<ViewName>('dashboard')
@@ -184,6 +186,8 @@ export default function Home() {
         return <ApprovalsView approvals={approvals} onRefresh={refreshData} />
       case 'audit':
         return <AuditView />
+      case 'integrations':
+        return <IntegrationsView />
     }
   }
 

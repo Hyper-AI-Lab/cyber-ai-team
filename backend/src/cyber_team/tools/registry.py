@@ -363,7 +363,7 @@ class ToolRegistry:
         self.register(
             ToolDefinition(
                 name="send_message",
-                description="Send a message via Telegram, WhatsApp, or Slack",
+                description="Send a message via a configured messaging provider",
                 parameters=[
                     ToolParameter(
                         name="platform",
