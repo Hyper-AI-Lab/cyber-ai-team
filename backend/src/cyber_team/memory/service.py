@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import uuid
+from datetime import UTC, datetime
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -77,7 +78,9 @@ class MemoryService:
                 metadata_=data.metadata,
                 importance=data.importance,
                 created_at=now,
-                expires_at=data.metadata.get("expires_at") if data.metadata else None,
+                expires_at=self._parse_expires_at(
+                    data.metadata.get("expires_at") if data.metadata else None
+                ),
             )
             session.add(entry)
             await session.commit()
@@ -251,11 +254,16 @@ class MemoryService:
 
         if not self._qdrant:
             return
+        await self.delete_memory_points([memory_id])
+
+    async def delete_memory_points(self, memory_ids: list[str]) -> None:
+        if not self._qdrant or not memory_ids:
+            return
         try:
             await asyncio.to_thread(
                 self._qdrant.delete,
                 collection_name=COLLECTION_NAME,
-                points_selector=[memory_id],
+                points_selector=memory_ids,
             )
         except Exception as e:
             logger.warning(f"Failed to delete from Qdrant: {e}")
@@ -316,3 +324,15 @@ class MemoryService:
             logger.warning(f"Embedding failed, using random vector: {e}")
             import random
             return [random.gauss(0, 0.1) for _ in range(VECTOR_SIZE)]
+
+    @staticmethod
+    def _parse_expires_at(value) -> datetime | None:
+        if value is None or isinstance(value, datetime):
+            return value
+        if isinstance(value, str) and value.strip():
+            normalized = value.strip().replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo:
+                parsed = parsed.astimezone(UTC).replace(tzinfo=None)
+            return parsed
+        return None

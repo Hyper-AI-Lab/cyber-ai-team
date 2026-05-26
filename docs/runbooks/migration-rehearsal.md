@@ -20,12 +20,16 @@ The rehearsal script:
 - Runs `alembic upgrade head`.
 - Verifies the Alembic revision, legacy row preservation, approval column defaults,
   removal of the old approval foreign key, and creation of the new core tables.
+- Resets the disposable database, upgrades to the first Alembic revision, loads
+  representative synthetic production data, and upgrades that populated schema to head.
 - Removes the disposable container by default.
 
 Useful options:
 
 - `MIGRATION_REHEARSAL_PORT=55434` changes the local PostgreSQL port.
 - `MIGRATION_REHEARSAL_CLEANUP=0` keeps the container for manual inspection.
+- `MIGRATION_REHEARSAL_SYNTHETIC_ROWS=1000` increases representative seed volume.
+- `MIGRATION_REHEARSAL_RUN_REPRESENTATIVE=0` runs only the legacy pre-Alembic path.
 - `ALEMBIC_BIN=/path/to/alembic` overrides the Alembic executable.
 
 ## Manual Staging Rehearsal

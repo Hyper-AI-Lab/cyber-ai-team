@@ -1,5 +1,7 @@
 """Cyber-Team CLI entry point."""
 
+import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -58,6 +60,51 @@ def hash_password(password):
     from cyber_team.api.security import pwd_context
 
     click.echo(pwd_context.hash(password))
+
+
+@main.command("retention-cleanup")
+@click.option("--execute", is_flag=True, help="Delete records instead of previewing counts")
+def retention_cleanup(execute):
+    """Apply configured retention windows to local application data."""
+    from cyber_team.operations.retention import RetentionService
+
+    result = asyncio.run(RetentionService().cleanup(dry_run=not execute))
+    click.echo(json.dumps(result, indent=2, sort_keys=True))
+
+
+@main.command("subject-export")
+@click.argument("subject")
+@click.option("--output", type=click.Path(dir_okay=False), help="Write JSON export to a file")
+def subject_export(subject, output):
+    """Export structured records tied to a customer/person/agent subject identifier."""
+    from cyber_team.operations.retention import RetentionService
+
+    result = asyncio.run(RetentionService().export_subject_data(subject))
+    rendered = json.dumps(result, indent=2, sort_keys=True)
+    if output:
+        with open(output, "w", encoding="utf-8") as handle:
+            handle.write(rendered)
+            handle.write("\n")
+    else:
+        click.echo(rendered)
+
+
+@main.command("subject-delete")
+@click.argument("subject")
+@click.option("--execute", is_flag=True, help="Delete records instead of previewing counts")
+@click.option("--include-audit", is_flag=True, help="Also delete matching historical audit events")
+def subject_delete(subject, execute, include_audit):
+    """Delete structured records tied to a customer/person/agent subject identifier."""
+    from cyber_team.operations.retention import RetentionService
+
+    result = asyncio.run(
+        RetentionService().delete_subject_data(
+            subject,
+            dry_run=not execute,
+            include_audit=include_audit,
+        )
+    )
+    click.echo(json.dumps(result, indent=2, sort_keys=True))
 
 
 @main.command()

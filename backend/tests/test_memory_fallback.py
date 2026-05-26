@@ -1,3 +1,4 @@
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -60,6 +61,12 @@ def patch_session(monkeypatch, session):
         "async_session",
         lambda: FakeSessionContext(session),
     )
+
+
+def test_parse_expires_at_accepts_iso_datetime_strings():
+    parsed = MemoryService._parse_expires_at("2026-05-26T10:30:00Z")
+
+    assert parsed == datetime(2026, 5, 26, 10, 30)
 
 
 @pytest.mark.asyncio

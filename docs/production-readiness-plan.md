@@ -61,13 +61,18 @@ Completed in the current implementation pass:
 - Prometheus alert rules and a provisioned Grafana operations dashboard are included
   in the observability profile.
 - Release candidate and rollback scripts are documented in the release runbook.
+- Release checks can build and scan Docker images, and a dry-run-first staging promotion
+  script consumes release manifests.
+- Migration rehearsal now includes a representative seeded `0001` schema upgraded to
+  the current Alembic head.
+- Retention cleanup plus structured subject export/delete operations are implemented
+  and documented.
 
 Still pending:
 
 - Scheduled/staging execution of release checks, Compose smoke, and alert tests.
-- Migration rehearsal against a representative production-like data volume.
-- Formal retention/data deletion policies.
-- Image scanning and staging deployment promotion flow.
+- Environment-specific production deployment manifests and promotion approvals.
+- Restore drills against production-scale backup artifacts.
 - Full Asterisk media/TTS workflow beyond ARI call origination.
 
 ## Phase 1: Repeatable Quality Gates
@@ -136,11 +141,12 @@ Exit criteria:
 
 Goal: migrations and data changes are reversible or rehearsed.
 
-- [ ] Add staging migration rehearsal against a copy or synthetic representative dataset.
+- [x] Add staging migration rehearsal against a copy or synthetic representative dataset.
 - [x] Add migration tests for existing pre-Alembic schemas.
 - [x] Add backup and restore runbook for PostgreSQL and Qdrant.
-- Add retention policy for memory, audit, communications, and workflow run data.
-- Add data export/delete policy for customer/person-related records.
+- [x] Add retention policy for memory, audit, communications, workflow run, and approval
+  data.
+- [x] Add data export/delete policy for customer/person-related records.
 - Add seed data scripts for local/staging smoke tests.
 
 Exit criteria:
@@ -178,10 +184,10 @@ Exit criteria:
 Goal: releases are repeatable, observable, and recoverable.
 
 - Pin dependency versions with generated lockfiles for backend and frontend.
-- Build and scan Docker images in CI.
+- [x] Build and scan Docker images in scheduled/manual CI.
 - Add environment-specific compose or deployment manifests.
 - [x] Add release checklist and rollback checklist.
-- Add staging environment promotion flow.
+- [x] Add staging environment promotion flow.
 - Add versioning/build metadata surfaced in API health and UI.
 - Add smoke tests after deployment.
 

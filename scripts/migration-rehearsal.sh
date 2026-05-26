@@ -9,7 +9,10 @@ POSTGRES_DB="${POSTGRES_DB:-cyberteam}"
 POSTGRES_USER="${POSTGRES_USER:-cyberteam}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-changeme-postgres-password}"
 MIGRATION_REHEARSAL_CLEANUP="${MIGRATION_REHEARSAL_CLEANUP:-1}"
+MIGRATION_REHEARSAL_RUN_REPRESENTATIVE="${MIGRATION_REHEARSAL_RUN_REPRESENTATIVE:-1}"
+MIGRATION_REHEARSAL_SYNTHETIC_ROWS="${MIGRATION_REHEARSAL_SYNTHETIC_ROWS:-25}"
 BACKEND_VENV="${BACKEND_VENV:-$ROOT_DIR/.venv-quality}"
+ALEMBIC_HEAD="0003_retention_indexes"
 
 if [ -x "$BACKEND_VENV/bin/alembic" ]; then
   ALEMBIC_BIN="$BACKEND_VENV/bin/alembic"
@@ -58,7 +61,7 @@ docker exec -i "$CONTAINER_NAME" \
 )
 
 current_revision="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT version_num FROM alembic_version")"
-if [ "$current_revision" != "0002_communication_idempotency" ]; then
+if [ "$current_revision" != "$ALEMBIC_HEAD" ]; then
   echo "Unexpected Alembic revision: $current_revision" >&2
   exit 1
 fi
@@ -99,4 +102,75 @@ if [ "$idempotency_index" != "1" ]; then
   exit 1
 fi
 
+retention_index="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_communication_logs_created_at', 'ix_memory_entries_expires_at', 'ix_workflow_runs_completed_at')")"
+if [ "$retention_index" != "3" ]; then
+  echo "Expected retention indexes are missing" >&2
+  exit 1
+fi
+
 echo "Migration rehearsal passed against legacy pre-Alembic schema."
+
+if [ "$MIGRATION_REHEARSAL_RUN_REPRESENTATIVE" = "1" ]; then
+  docker exec "$CONTAINER_NAME" psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+
+  (
+    cd "$BACKEND_DIR"
+    env \
+      PYTHONPATH=src \
+      POSTGRES_HOST=127.0.0.1 \
+      POSTGRES_PORT="$POSTGRES_PORT" \
+      POSTGRES_DB="$POSTGRES_DB" \
+      POSTGRES_USER="$POSTGRES_USER" \
+      POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+      "$ALEMBIC_BIN" upgrade 0001_initial_schema
+  )
+
+  docker exec -i "$CONTAINER_NAME" \
+    psql \
+      -v ON_ERROR_STOP=1 \
+      -v row_count="$MIGRATION_REHEARSAL_SYNTHETIC_ROWS" \
+      -U "$POSTGRES_USER" \
+      -d "$POSTGRES_DB" \
+    < "$ROOT_DIR/scripts/sql/representative-production-seed.sql"
+
+  seeded_comm_rows="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM communication_logs")"
+  if [ "$seeded_comm_rows" != "$MIGRATION_REHEARSAL_SYNTHETIC_ROWS" ]; then
+    echo "Representative communication seed count mismatch: $seeded_comm_rows" >&2
+    exit 1
+  fi
+
+  (
+    cd "$BACKEND_DIR"
+    env \
+      PYTHONPATH=src \
+      POSTGRES_HOST=127.0.0.1 \
+      POSTGRES_PORT="$POSTGRES_PORT" \
+      POSTGRES_DB="$POSTGRES_DB" \
+      POSTGRES_USER="$POSTGRES_USER" \
+      POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+      "$ALEMBIC_BIN" upgrade head
+  )
+
+  representative_revision="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT version_num FROM alembic_version")"
+  if [ "$representative_revision" != "$ALEMBIC_HEAD" ]; then
+    echo "Unexpected representative Alembic revision: $representative_revision" >&2
+    exit 1
+  fi
+
+  representative_counts="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM agents WHERE id LIKE 'agent-%' UNION ALL SELECT count(*) FROM workflow_runs WHERE id LIKE 'run-%' UNION ALL SELECT count(*) FROM memory_entries WHERE id LIKE 'memory-%' UNION ALL SELECT count(*) FROM communication_logs WHERE id LIKE 'comm-%'")"
+  while read -r count; do
+    if [ "$count" != "$MIGRATION_REHEARSAL_SYNTHETIC_ROWS" ]; then
+      echo "Representative seed count mismatch after migration: $count" >&2
+      exit 1
+    fi
+  done <<<"$representative_counts"
+
+  representative_indexes="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_communication_logs_idempotency_key', 'ix_communication_logs_created_at', 'ix_memory_entries_expires_at', 'ix_workflow_runs_completed_at', 'ix_approval_requests_resolved_at')")"
+  if [ "$representative_indexes" != "5" ]; then
+    echo "Representative migration indexes missing: $representative_indexes" >&2
+    exit 1
+  fi
+
+  echo "Migration rehearsal passed against representative seeded 0001 schema."
+fi

@@ -210,6 +210,8 @@ Operational runbooks live in [`docs/runbooks`](docs/runbooks):
 - [`migration-rehearsal.md`](docs/runbooks/migration-rehearsal.md)
 - [`backup-restore.md`](docs/runbooks/backup-restore.md)
 - [`release-rollback.md`](docs/runbooks/release-rollback.md)
+- [`staging-promotion.md`](docs/runbooks/staging-promotion.md)
+- [`data-retention.md`](docs/runbooks/data-retention.md)
 
 The production readiness roadmap is tracked in
 [`docs/production-readiness-plan.md`](docs/production-readiness-plan.md).

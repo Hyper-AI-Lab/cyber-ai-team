@@ -60,3 +60,17 @@ the final response for replay, so client retries do not duplicate external sends
 Provider operations also use bounded timeouts, retries, and a per-provider circuit
 breaker. The current provider mode and circuit state are returned by
 `GET /api/integrations/status`.
+
+## Data Lifecycle
+
+Retention cleanup and structured subject export/delete operations are available through
+the CLI:
+
+```bash
+cyber-team retention-cleanup
+cyber-team subject-export customer-123 --output /tmp/customer-123.json
+cyber-team subject-delete customer-123 --execute
+```
+
+Cleanup is dry-run by default unless `--execute` is supplied. Retention windows are
+configured with the `RETENTION_*` environment variables.

@@ -8,6 +8,7 @@ RUN_QUALITY_GATE="${RUN_QUALITY_GATE:-1}"
 RUN_MIGRATION_REHEARSAL="${RUN_MIGRATION_REHEARSAL:-1}"
 RUN_COMPOSE_SMOKE="${RUN_COMPOSE_SMOKE:-0}"
 BUILD_IMAGES="${BUILD_IMAGES:-1}"
+RUN_IMAGE_SCAN="${RUN_IMAGE_SCAN:-$BUILD_IMAGES}"
 MANIFEST_DIR="${RELEASE_MANIFEST_DIR:-$ROOT_DIR/dist/releases}"
 
 if [ "$ALLOW_DIRTY" != "1" ] && [ -n "$(git -C "$ROOT_DIR" status --short)" ]; then
@@ -35,6 +36,12 @@ if [ "$BUILD_IMAGES" = "1" ]; then
   docker build -t "cyber-team-ui:$VERSION" "$ROOT_DIR/frontend"
 fi
 
+if [ "$RUN_IMAGE_SCAN" = "1" ]; then
+  "$ROOT_DIR/scripts/image-scan.sh" \
+    "cyber-team-core:$VERSION" \
+    "cyber-team-ui:$VERSION"
+fi
+
 mkdir -p "$MANIFEST_DIR"
 cat >"$MANIFEST_DIR/$VERSION.json" <<JSON
 {
@@ -46,7 +53,8 @@ cat >"$MANIFEST_DIR/$VERSION.json" <<JSON
     "quality_gate": "$RUN_QUALITY_GATE",
     "migration_rehearsal": "$RUN_MIGRATION_REHEARSAL",
     "compose_smoke": "$RUN_COMPOSE_SMOKE",
-    "images_built": "$BUILD_IMAGES"
+    "images_built": "$BUILD_IMAGES",
+    "image_scan": "$RUN_IMAGE_SCAN"
   },
   "images": {
     "core": "cyber-team-core:$VERSION",

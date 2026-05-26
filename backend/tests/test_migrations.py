@@ -49,6 +49,9 @@ def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
     assert "CREATE UNIQUE INDEX IF NOT EXISTS ix_role_manifests_name" in sql
     assert "ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128)" in sql
     assert "CREATE UNIQUE INDEX IF NOT EXISTS ix_communication_logs_idempotency_key" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_communication_logs_created_at" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_memory_entries_expires_at" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_workflow_runs_completed_at" in sql
 
 
 def test_initial_migration_preserves_pre_alembic_approval_compatibility():

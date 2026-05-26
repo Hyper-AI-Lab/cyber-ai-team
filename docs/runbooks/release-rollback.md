@@ -17,11 +17,13 @@ By default the script:
 - Runs the normal quality gate.
 - Runs the disposable migration rehearsal.
 - Builds version-tagged `cyber-team-core` and `cyber-team-ui` Docker images.
+- Scans the built images for high/critical vulnerabilities.
 - Writes a release manifest to `dist/releases/<version>.json`.
 
 Optional switches:
 
 - `RUN_COMPOSE_SMOKE=1` also runs the full Docker Compose smoke test.
+- `RUN_IMAGE_SCAN=0` skips image scanning.
 - `BUILD_IMAGES=0` skips image builds.
 - `RUN_QUALITY_GATE=0` skips the quality gate when it already ran in CI.
 - `RELEASE_ALLOW_DIRTY=1` allows local experiment manifests from a dirty tree.

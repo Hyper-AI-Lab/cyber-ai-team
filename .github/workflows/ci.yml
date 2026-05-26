@@ -119,3 +119,16 @@ jobs:
         env:
           COMPOSE_SMOKE_CLEANUP: "1"
         run: ./scripts/compose-smoke.sh
+
+  image-scan:
+    name: Docker Image Scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release images
+        run: |
+          docker build -t cyber-team-core:${{ github.sha }} backend
+          docker build -t cyber-team-ui:${{ github.sha }} frontend
+      - name: Scan release images
+        run: ./scripts/image-scan.sh cyber-team-core:${{ github.sha }} cyber-team-ui:${{ github.sha }}

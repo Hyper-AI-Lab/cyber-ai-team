@@ -1,13 +1,14 @@
 services:
   # ─── Core API ──────────────────────────────────────────────────────
   core:
+    image: ${CORE_IMAGE:-cyber-team-core:latest}
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: cyberteam-core
     ports:
       - "8000:8000"
-    env_file: .env
+    env_file: ${CYBERTEAM_ENV_FILE:-.env}
     environment:
       - POSTGRES_HOST=postgres
       - REDIS_HOST=redis
@@ -44,12 +45,13 @@ services:
 
   # ─── Temporal Workers ──────────────────────────────────────────────
   worker:
+    image: ${CORE_IMAGE:-cyber-team-core:latest}
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: cyberteam-worker
     command: ["python", "-m", "cyber_team.worker"]
-    env_file: .env
+    env_file: ${CYBERTEAM_ENV_FILE:-.env}
     environment:
       - POSTGRES_HOST=postgres
       - REDIS_HOST=redis
@@ -72,6 +74,7 @@ services:
 
   # ─── Owner Console UI ─────────────────────────────────────────────
   ui:
+    image: ${UI_IMAGE:-cyber-team-ui:latest}
     build:
       context: ./frontend
       dockerfile: Dockerfile

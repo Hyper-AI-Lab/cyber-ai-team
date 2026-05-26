@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     communications_provider_timeout_seconds: float = 10.0
     communications_circuit_breaker_failure_threshold: int = 3
     communications_circuit_breaker_cooldown_seconds: int = 60
+    retention_memory_days: int = 365
+    retention_communication_log_days: int = 365
+    retention_workflow_run_days: int = 180
+    retention_approval_request_days: int = 730
+    retention_audit_event_days: int = 2555
+    retention_batch_size: int = 500
 
     # Mistral / LLM
     mistral_api_key: str = ""
