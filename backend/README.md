@@ -50,9 +50,13 @@ and `TWILIO_PHONE_NUMBER` are set. SMTP is used for email when `SMTP_HOST` and
 `SMTP_FROM_EMAIL` are set. Jasmin SMS is used when `JASMIN_USERNAME`,
 `JASMIN_PASSWORD`, and `JASMIN_FROM_NUMBER` are set and Twilio SMS is not
 configured. Slack incoming webhooks, Telegram Bot API, and Twilio WhatsApp are
-runtime messaging providers when their credentials are configured. Asterisk is
-still Compose-profile-only; runtime voice calls use Twilio.
+runtime messaging providers when their credentials are configured. Asterisk ARI
+is used for runtime voice calls when `ASTERISK_ARI_ENABLED=true`, ARI credentials
+are configured, and Twilio voice credentials are absent.
 
 Outbound communication tools accept an optional `idempotency_key`. The gateway
 reserves that key in `communication_logs` before contacting a provider and stores
 the final response for replay, so client retries do not duplicate external sends.
+Provider operations also use bounded timeouts, retries, and a per-provider circuit
+breaker. The current provider mode and circuit state are returned by
+`GET /api/integrations/status`.

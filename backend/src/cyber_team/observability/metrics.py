@@ -52,6 +52,33 @@ class MetricsService:
             },
         )
 
+    def record_communication_delivery(
+        self,
+        channel: str,
+        provider: str,
+        status: str,
+        idempotent_replay: bool = False,
+    ) -> None:
+        self.increment(
+            "cyberteam_communication_deliveries_total",
+            {
+                "channel": channel,
+                "provider": provider or "unknown",
+                "status": status,
+                "idempotent_replay": "true" if idempotent_replay else "false",
+            },
+        )
+
+    def record_circuit_breaker_state(
+        self,
+        provider: str,
+        state: str,
+    ) -> None:
+        self.increment(
+            "cyberteam_circuit_breaker_state_changes_total",
+            {"provider": provider, "state": state},
+        )
+
     def increment(
         self,
         name: str,

@@ -99,6 +99,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Docker Compose config
         run: docker compose config --quiet
+      - name: Operations config syntax
+        run: |
+          bash -n scripts/*.sh
+          python -m json.tool monitoring/grafana/dashboards/cyberteam-overview.json >/dev/null
+          test -z "$(find monitoring \( -type f ! -perm -004 -o -type d ! -perm -001 \) -print)"
       - name: Secret scan
         run: python scripts/secret-scan.py
       - name: Diff hygiene

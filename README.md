@@ -12,11 +12,11 @@ Compositional stack built on open-source components:
 | Durable Workflows | Temporal |
 | Memory | 4-layer: Pinned → Workflow → Retrieval (Mem0+Qdrant) → Canonical (PostgreSQL+ERPNext) |
 | Interoperability | MCP (agent↔tool), A2A (agent↔agent) |
-| Communications | Runtime: Twilio voice/SMS/WhatsApp, Jasmin SMS, SMTP email, Slack, Telegram, simulated fallback; optional profile: Asterisk |
+| Communications | Runtime: Twilio voice/SMS/WhatsApp, Asterisk ARI voice, Jasmin SMS, SMTP email, Slack, Telegram, simulated fallback |
 | System of Record | PostgreSQL; ERPNext client and optional Compose profile |
 | Owner Console | Next.js + TailwindCSS |
 | Governance | Runtime: owner JWT auth + OPA/local authorization; optional profiles: Keycloak, OpenFGA |
-| Observability | Runtime: `/metrics`; optional profiles: Langfuse, Prometheus, Grafana |
+| Observability | Runtime: `/metrics`; optional profiles: Langfuse, Prometheus alerts, Grafana dashboard |
 | LLM Gateway | LiteLLM (Mistral default) |
 | Deployment | Docker Compose (~15 containers) |
 
@@ -129,18 +129,22 @@ Runtime communication support is explicit in the **Integrations** console view a
 `GET /api/integrations/status`.
 
 - **Voice**: Twilio outbound calls when `TWILIO_*` credentials are configured;
-  otherwise simulated in development if `COMMUNICATIONS_ALLOW_SIMULATION=true`.
+  Asterisk ARI outbound calls when `ASTERISK_ARI_ENABLED=true` and ARI
+  credentials are configured; otherwise simulated in development if
+  `COMMUNICATIONS_ALLOW_SIMULATION=true`.
 - **SMS**: Twilio outbound SMS when `TWILIO_*` credentials are configured, or
   Jasmin SMS when `JASMIN_*` gateway credentials are configured.
 - **Email**: SMTP outbound email when `SMTP_HOST` and `SMTP_FROM_EMAIL` are set.
 - **Messaging**: Slack incoming webhooks, Telegram Bot API, and Twilio WhatsApp
   are supported when their provider credentials are configured.
-- **Asterisk**: A Docker Compose profile is present for experimentation, but
-  runtime call routing still uses Twilio.
+- **Asterisk**: the telephony Compose profile can run an Asterisk container, and
+  the runtime ARI adapter can originate calls into the configured Stasis app.
 
 All outbound communication tools accept an optional `idempotency_key`. Reusing
 the same key returns the stored communication result instead of producing another
-external send.
+external send. Provider calls use bounded timeouts, retries, and circuit breakers;
+the Integrations view and `/api/integrations/status` expose each provider circuit
+state.
 
 ## API
 
@@ -191,7 +195,8 @@ SKIP_FRONTEND_INSTALL=1 \
 The gate runs backend Ruff lint, backend tests, Python compile checks, Alembic SQL
 generation, backend and frontend dependency audits, frontend TypeScript checks,
 frontend tests, frontend production build, Docker Compose configuration validation,
-high-confidence secret scanning, and `git diff --check`.
+operations script/dashboard syntax, high-confidence secret scanning, and
+`git diff --check`.
 
 Heavyweight checks can be added when needed:
 
@@ -204,6 +209,7 @@ Operational runbooks live in [`docs/runbooks`](docs/runbooks):
 - [`compose-smoke-test.md`](docs/runbooks/compose-smoke-test.md)
 - [`migration-rehearsal.md`](docs/runbooks/migration-rehearsal.md)
 - [`backup-restore.md`](docs/runbooks/backup-restore.md)
+- [`release-rollback.md`](docs/runbooks/release-rollback.md)
 
 The production readiness roadmap is tracked in
 [`docs/production-readiness-plan.md`](docs/production-readiness-plan.md).

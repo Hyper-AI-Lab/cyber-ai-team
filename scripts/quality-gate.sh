@@ -88,6 +88,19 @@ fi
 echo "== Compose: config =="
 (cd "$ROOT_DIR" && docker compose config --quiet)
 
+echo "== Operations: script and dashboard syntax =="
+(cd "$ROOT_DIR" && bash -n scripts/*.sh)
+"$PYTHON_BIN" -m json.tool \
+  "$ROOT_DIR/monitoring/grafana/dashboards/cyberteam-overview.json" >/dev/null
+unreadable_monitoring="$(
+  cd "$ROOT_DIR" && find monitoring \( -type f ! -perm -004 -o -type d ! -perm -001 \) -print
+)"
+if [ -n "$unreadable_monitoring" ]; then
+  echo "Monitoring files must be readable by non-root containers:" >&2
+  echo "$unreadable_monitoring" >&2
+  exit 1
+fi
+
 echo "== Security: secret scan =="
 (cd "$ROOT_DIR" && "$PYTHON_BIN" scripts/secret-scan.py)
 

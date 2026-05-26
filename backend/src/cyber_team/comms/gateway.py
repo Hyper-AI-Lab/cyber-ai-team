@@ -4,9 +4,11 @@ import asyncio
 import logging
 import smtplib
 import ssl
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from email.message import EmailMessage
+from threading import Lock
 
 import httpx
 from sqlalchemy import desc, select
@@ -19,9 +21,16 @@ from cyber_team.db.models import CommunicationLog
 logger = logging.getLogger(__name__)
 
 
+class CircuitOpenError(RuntimeError):
+    pass
+
+
 class CommsGateway:
-    def __init__(self):
+    def __init__(self, metrics_service=None):
         self._twilio_client = None
+        self._metrics = metrics_service
+        self._circuit_lock = Lock()
+        self._circuit_breakers: dict[str, dict[str, float | int]] = {}
 
     def _get_twilio(self):
         if not self._twilio_client and self._twilio_configured():
@@ -89,16 +98,16 @@ class CommsGateway:
                 simulation_enabled=simulation_enabled,
                 detail="WhatsApp messages use Twilio when a WhatsApp sender is configured.",
             ),
-            {
-                "channel": "asterisk",
-                "provider": "asterisk",
-                "configured": bool(settings.asterisk_host),
-                "mode": "profile_only",
-                "implementation": "compose_profile",
-                "detail": (
-                    "Asterisk can be started from Docker Compose, but runtime calls use Twilio."
+            self._status_item(
+                channel="voice",
+                provider="asterisk_ari",
+                configured=self._asterisk_configured(),
+                implementation="implemented",
+                simulation_enabled=simulation_enabled,
+                detail=(
+                    "Asterisk ARI can originate calls into a configured Stasis app when enabled."
                 ),
-            },
+            ),
         ]
 
     async def make_call(self, data) -> dict:
@@ -114,22 +123,39 @@ class CommsGateway:
             idempotency_key=key,
         )
         if replay:
-            return self._idempotent_response(reserved_log, id_field="call_id")
+            response = self._idempotent_response(reserved_log, id_field="call_id")
+            self._record_delivery_metric(
+                "voice",
+                response.get("provider"),
+                response["status"],
+                True,
+            )
+            return response
 
-        metadata = {"from": from_number, "provider": "twilio"}
+        metadata = {"from": from_number}
         try:
             client = self._get_twilio()
             if client:
+                provider = "twilio"
+                metadata["provider"] = provider
                 call = await self._with_retries(
                     lambda: client.calls.create(
                         to=data.to_number,
                         from_=from_number,
                         twiml=f'<Response><Say>{data.context}</Say></Response>',
-                    )
+                    ),
+                    provider=provider,
                 )
                 call_sid = call.sid
                 status = "initiated"
+            elif self._asterisk_configured():
+                provider = "asterisk_ari"
+                metadata["provider"] = provider
+                call_sid = await self._send_asterisk_call(data, from_number)
+                status = "initiated"
             elif settings.communications_allow_simulation:
+                provider = "simulation"
+                metadata["provider"] = provider
                 call_sid = "local-only"
                 status = "simulated"
                 logger.info(
@@ -147,9 +173,15 @@ class CommsGateway:
             status = "failed"
 
         response = self._with_idempotency(
-            {"call_id": call_id, "call_sid": call_sid, "status": status},
+            {
+                "call_id": call_id,
+                "call_sid": call_sid,
+                "status": status,
+                "provider": metadata.get("provider"),
+            },
             key,
         )
+        self._record_delivery_metric("voice", metadata.get("provider"), status)
         await self._record_comm(
             agent_id=data.agent_id,
             channel="voice",
@@ -181,7 +213,9 @@ class CommsGateway:
             idempotency_key=key,
         )
         if replay:
-            return self._idempotent_response(reserved_log, id_field="sms_id")
+            response = self._idempotent_response(reserved_log, id_field="sms_id")
+            self._record_delivery_metric("sms", response.get("provider"), response["status"], True)
+            return response
 
         metadata = {"from": from_number}
         try:
@@ -192,7 +226,8 @@ class CommsGateway:
                         to=data.to_number,
                         from_=from_number,
                         body=data.message,
-                    )
+                    ),
+                    provider="twilio",
                 )
                 provider = "twilio"
                 provider_id = message.sid
@@ -216,9 +251,15 @@ class CommsGateway:
             status = "failed"
 
         response = self._with_idempotency(
-            {"sms_id": sms_id, "message_sid": provider_id, "status": status},
+            {
+                "sms_id": sms_id,
+                "message_sid": provider_id,
+                "status": status,
+                "provider": metadata.get("provider"),
+            },
             key,
         )
+        self._record_delivery_metric("sms", metadata.get("provider"), status)
         await self._record_comm(
             agent_id=data.agent_id,
             channel="sms",
@@ -245,7 +286,14 @@ class CommsGateway:
             idempotency_key=key,
         )
         if replay:
-            return self._idempotent_response(reserved_log, id_field="email_id")
+            response = self._idempotent_response(reserved_log, id_field="email_id")
+            self._record_delivery_metric(
+                "email",
+                response.get("provider"),
+                response["status"],
+                True,
+            )
+            return response
 
         metadata = {"subject": data.subject, "cc": data.cc, "provider": "smtp"}
         try:
@@ -268,6 +316,7 @@ class CommsGateway:
             {"email_id": email_id, "status": status, "provider": "smtp"},
             key,
         )
+        self._record_delivery_metric("email", metadata.get("provider"), status)
         await self._record_comm(
             agent_id=data.agent_id,
             channel="email",
@@ -295,7 +344,14 @@ class CommsGateway:
             idempotency_key=key,
         )
         if replay:
-            return self._idempotent_response(reserved_log, id_field="message_id")
+            response = self._idempotent_response(reserved_log, id_field="message_id")
+            self._record_delivery_metric(
+                platform,
+                response.get("provider"),
+                response["status"],
+                True,
+            )
+            return response
 
         metadata = {"platform": platform}
         try:
@@ -340,6 +396,7 @@ class CommsGateway:
             },
             key,
         )
+        self._record_delivery_metric(platform, metadata.get("provider"), status)
         await self._record_comm(
             agent_id=data.agent_id,
             channel=platform,
@@ -513,6 +570,16 @@ class CommsGateway:
         return bool(CommsGateway._twilio_configured() and settings.twilio_whatsapp_from_number)
 
     @staticmethod
+    def _asterisk_configured() -> bool:
+        return bool(
+            settings.asterisk_ari_enabled
+            and settings.asterisk_host
+            and settings.asterisk_ari_user
+            and settings.asterisk_ari_password
+            and settings.asterisk_ari_endpoint_template
+        )
+
+    @staticmethod
     def _smtp_configured() -> bool:
         return bool(settings.smtp_host and settings.smtp_from_email)
 
@@ -533,8 +600,8 @@ class CommsGateway:
     def _telegram_configured() -> bool:
         return bool(settings.telegram_bot_token)
 
-    @staticmethod
     def _status_item(
+        self,
         channel: str,
         provider: str,
         configured: bool,
@@ -555,41 +622,120 @@ class CommsGateway:
             "mode": mode,
             "implementation": implementation,
             "detail": detail,
+            "circuit": self._circuit_snapshot(provider),
         }
 
-    async def _with_retries(self, operation: Callable[[], object]) -> object:
+    def _circuit_snapshot(self, provider: str) -> dict:
+        now = time.time()
+        with self._circuit_lock:
+            state = self._circuit_breakers.get(provider, {})
+            opened_until = float(state.get("opened_until", 0))
+            failures = int(state.get("failures", 0))
+        return {
+            "state": "open" if opened_until > now else "closed",
+            "failures": failures,
+            "opened_until": opened_until if opened_until > now else None,
+        }
+
+    def _ensure_provider_available(self, provider: str) -> None:
+        snapshot = self._circuit_snapshot(provider)
+        if snapshot["state"] == "open":
+            raise CircuitOpenError(f"Circuit breaker is open for provider {provider}")
+
+    def _record_provider_success(self, provider: str) -> None:
+        should_record_metric = False
+        with self._circuit_lock:
+            previous = self._circuit_breakers.get(provider, {})
+            if not previous:
+                return
+            should_record_metric = bool(
+                int(previous.get("failures", 0)) > 0
+                or float(previous.get("opened_until", 0)) > 0
+            )
+            self._circuit_breakers[provider] = {"failures": 0, "opened_until": 0}
+        if should_record_metric and self._metrics:
+            self._metrics.record_circuit_breaker_state(provider, "closed")
+
+    def _record_provider_failure(self, provider: str) -> None:
+        threshold = max(1, settings.communications_circuit_breaker_failure_threshold)
+        cooldown = max(1, settings.communications_circuit_breaker_cooldown_seconds)
+        opened = False
+        with self._circuit_lock:
+            state = self._circuit_breakers.setdefault(
+                provider,
+                {"failures": 0, "opened_until": 0},
+            )
+            failures = int(state.get("failures", 0)) + 1
+            state["failures"] = failures
+            if failures >= threshold:
+                state["opened_until"] = time.time() + cooldown
+                opened = True
+        if opened and self._metrics:
+            self._metrics.record_circuit_breaker_state(provider, "open")
+
+    def _record_delivery_metric(
+        self,
+        channel: str,
+        provider: str | None,
+        status: str,
+        idempotent_replay: bool = False,
+    ) -> None:
+        if self._metrics:
+            self._metrics.record_communication_delivery(
+                channel=channel,
+                provider=provider or "unknown",
+                status=status,
+                idempotent_replay=idempotent_replay,
+            )
+
+    async def _with_retries(self, operation: Callable[[], object], provider: str) -> object:
+        self._ensure_provider_available(provider)
         attempts = max(1, settings.communications_retry_attempts)
         last_error = None
         for attempt in range(attempts):
             try:
-                return await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     asyncio.to_thread(operation),
                     timeout=settings.communications_provider_timeout_seconds,
                 )
+                self._record_provider_success(provider)
+                return result
             except Exception as exc:
                 last_error = exc
                 if attempt < attempts - 1:
                     await asyncio.sleep(settings.communications_retry_backoff_seconds)
+        self._record_provider_failure(provider)
         raise last_error or RuntimeError("Provider operation failed")
 
-    async def _with_async_retries(self, operation: Callable[[], Awaitable[object]]) -> object:
+    async def _with_async_retries(
+        self,
+        operation: Callable[[], Awaitable[object]],
+        provider: str,
+    ) -> object:
+        self._ensure_provider_available(provider)
         attempts = max(1, settings.communications_retry_attempts)
         last_error = None
         for attempt in range(attempts):
             try:
-                return await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     operation(),
                     timeout=settings.communications_provider_timeout_seconds,
                 )
+                self._record_provider_success(provider)
+                return result
             except Exception as exc:
                 last_error = exc
                 if attempt < attempts - 1:
                     await asyncio.sleep(settings.communications_retry_backoff_seconds)
+        self._record_provider_failure(provider)
         raise last_error or RuntimeError("Provider operation failed")
 
     async def _send_email_smtp(self, data) -> str:
         message = self._build_email_message(data)
-        await self._with_retries(lambda: self._send_email_smtp_sync(message))
+        await self._with_retries(
+            lambda: self._send_email_smtp_sync(message),
+            provider="smtp",
+        )
         return message["Message-ID"]
 
     @staticmethod
@@ -649,16 +795,39 @@ class CommsGateway:
                 "GET",
                 f"{scheme}://{settings.jasmin_host}:{settings.jasmin_port}/send",
                 params=params,
-            )
+            ),
+            provider="jasmin",
         )
         return str(response.get("id") or response.get("text") or "jasmin-submitted")
+
+    async def _send_asterisk_call(self, data, from_number: str | None) -> str:
+        scheme = "https" if settings.asterisk_ari_use_tls else "http"
+        endpoint = settings.asterisk_ari_endpoint_template.format(to_number=data.to_number)
+        payload = {
+            "endpoint": endpoint,
+            "app": settings.asterisk_ari_app,
+            "appArgs": data.context[:1000],
+            "callerId": from_number or settings.asterisk_caller_id,
+            "timeout": int(settings.communications_provider_timeout_seconds),
+        }
+        response = await self._with_async_retries(
+            lambda: self._http_request(
+                "POST",
+                f"{scheme}://{settings.asterisk_host}:{settings.asterisk_port}/ari/channels",
+                params=payload,
+                auth=(settings.asterisk_ari_user, settings.asterisk_ari_password),
+            ),
+            provider="asterisk_ari",
+        )
+        return str(response.get("id") or response.get("text") or "asterisk-originated")
 
     async def _send_slack_message(self, data) -> str:
         payload = {"text": data.message}
         if data.recipient:
             payload["channel"] = data.recipient
         response = await self._with_async_retries(
-            lambda: self._http_request("POST", settings.slack_webhook_url, json=payload)
+            lambda: self._http_request("POST", settings.slack_webhook_url, json=payload),
+            provider="slack_webhook",
         )
         return str(response.get("text") or "slack-submitted")
 
@@ -668,7 +837,8 @@ class CommsGateway:
                 "POST",
                 f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage",
                 json={"chat_id": data.recipient, "text": data.message},
-            )
+            ),
+            provider="telegram_bot",
         )
         result = response.get("result") if isinstance(response.get("result"), dict) else {}
         return str(result.get("message_id") or "telegram-submitted")
@@ -682,7 +852,8 @@ class CommsGateway:
                 to=self._normalize_whatsapp_number(data.recipient),
                 from_=self._normalize_whatsapp_number(settings.twilio_whatsapp_from_number),
                 body=data.message,
-            )
+            ),
+            provider="twilio_whatsapp",
         )
         return message.sid
 
@@ -697,10 +868,17 @@ class CommsGateway:
         *,
         params: dict | None = None,
         json: dict | None = None,
+        auth: tuple[str, str] | None = None,
     ) -> dict:
         timeout = settings.communications_provider_timeout_seconds
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.request(method, url, params=params, json=json)
+            response = await client.request(
+                method,
+                url,
+                params=params,
+                json=json,
+                auth=auth,
+            )
             response.raise_for_status()
             content_type = response.headers.get("content-type", "")
             if "application/json" in content_type:

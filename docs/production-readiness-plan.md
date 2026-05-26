@@ -54,16 +54,21 @@ Completed in the current implementation pass:
   readiness for PostgreSQL, Redis, Qdrant, Temporal, and OPA.
 - Outbound communications now support durable idempotency keys, Jasmin SMS, Slack
   webhooks, Telegram Bot API, and Twilio WhatsApp provider adapters.
+- Outbound communication providers now have per-provider circuit breakers, delivery
+  metrics, and circuit state in the Integrations view.
+- Asterisk ARI can originate runtime voice calls into a configured Stasis app when
+  enabled.
+- Prometheus alert rules and a provisioned Grafana operations dashboard are included
+  in the observability profile.
+- Release candidate and rollback scripts are documented in the release runbook.
 
 Still pending:
 
-- Scheduled/staging execution and alerting around Compose smoke failures.
+- Scheduled/staging execution of release checks, Compose smoke, and alert tests.
 - Migration rehearsal against a representative production-like data volume.
 - Formal retention/data deletion policies.
-- Circuit-breaker policy for repeated external integration failures.
-- Deeper observability dashboards, alert rules, and operational runbooks.
-- Release promotion, rollback, image scanning, and staging deployment flow.
-- Runtime Asterisk call routing beyond the experimental Compose profile.
+- Image scanning and staging deployment promotion flow.
+- Full Asterisk media/TTS workflow beyond ARI call origination.
 
 ## Phase 1: Repeatable Quality Gates
 
@@ -150,12 +155,16 @@ Goal: operators can detect, diagnose, and recover from failures.
 - Add health checks that include database, Temporal, Qdrant, and critical integrations.
 - Add readiness endpoints distinct from liveness.
 - Add request IDs and structured logs.
-- Add retry/timeouts/circuit breaker policy for external calls.
+- [x] Add retry/timeouts/circuit breaker policy for outbound communication providers.
 - [x] Add initial timeout/retry policy for outbound communication providers.
 - [x] Add idempotency keys for outbound communication tool execution.
+- [x] Add initial Prometheus metrics for communication deliveries and provider
+  circuit state.
 - Add Prometheus metrics for approvals, tool executions, LLM failures, workflow states,
   queue delays, and auth failures.
-- Build Grafana dashboards and alert rules.
+- [x] Add starter Grafana dashboard and Prometheus alert rules for API,
+  communication, circuit breaker, authorization, and audit signals.
+- Build deeper Grafana dashboards and alert rules.
 - Document runbooks for degraded Qdrant, Temporal outage, failed migrations, and LLM
   provider failure.
 
@@ -171,7 +180,7 @@ Goal: releases are repeatable, observable, and recoverable.
 - Pin dependency versions with generated lockfiles for backend and frontend.
 - Build and scan Docker images in CI.
 - Add environment-specific compose or deployment manifests.
-- Add release checklist and rollback checklist.
+- [x] Add release checklist and rollback checklist.
 - Add staging environment promotion flow.
 - Add versioning/build metadata surfaced in API health and UI.
 - Add smoke tests after deployment.

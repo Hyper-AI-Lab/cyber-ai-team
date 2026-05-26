@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     communications_retry_attempts: int = 2
     communications_retry_backoff_seconds: float = 0.25
     communications_provider_timeout_seconds: float = 10.0
+    communications_circuit_breaker_failure_threshold: int = 3
+    communications_circuit_breaker_cooldown_seconds: int = 60
 
     # Mistral / LLM
     mistral_api_key: str = ""
@@ -84,6 +86,11 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
     twilio_whatsapp_from_number: str = ""
+    asterisk_ari_enabled: bool = False
+    asterisk_ari_use_tls: bool = False
+    asterisk_ari_app: str = "cyberteam"
+    asterisk_ari_endpoint_template: str = "PJSIP/{to_number}"
+    asterisk_caller_id: str = "Cyber-Team"
     asterisk_host: str = "localhost"
     asterisk_port: int = 8089
     asterisk_ari_user: str = "cyberteam"

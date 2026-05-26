@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cyber_team.comms.gateway import CommsGateway
+from cyber_team.comms.gateway import CircuitOpenError, CommsGateway
 from cyber_team.config import settings
 
 
@@ -61,10 +61,30 @@ async def test_with_retries_retries_provider_failures(monkeypatch):
             raise RuntimeError("temporary provider failure")
         return "ok"
 
-    result = await CommsGateway()._with_retries(flaky_operation)
+    result = await CommsGateway()._with_retries(flaky_operation, provider="smtp")
 
     assert result == "ok"
     assert attempts["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_opens_after_provider_failures(monkeypatch):
+    monkeypatch.setattr(settings, "communications_retry_attempts", 1)
+    monkeypatch.setattr(settings, "communications_circuit_breaker_failure_threshold", 2)
+    monkeypatch.setattr(settings, "communications_circuit_breaker_cooldown_seconds", 60)
+    gateway = CommsGateway()
+
+    def failing_operation():
+        raise RuntimeError("provider unavailable")
+
+    with pytest.raises(RuntimeError):
+        await gateway._with_retries(failing_operation, provider="smtp")
+    with pytest.raises(RuntimeError):
+        await gateway._with_retries(failing_operation, provider="smtp")
+
+    assert gateway._circuit_snapshot("smtp")["state"] == "open"
+    with pytest.raises(CircuitOpenError):
+        await gateway._with_retries(lambda: "ok", provider="smtp")
 
 
 def test_idempotent_response_replays_stored_provider_result():
@@ -106,6 +126,20 @@ def test_integration_status_reports_live_messaging_providers(monkeypatch):
     assert modes[("slack", "slack_webhook")] == "live"
     assert modes[("telegram", "telegram_bot")] == "live"
     assert modes[("whatsapp", "twilio_whatsapp")] == "live"
+
+
+def test_integration_status_reports_live_asterisk_when_enabled(monkeypatch):
+    monkeypatch.setattr(settings, "asterisk_ari_enabled", True)
+    monkeypatch.setattr(settings, "asterisk_host", "asterisk")
+    monkeypatch.setattr(settings, "asterisk_ari_user", "ari-user")
+    monkeypatch.setattr(settings, "asterisk_ari_password", "ari-password")
+    monkeypatch.setattr(settings, "asterisk_ari_endpoint_template", "PJSIP/{to_number}")
+
+    status = CommsGateway().integration_status()
+    asterisk = next(item for item in status if item["provider"] == "asterisk_ari")
+
+    assert asterisk["mode"] == "live"
+    assert asterisk["circuit"]["state"] == "closed"
 
 
 @pytest.mark.asyncio
@@ -235,3 +269,55 @@ async def test_send_sms_uses_jasmin_when_twilio_missing(monkeypatch):
     assert calls[0]["url"] == "http://jasmin:1401/send"
     assert calls[0]["params"]["username"] == "api-user"
     assert calls[0]["params"]["from"] == "CYBER"
+
+
+@pytest.mark.asyncio
+async def test_make_call_uses_asterisk_when_twilio_missing(monkeypatch):
+    monkeypatch.setattr(settings, "twilio_account_sid", "")
+    monkeypatch.setattr(settings, "twilio_auth_token", "")
+    monkeypatch.setattr(settings, "twilio_phone_number", "")
+    monkeypatch.setattr(settings, "asterisk_ari_enabled", True)
+    monkeypatch.setattr(settings, "asterisk_ari_use_tls", False)
+    monkeypatch.setattr(settings, "asterisk_host", "asterisk")
+    monkeypatch.setattr(settings, "asterisk_port", 8088)
+    monkeypatch.setattr(settings, "asterisk_ari_user", "ari-user")
+    monkeypatch.setattr(settings, "asterisk_ari_password", "ari-password")
+    monkeypatch.setattr(settings, "asterisk_ari_app", "cyberteam")
+    monkeypatch.setattr(settings, "asterisk_ari_endpoint_template", "PJSIP/{to_number}")
+    monkeypatch.setattr(settings, "asterisk_caller_id", "Cyber-Team")
+    monkeypatch.setattr(settings, "communications_allow_simulation", False)
+    gateway = CommsGateway()
+    calls = []
+
+    async def fake_reserve_comm(**kwargs):
+        return None, False
+
+    async def fake_record_comm(**kwargs):
+        return None
+
+    async def fake_http_request(method, url, *, params=None, json=None, auth=None):
+        calls.append(
+            {"method": method, "url": url, "params": params, "json": json, "auth": auth}
+        )
+        return {"id": "asterisk-channel-1"}
+
+    monkeypatch.setattr(gateway, "_reserve_comm", fake_reserve_comm)
+    monkeypatch.setattr(gateway, "_record_comm", fake_record_comm)
+    monkeypatch.setattr(gateway, "_http_request", fake_http_request)
+
+    result = await gateway.make_call(
+        SimpleNamespace(
+            to_number="1001",
+            context="Please call the owner.",
+            from_number=None,
+            agent_id="communications",
+            idempotency_key=None,
+        )
+    )
+
+    assert result["status"] == "initiated"
+    assert result["provider"] == "asterisk_ari"
+    assert result["call_sid"] == "asterisk-channel-1"
+    assert calls[0]["url"] == "http://asterisk:8088/ari/channels"
+    assert calls[0]["auth"] == ("ari-user", "ari-password")
+    assert calls[0]["params"]["endpoint"] == "PJSIP/1001"

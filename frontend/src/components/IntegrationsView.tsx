@@ -12,6 +12,11 @@ type IntegrationItem = {
   mode: 'live' | 'simulated' | 'disabled' | 'profile_only' | string
   implementation?: string
   detail?: string
+  circuit?: {
+    state: 'open' | 'closed' | string
+    failures: number
+    opened_until: number | null
+  }
 }
 
 type IntegrationStatus = {
@@ -117,7 +122,7 @@ export default function IntegrationsView() {
                   </div>
                   <span className={modeStyles[item.mode] || 'badge-info'}>{item.mode}</span>
                 </div>
-                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                <div className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
                   <div>
                     <p className="text-slate-500">Provider</p>
                     <p className="text-slate-200">{item.provider}</p>
@@ -125,6 +130,19 @@ export default function IntegrationsView() {
                   <div>
                     <p className="text-slate-500">Implementation</p>
                     <p className="text-slate-200">{item.implementation || 'unknown'}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Circuit</p>
+                    <p
+                      className={
+                        item.circuit?.state === 'open' ? 'text-red-300' : 'text-slate-200'
+                      }
+                    >
+                      {item.circuit?.state || 'unknown'}
+                      {item.circuit && item.circuit.failures > 0
+                        ? ` (${item.circuit.failures} failures)`
+                        : ''}
+                    </p>
                   </div>
                 </div>
               </div>

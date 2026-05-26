@@ -1,0 +1,47 @@
+groups:
+  - name: cyberteam-core
+    rules:
+      - alert: CyberTeamApiDown
+        expr: up{job="cyberteam-core"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Cyber-Team API is not scrapeable
+          description: Prometheus has not been able to scrape the core API for 2 minutes.
+
+      - alert: CyberTeamApi5xxErrors
+        expr: sum(rate(cyberteam_http_requests_total{status_code=~"5.."}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Cyber-Team API is returning 5xx responses
+          description: One or more API routes have returned server errors for 5 minutes.
+
+      - alert: CyberTeamCommunicationFailures
+        expr: sum(rate(cyberteam_communication_deliveries_total{status="failed"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Outbound communication provider failures detected
+          description: At least one configured communication provider has failed deliveries.
+
+      - alert: CyberTeamCircuitBreakerOpened
+        expr: increase(cyberteam_circuit_breaker_state_changes_total{state="open"}[10m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: Communication provider circuit breaker opened
+          description: A provider has crossed its repeated-failure threshold and is cooling down.
+
+      - alert: CyberTeamAuthorizationDenialsSpike
+        expr: sum(rate(cyberteam_authorization_decisions_total{decision="denied"}[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Authorization denial rate is elevated
+          description: Authorization denials are above the expected steady-state threshold.

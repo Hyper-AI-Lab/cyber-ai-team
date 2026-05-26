@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
         metrics_service=app.state.metrics_service,
     )
     app.state.memory_service = MemoryService()
-    app.state.comms_gateway = CommsGateway()
+    app.state.comms_gateway = CommsGateway(metrics_service=app.state.metrics_service)
     app.state.erpnext = ERPNextClient()
     app.state.tool_registry = ToolRegistry()
     app.state.agent_manager = AgentManager(
