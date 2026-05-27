@@ -235,7 +235,7 @@ export default function WorkflowsView() {
 
                     {wfRuns.length === 0 && (
                       <div className="text-center py-6 text-slate-500 border border-dashed border-slate-700/60 rounded-lg text-sm">
-                        No runs recorded for this workflow yet. Click "Execute Workflow" to launch.
+                        No runs recorded for this workflow yet. Click &quot;Execute Workflow&quot; to launch.
                       </div>
                     )}
                   </div>

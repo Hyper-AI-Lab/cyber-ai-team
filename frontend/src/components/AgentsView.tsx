@@ -374,7 +374,9 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
           <div className="card col-span-full text-center py-12 text-slate-500">
             <Bot className="w-12 h-12 mx-auto mb-4 opacity-50" />
             <p>No agents provisioned yet.</p>
-            <p className="text-sm mt-1 text-slate-600">Use "Company Builder" or "Provision Custom Role" to create agent roles.</p>
+            <p className="text-sm mt-1 text-slate-600">
+              Use &quot;Company Builder&quot; or &quot;Provision Custom Role&quot; to create agent roles.
+            </p>
           </div>
         )}
       </div>
