@@ -25,6 +25,8 @@ env/
 .env
 .env.local
 .env.production
+deploy/environments/*.env
+!deploy/environments/*.env.example
 
 # Docker
 docker-compose.override.yml
@@ -32,6 +34,7 @@ docker-compose.override.yml
 # Database
 *.db
 *.sqlite3
+backups/
 
 # Logs
 *.log

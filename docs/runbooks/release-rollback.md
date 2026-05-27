@@ -28,6 +28,10 @@ Optional switches:
 - `RUN_QUALITY_GATE=0` skips the quality gate when it already ran in CI.
 - `RELEASE_ALLOW_DIRTY=1` allows local experiment manifests from a dirty tree.
 
+Use `scripts/promote-release.sh` with `PROMOTE_ENVIRONMENT=staging` or
+`PROMOTE_ENVIRONMENT=production` to deploy a verified manifest. Production promotion
+requires approval and writes a promotion record.
+
 ## Rollback Dry Run
 
 Rollback is dry-run by default:

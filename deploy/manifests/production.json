@@ -1,0 +1,18 @@
+{
+  "environment": "production",
+  "compose_project_name": "cyberteam-production",
+  "env_file": "deploy/environments/production.env",
+  "backup_dir": "backups/production",
+  "promotion_record_dir": "dist/promotions/production",
+  "require_approval": true,
+  "run_backup": true,
+  "run_compose_smoke": true,
+  "required_release_checks": [
+    "quality_gate",
+    "migration_rehearsal",
+    "compose_smoke",
+    "images_built",
+    "image_scan"
+  ],
+  "services": ["postgres", "redis", "qdrant", "temporal", "opa", "core", "worker", "ui"]
+}

@@ -120,6 +120,15 @@ jobs:
           COMPOSE_SMOKE_CLEANUP: "1"
         run: ./scripts/compose-smoke.sh
 
+  observability:
+    name: Observability Config
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Prometheus config and alert rules
+        run: ./scripts/observability-check.sh
+
   image-scan:
     name: Docker Image Scan
     runs-on: ubuntu-latest

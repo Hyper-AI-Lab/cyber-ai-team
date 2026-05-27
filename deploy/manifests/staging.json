@@ -1,0 +1,18 @@
+{
+  "environment": "staging",
+  "compose_project_name": "cyberteam-staging",
+  "env_file": "deploy/environments/staging.env",
+  "backup_dir": "backups/staging",
+  "promotion_record_dir": "dist/promotions/staging",
+  "require_approval": false,
+  "run_backup": true,
+  "run_compose_smoke": true,
+  "required_release_checks": [
+    "quality_gate",
+    "migration_rehearsal",
+    "compose_smoke",
+    "images_built",
+    "image_scan"
+  ],
+  "services": ["postgres", "redis", "qdrant", "temporal", "opa", "core", "worker", "ui"]
+}

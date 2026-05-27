@@ -67,11 +67,17 @@ Completed in the current implementation pass:
   the current Alembic head.
 - Retention cleanup plus structured subject export/delete operations are implemented
   and documented.
+- Environment-specific promotion manifests now define staging and production Compose
+  promotion settings, production promotion requires explicit approval metadata, and
+  successful executions write promotion records.
+- Docker Compose service names, network name, UI/API URLs, and published ports can be
+  isolated per environment through environment files.
+- Scheduled/manual CI now includes Prometheus config and alert-rule validation.
 
 Still pending:
 
-- Scheduled/staging execution of release checks, Compose smoke, and alert tests.
-- Environment-specific production deployment manifests and promotion approvals.
+- Hosted staging execution of release checks and Compose smoke using real staging
+  secrets and artifacts.
 - Restore drills against production-scale backup artifacts.
 - Full Asterisk media/TTS workflow beyond ARI call origination.
 
@@ -170,6 +176,7 @@ Goal: operators can detect, diagnose, and recover from failures.
   queue delays, and auth failures.
 - [x] Add starter Grafana dashboard and Prometheus alert rules for API,
   communication, circuit breaker, authorization, and audit signals.
+- [x] Add scheduled/manual Prometheus config and alert-rule validation.
 - Build deeper Grafana dashboards and alert rules.
 - Document runbooks for degraded Qdrant, Temporal outage, failed migrations, and LLM
   provider failure.
@@ -185,9 +192,10 @@ Goal: releases are repeatable, observable, and recoverable.
 
 - Pin dependency versions with generated lockfiles for backend and frontend.
 - [x] Build and scan Docker images in scheduled/manual CI.
-- Add environment-specific compose or deployment manifests.
+- [x] Add environment-specific compose or deployment manifests.
 - [x] Add release checklist and rollback checklist.
 - [x] Add staging environment promotion flow.
+- [x] Add production promotion approval requirements and promotion records.
 - Add versioning/build metadata surfaced in API health and UI.
 - Add smoke tests after deployment.
 

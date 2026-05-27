@@ -28,6 +28,7 @@ Useful options:
 - `COMPOSE_SMOKE_BUILD=0` skips image rebuilds.
 - `COMPOSE_SMOKE_SKIP_UP=1` runs checks against an already-running stack.
 - `COMPOSE_SMOKE_CLEANUP=1` tears the stack down after the run.
+- `COMPOSE_SMOKE_ENV_FILE=/path/to/env` loads a non-default Compose environment file.
 - `API_BASE` and `UI_BASE` override the default `http://localhost:8000` and
   `http://localhost:3001`.
 

@@ -1,14 +1,15 @@
 # Staging Promotion Runbook
 
 Use this runbook to promote a verified release manifest into a staging environment.
-Promotion is dry-run by default.
+Promotion is dry-run by default. The staging wrapper delegates to the general
+deployment promotion workflow in `scripts/promote-release.sh`.
 
 ## Preconditions
 
 - A release manifest exists in `dist/releases/<version>.json`.
 - The manifest's `cyber-team-core:<version>` and `cyber-team-ui:<version>` images exist
   locally or have been pulled onto the staging host.
-- A staging environment file exists, for example `.env.staging`.
+- A staging environment file exists, for example `deploy/environments/staging.env`.
 - The working tree contains the same compose file version used to create the release
   manifest.
 
@@ -16,7 +17,6 @@ Promotion is dry-run by default.
 
 ```bash
 RELEASE_VERSION=<version> \
-STAGING_ENV_FILE=.env.staging \
 ./scripts/promote-staging.sh
 ```
 
@@ -27,7 +27,6 @@ would execute.
 
 ```bash
 RELEASE_VERSION=<version> \
-STAGING_ENV_FILE=.env.staging \
 PROMOTE_DRY_RUN=0 \
 ./scripts/promote-staging.sh
 ```
@@ -44,6 +43,9 @@ By default, the script:
 ## Useful Switches
 
 - `RELEASE_MANIFEST=/path/to/manifest.json` uses an explicit manifest path.
+- `STAGING_ENV_FILE=/path/to/env` or `PROMOTE_ENV_FILE=/path/to/env` overrides the
+  staging environment file.
+- `DEPLOYMENT_MANIFEST=/path/to/staging.json` uses a custom deployment manifest.
 - `RUN_BACKUP=0` skips the pre-promotion backup.
 - `RUN_COMPOSE_SMOKE=0` skips the smoke test.
 - `BACKUP_DIR=/path/to/backups` changes where copied backups are stored.
@@ -54,3 +56,6 @@ By default, the script:
   migration rehearsal, and image scan checks.
 - Use `PROMOTE_DRY_RUN=0` only on the staging host or an isolated staging environment.
 - Keep the release manifest, staging backup, and smoke-test output together for rollback.
+
+See `deployment-promotion.md` for production approval requirements and promotion
+record details.
