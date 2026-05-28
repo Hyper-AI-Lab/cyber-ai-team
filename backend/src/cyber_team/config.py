@@ -1,6 +1,8 @@
 """Cyber-Team configuration via environment variables."""
 
 
+from urllib.parse import quote
+
 from pydantic_settings import BaseSettings
 
 
@@ -128,14 +130,18 @@ class Settings(BaseSettings):
 
     @property
     def postgres_dsn(self) -> str:
+        user = quote(self.postgres_user, safe="")
+        password = quote(self.postgres_password, safe="")
+        database = quote(self.postgres_db, safe="")
         return (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+            f"postgresql+asyncpg://{user}:{password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{database}"
         )
 
     @property
     def redis_url(self) -> str:
-        return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/0"
+        password = quote(self.redis_password, safe="")
+        return f"redis://:{password}@{self.redis_host}:{self.redis_port}/0"
 
     @property
     def qdrant_url(self) -> str:

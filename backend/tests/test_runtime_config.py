@@ -43,3 +43,22 @@ def test_production_runtime_config_accepts_hardened_values():
     settings = production_settings()
 
     settings.validate_runtime_config()
+
+
+def test_connection_urls_escape_reserved_characters():
+    settings = Settings(
+        postgres_user="cyber/team",
+        postgres_password="pg/pass@word:with#chars",
+        postgres_db="cyber/team",
+        redis_password="redis/pass@word:with#chars",
+    )
+
+    assert (
+        settings.postgres_dsn
+        == "postgresql+asyncpg://cyber%2Fteam:pg%2Fpass%40word%3Awith%23chars"
+        "@localhost:5432/cyber%2Fteam"
+    )
+    assert (
+        settings.redis_url
+        == "redis://:redis%2Fpass%40word%3Awith%23chars@localhost:6379/0"
+    )
