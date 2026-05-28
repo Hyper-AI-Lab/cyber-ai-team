@@ -78,6 +78,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-ui
     ports:
       - "${UI_PUBLISHED_PORT:-3001}:3000"

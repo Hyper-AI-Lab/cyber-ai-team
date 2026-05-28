@@ -33,7 +33,11 @@ fi
 
 if [ "$BUILD_IMAGES" = "1" ]; then
   docker build -t "cyber-team-core:$VERSION" "$ROOT_DIR/backend"
-  docker build -t "cyber-team-ui:$VERSION" "$ROOT_DIR/frontend"
+  docker build \
+    --build-arg NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-http://localhost:8000}" \
+    --build-arg NEXT_PUBLIC_WS_URL="${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}" \
+    -t "cyber-team-ui:$VERSION" \
+    "$ROOT_DIR/frontend"
 fi
 
 if [ "$RUN_IMAGE_SCAN" = "1" ]; then
