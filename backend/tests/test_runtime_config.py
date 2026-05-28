@@ -50,7 +50,9 @@ def test_connection_urls_escape_reserved_characters():
         postgres_user="cyber/team",
         postgres_password="pg/pass@word:with#chars",
         postgres_db="cyber/team",
+        postgres_host="localhost",
         redis_password="redis/pass@word:with#chars",
+        redis_host="localhost",
     )
 
     assert (
