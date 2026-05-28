@@ -81,11 +81,14 @@ describe('ApiClient', () => {
       .mockResolvedValueOnce(jsonResponse({ ticket: 'ticket with spaces' }))
     vi.stubGlobal('fetch', fetchMock)
     const client = new ApiClient('http://api.test')
+    const expectedWsBase = (process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000')
+      .replace(/\/ws\/?$/, '')
+      .replace(/\/$/, '')
 
     client.setTokens('token with spaces')
 
     await expect(client.getChatWebSocketUrl())
-      .resolves.toBe('ws://localhost:8000/api/chat/ws?ticket=ticket%20with%20spaces')
+      .resolves.toBe(`${expectedWsBase}/api/chat/ws?ticket=ticket%20with%20spaces`)
     expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/auth/ws-ticket')
     expect(fetchMock.mock.calls[0][1]?.headers.Authorization).toBe(
       'Bearer token with spaces',
