@@ -168,7 +168,7 @@ Deliverables:
 - [x] Owner-gated application of generated role proposals.
 - [x] Automatic role-gap creation from missing agents, missing tools, unavailable
   integrations, and blocked execution language.
-- [ ] Fine-grained approval requests for high-risk generated tool grants.
+- [x] Fine-grained approval requests for high-risk generated tool grants.
 - [ ] Scheduled Supervisor review of open gaps from workflow failures and blocked tasks.
 
 Exit criteria:
@@ -285,6 +285,11 @@ missing tool execution, unavailable integrations, and explicit blocked-work lang
 agent/chat responses create de-duplicated `role_gaps` records. The Role Gap Inbox can then
 ask Company Builder for a deterministic role proposal and apply or dismiss the proposal.
 
-The next Phase 2 slice should make high-risk generated tool grants create explicit approval
-requests before role instantiation, rather than relying only on the existing owner-gated
-apply action and per-tool approval policies.
+High-risk generated tool grants now create explicit approval requests before role
+instantiation. The owner applies the role-gap proposal once to create or reuse an approval,
+approves it in the approval queue, then applies the proposal again to consume that approval
+and instantiate the role.
+
+The next Phase 2 slice should add a scheduled Supervisor review that periodically scans
+open/proposed role gaps, stale approvals, and repeated workflow failures, then recommends
+consolidation, dismissal, or role creation.

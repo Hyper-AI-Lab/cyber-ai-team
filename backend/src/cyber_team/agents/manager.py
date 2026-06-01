@@ -18,6 +18,17 @@ from cyber_team.memory.service import MemoryService
 
 class AgentManager:
     ACTIVE_ROLE_GAP_STATUSES = {"open", "proposed"}
+    HIGH_RISK_ROLE_TOOLS = {
+        "make_call",
+        "send_sms",
+        "send_email",
+        "send_message",
+        "erpnext_create_lead",
+        "erpnext_invoice_create",
+        "procurement_request",
+        "payment_charge",
+        "payment_refund",
+    }
     AUTONOMOUS_GAP_BLOCKERS = (
         "blocked because",
         "blocked by",
@@ -695,6 +706,8 @@ Propose a new role to fill this gap. Return JSON with:
         self,
         gap_id: str,
         company_profile: dict | None = None,
+        approval_id: str | None = None,
+        requested_by: str = "owner",
     ) -> dict:
         gap = await self.get_role_gap(gap_id)
         if not gap:
@@ -703,6 +716,43 @@ Propose a new role to fill this gap. Return JSON with:
             gap = await self.propose_role_for_gap(gap_id, company_profile)
         proposal = gap["proposed_role"]
         manifest_payload = proposal["manifest_payload"]
+        high_risk_tools = self._role_gap_high_risk_tools(
+            manifest_payload.get("default_tools", [])
+        )
+        approval_to_consume = None
+        if high_risk_tools:
+            if approval_id:
+                approval_to_consume = approval_id
+            else:
+                existing_approval = await self._find_role_gap_tool_grant_approval(gap_id)
+                if existing_approval and existing_approval["status"] == "approved":
+                    approval_to_consume = existing_approval["id"]
+                elif existing_approval:
+                    return await self._role_gap_approval_required_response(
+                        gap,
+                        existing_approval["id"],
+                        high_risk_tools,
+                    )
+                else:
+                    approval_to_consume = await self._request_role_gap_tool_grant_approval(
+                        gap,
+                        manifest_payload,
+                        high_risk_tools,
+                        requested_by=requested_by,
+                    )
+                    return await self._role_gap_approval_required_response(
+                        gap,
+                        approval_to_consume,
+                        high_risk_tools,
+                    )
+
+            await self.consume_approval(
+                approval_to_consume,
+                consumer="role_gap.apply",
+                target_type="role_gap",
+                target_id=gap_id,
+            )
+
         manifest_id = slug_id(manifest_payload["name"])
         existing_manifest = await self.get_role_manifest(manifest_id)
         if existing_manifest:
@@ -728,17 +778,10 @@ Propose a new role to fill this gap. Return JSON with:
             "role_name": agent["role_name"],
             "applied_at": utc_now().isoformat(),
         }
-        async with async_session() as session:
-            result = await session.execute(select(RoleGap).where(RoleGap.id == gap_id))
-            db_gap = result.scalar_one_or_none()
-            if not db_gap:
-                raise ValueError(f"Role gap {gap_id} not found")
-            db_gap.status = "resolved"
-            db_gap.resolution = resolution
-            db_gap.resolved_at = utc_now()
-            db_gap.updated_at = utc_now()
-            await session.commit()
-            response = self._role_gap_to_dict(db_gap)
+        if approval_to_consume:
+            resolution["approval_id"] = approval_to_consume
+            resolution["approved_high_risk_tools"] = high_risk_tools
+        response = await self._mark_role_gap_resolved(gap_id, resolution)
 
         if self._audit:
             await self._audit.record(
@@ -1257,19 +1300,133 @@ Propose a new role to fill this gap. Return JSON with:
 
     @staticmethod
     def _role_gap_approval_policy(gap: dict, default_policy: str) -> str:
-        high_risk_tools = {
-            "make_call",
-            "send_sms",
-            "send_email",
-            "send_message",
-            "erpnext_create_lead",
-            "erpnext_invoice_create",
-            "procurement_request",
-        }
         requested_tools = set(gap.get("requested_tools") or [])
-        if gap.get("severity") in {"high", "critical"} or requested_tools & high_risk_tools:
+        if (
+            gap.get("severity") in {"high", "critical"}
+            or requested_tools & AgentManager.HIGH_RISK_ROLE_TOOLS
+        ):
             return "sensitive"
         return default_policy
+
+    def _role_gap_high_risk_tools(self, tool_names: list[str]) -> list[str]:
+        return self._unique(
+            self.TOOL_ALIASES.get(tool_name, tool_name)
+            for tool_name in tool_names
+            if self.TOOL_ALIASES.get(tool_name, tool_name) in self.HIGH_RISK_ROLE_TOOLS
+        )
+
+    async def _find_role_gap_tool_grant_approval(self, gap_id: str) -> dict | None:
+        async with async_session() as session:
+            result = await session.execute(
+                select(ApprovalRequest)
+                .where(
+                    ApprovalRequest.action_type == "role_gap.tool_grant",
+                    ApprovalRequest.target_type == "role_gap",
+                    ApprovalRequest.target_id == gap_id,
+                    ApprovalRequest.status.in_(["pending", "approved"]),
+                    ApprovalRequest.consumed_at.is_(None),
+                )
+                .order_by(ApprovalRequest.created_at.desc())
+            )
+            approval = result.scalars().first()
+            if not approval:
+                return None
+            return {
+                "id": approval.id,
+                "status": approval.status,
+                "risk_level": approval.risk_level,
+                "action_payload": approval.action_payload,
+                "created_at": approval.created_at.isoformat(),
+            }
+
+    async def _request_role_gap_tool_grant_approval(
+        self,
+        gap: dict,
+        manifest_payload: dict,
+        high_risk_tools: list[str],
+        requested_by: str,
+    ) -> str:
+        role_name = manifest_payload["name"]
+        description = (
+            f"Approve generated role '{role_name}' for role gap '{gap['title']}'. "
+            f"This role requests high-risk tools: {', '.join(high_risk_tools)}."
+        )
+        return await self._request_approval(
+            "company_builder",
+            "role_gap.tool_grant",
+            description,
+            {
+                "role_gap_id": gap["id"],
+                "role_gap_title": gap["title"],
+                "role_name": role_name,
+                "family": manifest_payload.get("family"),
+                "high_risk_tools": high_risk_tools,
+                "default_tools": manifest_payload.get("default_tools", []),
+                "manifest_payload": manifest_payload,
+                "requested_by": requested_by,
+            },
+            requester="company_builder",
+            requester_type="agent",
+            risk_level="high",
+            target_type="role_gap",
+            target_id=gap["id"],
+            expires_in_minutes=1440,
+        )
+
+    async def _role_gap_approval_required_response(
+        self,
+        gap: dict,
+        approval_id: str,
+        high_risk_tools: list[str],
+    ) -> dict:
+        response = await self._mark_role_gap_approval_required(
+            gap["id"],
+            approval_id,
+            high_risk_tools,
+        )
+        response["approval_required"] = True
+        response["approval_id"] = approval_id
+        response["high_risk_tools"] = high_risk_tools
+        return response
+
+    async def _mark_role_gap_approval_required(
+        self,
+        gap_id: str,
+        approval_id: str,
+        high_risk_tools: list[str],
+    ) -> dict:
+        async with async_session() as session:
+            result = await session.execute(select(RoleGap).where(RoleGap.id == gap_id))
+            db_gap = result.scalar_one_or_none()
+            if not db_gap:
+                raise ValueError(f"Role gap {gap_id} not found")
+            db_gap.resolution = {
+                **(db_gap.resolution or {}),
+                "approval_required": True,
+                "pending_approval_id": approval_id,
+                "high_risk_tools": high_risk_tools,
+                "approval_requested_at": utc_now().isoformat(),
+            }
+            db_gap.updated_at = utc_now()
+            await session.commit()
+            return self._role_gap_to_dict(db_gap)
+
+    async def _mark_role_gap_resolved(self, gap_id: str, resolution: dict) -> dict:
+        async with async_session() as session:
+            result = await session.execute(select(RoleGap).where(RoleGap.id == gap_id))
+            db_gap = result.scalar_one_or_none()
+            if not db_gap:
+                raise ValueError(f"Role gap {gap_id} not found")
+            db_gap.status = "resolved"
+            db_gap.resolution = {
+                **(db_gap.resolution or {}),
+                **resolution,
+                "approval_required": False,
+            }
+            db_gap.resolved_at = utc_now()
+            db_gap.updated_at = utc_now()
+            await session.commit()
+            return self._role_gap_to_dict(db_gap)
 
     @staticmethod
     def _role_gap_rationale(gap: dict, family: str) -> list[str]:

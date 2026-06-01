@@ -49,6 +49,37 @@ class FakeLLM:
         return self.response
 
 
+def role_gap_with_proposal(default_tools: list[str]) -> dict:
+    return {
+        "id": "gap_123",
+        "title": "Need outbound calls",
+        "description": "Sales work is blocked until agents can call customers.",
+        "status": "proposed",
+        "severity": "high",
+        "source_agent_id": "sales",
+        "source_type": "agent",
+        "company_namespace": "company:acme",
+        "capability": "outbound_voice",
+        "requested_tools": default_tools,
+        "context": {},
+        "resolution": {},
+        "proposed_role": {
+            "manifest_payload": {
+                "family": "communications",
+                "name": "Outbound Calling Specialist",
+                "description": "Handles outbound calls.",
+                "instructions_template": "Call customers safely.",
+                "default_tools": default_tools,
+                "memory_namespace": "company:acme:gap:outbound_calling_specialist",
+                "approval_policy": "sensitive",
+                "success_metrics": [],
+                "is_core": False,
+                "config": {},
+            }
+        },
+    }
+
+
 def test_operating_model_builds_dynamic_roles_from_company_context():
     model = OperatingModelBuilder().build(
         {
@@ -198,6 +229,97 @@ async def test_chat_blocked_language_reports_autonomous_role_gap():
     assert report_data.capability == "legal"
     assert report_data.context["trigger"] == "chat"
     assert report_data.context["conversation_id"] == "conversation-1"
+
+
+@pytest.mark.asyncio
+async def test_apply_role_gap_requests_approval_for_high_risk_generated_tools():
+    manager = AgentManager()
+    gap = role_gap_with_proposal(["make_call", "memory_recall"])
+    manager.get_role_gap = AsyncMock(return_value=gap)
+    manager._find_role_gap_tool_grant_approval = AsyncMock(return_value=None)
+    manager._request_role_gap_tool_grant_approval = AsyncMock(return_value="approval-1")
+    manager._mark_role_gap_approval_required = AsyncMock(
+        return_value={
+            **gap,
+            "resolution": {
+                "approval_required": True,
+                "pending_approval_id": "approval-1",
+                "high_risk_tools": ["make_call"],
+            },
+        }
+    )
+    manager.create_role_manifest = AsyncMock()
+    manager.instantiate_role = AsyncMock()
+
+    result = await manager.apply_role_gap_proposal(
+        "gap_123",
+        {"name": "Acme"},
+        requested_by="owner@example.com",
+    )
+
+    assert result["approval_required"] is True
+    assert result["approval_id"] == "approval-1"
+    assert result["high_risk_tools"] == ["make_call"]
+    manager.create_role_manifest.assert_not_called()
+    manager.instantiate_role.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_apply_role_gap_consumes_approved_tool_grant_before_creating_role():
+    manager = AgentManager()
+    gap = role_gap_with_proposal(["make_call", "memory_recall"])
+    manifest = {
+        "id": "outbound_calling_specialist",
+        "family": "communications",
+        "name": "Outbound Calling Specialist",
+        "default_tools": ["make_call", "memory_recall"],
+        "memory_namespace": "company:acme:gap:outbound_calling_specialist",
+        "approval_policy": "sensitive",
+        "config": {},
+    }
+    agent = {
+        "id": "outbound_calling_specialist",
+        "role_name": "Outbound Calling Specialist",
+    }
+    manager.get_role_gap = AsyncMock(return_value=gap)
+    manager._find_role_gap_tool_grant_approval = AsyncMock(
+        return_value={"id": "approval-1", "status": "approved"}
+    )
+    manager.consume_approval = AsyncMock()
+    manager.get_role_manifest = AsyncMock(return_value=None)
+    manager.create_role_manifest = AsyncMock(return_value=manifest)
+    manager.instantiate_role = AsyncMock(return_value=agent)
+    manager._mark_role_gap_resolved = AsyncMock(
+        return_value={
+            **gap,
+            "status": "resolved",
+            "resolution": {
+                "approval_id": "approval-1",
+                "approved_high_risk_tools": ["make_call"],
+            },
+        }
+    )
+
+    result = await manager.apply_role_gap_proposal("gap_123", {"name": "Acme"})
+
+    assert result["status"] == "resolved"
+    manager.consume_approval.assert_awaited_once_with(
+        "approval-1",
+        consumer="role_gap.apply",
+        target_type="role_gap",
+        target_id="gap_123",
+    )
+    manager.create_role_manifest.assert_awaited_once()
+    manager.instantiate_role.assert_awaited_once_with(
+        "outbound_calling_specialist",
+        {
+            "name": "Acme",
+            "provisioned_by": "role_gap_loop",
+            "role_gap_id": "gap_123",
+            "role_gap_title": "Need outbound calls",
+            "company_namespace": "company:acme",
+        },
+    )
 
 
 @pytest.mark.asyncio

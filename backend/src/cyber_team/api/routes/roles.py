@@ -52,6 +52,7 @@ class RoleGapReport(BaseModel):
 
 class RoleGapProposalRequest(BaseModel):
     company_profile: dict = Field(default_factory=dict)
+    approval_id: str | None = None
 
 
 class RoleGapResolveRequest(BaseModel):
@@ -241,7 +242,12 @@ async def apply_role_gap(
     await require_authorization(request, principal, "apply", "role_gap", gap_id)
     mgr = request.app.state.agent_manager
     try:
-        return await mgr.apply_role_gap_proposal(gap_id, data.company_profile)
+        return await mgr.apply_role_gap_proposal(
+            gap_id,
+            data.company_profile,
+            approval_id=data.approval_id,
+            requested_by=principal.email,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 

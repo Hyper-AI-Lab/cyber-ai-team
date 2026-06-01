@@ -122,7 +122,7 @@ describe('ApiClient', () => {
     await client.listRoleGaps('open')
     await client.reportRoleGap({ title: 'Gap', description: 'Blocked work' })
     await client.proposeRoleGap('gap-1', { name: 'Acme' })
-    await client.applyRoleGap('gap-1', { name: 'Acme' })
+    await client.applyRoleGap('gap-1', { name: 'Acme' }, 'approval-1')
     await client.resolveRoleGap('gap-1', 'dismissed', 'Not needed')
 
     expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/roles/role-gaps?status=open')
@@ -133,6 +133,10 @@ describe('ApiClient', () => {
     expect(fetchMock.mock.calls[3][0]).toBe(
       'http://api.test/api/roles/role-gaps/gap-1/apply',
     )
+    expect(JSON.parse(fetchMock.mock.calls[3][1]?.body as string)).toEqual({
+      company_profile: { name: 'Acme' },
+      approval_id: 'approval-1',
+    })
     expect(fetchMock.mock.calls[4][0]).toBe(
       'http://api.test/api/roles/role-gaps/gap-1/resolve',
     )

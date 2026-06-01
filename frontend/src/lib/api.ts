@@ -218,10 +218,17 @@ class ApiClient {
     });
   }
 
-  async applyRoleGap(gapId: string, companyProfile: Record<string, any> = {}) {
+  async applyRoleGap(
+    gapId: string,
+    companyProfile: Record<string, any> = {},
+    approvalId?: string
+  ) {
     return this.request(`/api/roles/role-gaps/${gapId}/apply`, {
       method: 'POST',
-      body: JSON.stringify({ company_profile: companyProfile }),
+      body: JSON.stringify({
+        company_profile: companyProfile,
+        ...(approvalId ? { approval_id: approvalId } : {}),
+      }),
     });
   }
 

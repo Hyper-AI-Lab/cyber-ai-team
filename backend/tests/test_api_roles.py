@@ -136,6 +136,34 @@ def test_role_gap_proposal_endpoint_success(test_app_client, mock_agent_manager)
     )
 
 
+def test_role_gap_apply_endpoint_passes_approval_id(test_app_client, mock_agent_manager):
+    mock_agent_manager.apply_role_gap_proposal.return_value = {
+        "id": "gap_123",
+        "status": "resolved",
+        "resolution": {
+            "agent_id": "outbound_calling_specialist",
+            "approval_id": "approval_123",
+        },
+    }
+
+    response = test_app_client.post(
+        "/api/roles/role-gaps/gap_123/apply",
+        json={
+            "company_profile": {"name": "Acme"},
+            "approval_id": "approval_123",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "resolved"
+    mock_agent_manager.apply_role_gap_proposal.assert_called_once_with(
+        "gap_123",
+        {"name": "Acme"},
+        approval_id="approval_123",
+        requested_by="owner@example.com",
+    )
+
+
 def test_legacy_role_gap_endpoint_persists_and_returns_proposal(
     test_app_client,
     mock_agent_manager,

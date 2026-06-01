@@ -146,8 +146,14 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
       if (action === 'propose') {
         await api.proposeRoleGap(gapId, { name: companyName })
       } else if (action === 'apply') {
-        await api.applyRoleGap(gapId, { name: companyName })
-        onRefresh()
+        const res = await api.applyRoleGap(gapId, { name: companyName })
+        if (res.approval_required) {
+          alert(
+            `Approval required before creating this role. Review approval ${res.approval_id} in Approvals, then click Create Role again.`
+          )
+        } else {
+          onRefresh()
+        }
       } else {
         await api.resolveRoleGap(gapId, 'dismissed', 'Dismissed from owner console')
       }
@@ -506,6 +512,18 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
                       ({gap.proposed_role.manifest_payload.family})
                     </div>
                   )}
+                  {gap.resolution?.approval_required && (
+                    <div className="mt-3 rounded border border-amber-900/70 bg-amber-950/30 p-3 text-xs text-amber-100">
+                      <span className="font-semibold">Approval required:</span>
+                      {' '}
+                      {gap.resolution.high_risk_tools?.join(', ') || 'high-risk tool grant'}
+                      {gap.resolution.pending_approval_id && (
+                        <span className="ml-1 text-amber-200/80">
+                          ({gap.resolution.pending_approval_id})
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="flex shrink-0 flex-wrap justify-end gap-2">
                   {gap.status === 'open' && (
@@ -521,7 +539,7 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
                       onClick={() => handleRoleGapAction(gap.id, 'apply')}
                       className="btn-primary text-sm"
                     >
-                      Create Role
+                      {gap.resolution?.approval_required ? 'Create After Approval' : 'Create Role'}
                     </button>
                   )}
                   {['open', 'proposed'].includes(gap.status) && (
