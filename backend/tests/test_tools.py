@@ -122,3 +122,47 @@ async def test_role_gap_report_tool_injects_reporting_agent():
     assert report_data.source_agent_id == "sales_agent"
     assert report_data.source_type == "agent"
     assert report_data.requested_tools == ["make_call"]
+
+
+@pytest.mark.asyncio
+async def test_missing_tool_execution_reports_autonomous_gap():
+    registry = ToolRegistry()
+    manager = AsyncMock()
+    manager.report_tool_gap = AsyncMock(return_value={"id": "gap_missing_tool"})
+    registry.set_services(agent_manager=manager)
+
+    result = await registry.execute(
+        "calendar_event_create",
+        {"_agent_id": "operations"},
+    )
+
+    assert result.success is False
+    assert "Tool not found" in result.error
+    manager.report_tool_gap.assert_awaited_once()
+    tool_name = manager.report_tool_gap.await_args.args[0]
+    kwargs = manager.report_tool_gap.await_args.kwargs
+    assert tool_name == "calendar_event_create"
+    assert kwargs["agent_id"] == "operations"
+    assert kwargs["reason"] == "tool_not_found"
+
+
+@pytest.mark.asyncio
+async def test_unavailable_tool_service_reports_autonomous_gap():
+    registry = ToolRegistry()
+    manager = AsyncMock()
+    manager.report_tool_gap = AsyncMock(return_value={"id": "gap_unavailable"})
+    registry.set_services(agent_manager=manager)
+
+    result = await registry.execute(
+        "erpnext_get_invoices",
+        {"_agent_id": "finance"},
+    )
+
+    assert result.success is True
+    assert result.output == "ERPNext client not available"
+    manager.report_tool_gap.assert_awaited_once()
+    tool_name = manager.report_tool_gap.await_args.args[0]
+    kwargs = manager.report_tool_gap.await_args.kwargs
+    assert tool_name == "erpnext_get_invoices"
+    assert kwargs["agent_id"] == "finance"
+    assert kwargs["reason"] == "service_unavailable"

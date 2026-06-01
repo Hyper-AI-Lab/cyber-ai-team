@@ -17,6 +17,96 @@ from cyber_team.memory.service import MemoryService
 
 
 class AgentManager:
+    ACTIVE_ROLE_GAP_STATUSES = {"open", "proposed"}
+    AUTONOMOUS_GAP_BLOCKERS = (
+        "blocked because",
+        "blocked by",
+        "cannot proceed because",
+        "can't proceed because",
+        "unable to proceed because",
+        "cannot complete because",
+        "can't complete because",
+        "cannot continue because",
+        "need a new role",
+        "need another role",
+        "need a specialist",
+        "need an agent",
+        "need a tool",
+        "missing role",
+        "missing agent",
+        "missing specialist",
+        "missing tool",
+        "missing integration",
+        "no available agent",
+        "no suitable agent",
+        "no configured integration",
+        "not configured",
+        "not available",
+        "requires a specialist",
+        "requires an integration",
+        "requires a tool",
+    )
+    AUTONOMOUS_GAP_SUBJECTS = (
+        "agent",
+        "advisor",
+        "capability",
+        "client",
+        "connector",
+        "expert",
+        "gateway",
+        "integration",
+        "manager",
+        "provider",
+        "role",
+        "skill",
+        "specialist",
+        "tool",
+    )
+    TOOL_CAPABILITY_HINTS = {
+        "call": "outbound_voice",
+        "phone": "outbound_voice",
+        "sms": "sms_messaging",
+        "message": "messaging",
+        "email": "email",
+        "calendar": "scheduling",
+        "schedule": "scheduling",
+        "crm": "crm",
+        "lead": "crm",
+        "invoice": "accounting",
+        "accounting": "accounting",
+        "payment": "payments",
+        "contract": "legal",
+        "legal": "legal",
+        "compliance": "compliance",
+        "analytics": "analytics",
+        "report": "analytics",
+        "document": "knowledge",
+        "knowledge": "knowledge",
+        "support": "support",
+    }
+    TOOL_NAME_HINTS = {
+        "call": "make_call",
+        "phone": "make_call",
+        "sms": "send_sms",
+        "message": "send_message",
+        "whatsapp": "send_message",
+        "slack": "send_message",
+        "email": "send_email",
+        "calendar": "calendar_event_create",
+        "schedule": "calendar_event_create",
+        "crm": "erpnext_create_lead",
+        "lead": "erpnext_create_lead",
+        "invoice": "erpnext_get_invoices",
+        "accounting": "erpnext_get_invoices",
+        "contract": "contract_draft",
+        "policy": "policy_draft",
+        "analytics": "analytics_read",
+        "report": "analytics_read",
+        "document": "document_index",
+        "knowledge": "knowledge_query",
+        "support": "support_ticket_read",
+    }
+
     TOOL_ALIASES = {
         "call_make": "make_call",
         "email_send": "send_email",
@@ -111,6 +201,7 @@ class AgentManager:
     async def invoke_agent(self, agent_id: str, task: str) -> str:
         agent = await self.get_agent(agent_id)
         if not agent:
+            await self._report_missing_agent_gap(agent_id, task)
             raise ValueError(f"Agent {agent_id} not found")
 
         # Check approval policy via OPA
@@ -153,6 +244,17 @@ class AgentManager:
             system_prompt=system_prompt,
             user_message=task,
             agent_id=agent_id,
+        )
+        await self._maybe_report_autonomous_role_gap(
+            trigger="agent_invocation",
+            source_agent_id=agent_id,
+            company_namespace=agent["memory_namespace"],
+            task=task,
+            result=result,
+            context={
+                "role_family": agent["role_family"],
+                "role_name": agent["role_name"],
+            },
         )
 
         # Store invocation in episodic memory
@@ -206,6 +308,14 @@ class AgentManager:
             user_message=message,
             agent_id=agent_id,
             conversation_id=conversation_id,
+        )
+        await self._maybe_report_autonomous_role_gap(
+            trigger="chat",
+            source_agent_id=agent_id,
+            company_namespace=agent.get("memory_namespace") if agent_id != "supervisor" else None,
+            task=message,
+            result=response,
+            context={"conversation_id": conversation_id},
         )
 
         return {
@@ -429,9 +539,23 @@ Propose a new role to fill this gap. Return JSON with:
         gap_id = f"gap_{uuid.uuid4().hex[:12]}"
         company_namespace = getattr(data, "company_namespace", None) or "company:default"
         severity = getattr(data, "severity", None) or "medium"
+        context = dict(getattr(data, "context", None) or {})
+        dedupe_key = context.get("dedupe_key")
         status = "open"
         now = utc_now()
         async with async_session() as session:
+            if dedupe_key:
+                result = await session.execute(
+                    select(RoleGap)
+                    .where(
+                        RoleGap.status.in_(self.ACTIVE_ROLE_GAP_STATUSES),
+                        RoleGap.company_namespace == company_namespace,
+                    )
+                    .order_by(desc(RoleGap.created_at))
+                )
+                for existing_gap in result.scalars().all():
+                    if (existing_gap.context or {}).get("dedupe_key") == dedupe_key:
+                        return self._role_gap_to_dict(existing_gap)
             gap = RoleGap(
                 id=gap_id,
                 title=getattr(data, "title"),
@@ -443,7 +567,7 @@ Propose a new role to fill this gap. Return JSON with:
                 company_namespace=company_namespace,
                 capability=getattr(data, "capability", None),
                 requested_tools=list(getattr(data, "requested_tools", None) or []),
-                context=dict(getattr(data, "context", None) or {}),
+                context=context,
                 proposed_role={},
                 resolution={},
                 created_at=now,
@@ -471,6 +595,51 @@ Propose a new role to fill this gap. Return JSON with:
                 },
             )
         return response
+
+    async def report_tool_gap(
+        self,
+        tool_name: str,
+        *,
+        agent_id: str | None = None,
+        actor: str = "system",
+        actor_type: str = "system",
+        reason: str = "tool_not_found",
+        error: str | None = None,
+        context: dict | None = None,
+    ) -> dict | None:
+        """Record a role/tool capability gap caused by tool execution blockage."""
+        capability = self._capability_for_text(tool_name)
+        severity = "high" if reason == "service_unavailable" else "medium"
+        title = (
+            f"Unavailable integration for {tool_name}"
+            if reason == "service_unavailable"
+            else f"Missing tool: {tool_name}"
+        )
+        description = (
+            f"Tool execution was blocked because {tool_name} is unavailable."
+            if reason == "service_unavailable"
+            else f"Tool execution requested {tool_name}, but that tool is not registered."
+        )
+        if error:
+            description = f"{description} Runtime detail: {error[:500]}"
+        return await self._report_autonomous_role_gap(
+            title=title,
+            description=description,
+            severity=severity,
+            source_agent_id=agent_id,
+            source_type=actor_type,
+            capability=capability,
+            requested_tools=[tool_name],
+            context={
+                **(context or {}),
+                "trigger": "tool_execution",
+                "reason": reason,
+                "tool_name": tool_name,
+                "error": error,
+                "dedupe_key": f"{reason}:{tool_name}",
+            },
+            reporter=agent_id or actor,
+        )
 
     async def list_role_gaps(self, status: str | None = None) -> list[dict]:
         async with async_session() as session:
@@ -1114,6 +1283,144 @@ Propose a new role to fill this gap. Return JSON with:
         if gap.get("source_agent_id"):
             rationale.append(f"Reported by agent {gap['source_agent_id']}.")
         return rationale
+
+    async def _report_missing_agent_gap(self, agent_id: str, task: str) -> dict | None:
+        role_name = agent_id.replace("_", " ").replace("-", " ").strip().title()
+        return await self._report_autonomous_role_gap(
+            title=f"Missing agent: {role_name or agent_id}",
+            description=(
+                f"A task attempted to invoke agent '{agent_id}', but no active agent "
+                f"exists for that role. Task excerpt: {self._excerpt(task)}"
+            ),
+            severity="high",
+            source_type="system",
+            capability=agent_id,
+            context={
+                "trigger": "missing_agent_invocation",
+                "agent_id": agent_id,
+                "task_excerpt": self._excerpt(task, limit=500),
+                "dedupe_key": f"missing-agent:{agent_id}",
+            },
+            reporter="orchestrator",
+        )
+
+    async def _maybe_report_autonomous_role_gap(
+        self,
+        *,
+        trigger: str,
+        source_agent_id: str | None,
+        company_namespace: str | None,
+        task: str,
+        result: str,
+        context: dict | None = None,
+    ) -> dict | None:
+        combined = f"{task}\n{result}"
+        if not self._looks_like_role_gap_signal(combined):
+            return None
+
+        capability = self._capability_for_text(combined)
+        requested_tools = self._requested_tools_for_text(combined)
+        title = self._autonomous_gap_title(combined, capability)
+        dedupe_subject = source_agent_id or trigger
+        dedupe_key = f"{trigger}:{dedupe_subject}:{capability}:{','.join(requested_tools)}"
+        return await self._report_autonomous_role_gap(
+            title=title,
+            description=(
+                "The runtime detected blocked work that appears to need an additional "
+                "role, skill, tool, or integration.\n\n"
+                f"Task excerpt: {self._excerpt(task, limit=600)}\n\n"
+                f"Observed output excerpt: {self._excerpt(result, limit=600)}"
+            ),
+            severity="medium",
+            source_agent_id=source_agent_id,
+            source_type="agent" if source_agent_id else "system",
+            company_namespace=company_namespace,
+            capability=capability,
+            requested_tools=requested_tools,
+            context={
+                **(context or {}),
+                "trigger": trigger,
+                "task_excerpt": self._excerpt(task, limit=500),
+                "result_excerpt": self._excerpt(result, limit=500),
+                "dedupe_key": dedupe_key,
+            },
+            reporter=source_agent_id or "runtime_detector",
+        )
+
+    async def _report_autonomous_role_gap(
+        self,
+        *,
+        title: str,
+        description: str,
+        severity: str = "medium",
+        source_agent_id: str | None = None,
+        source_type: str = "system",
+        company_namespace: str | None = None,
+        capability: str | None = None,
+        requested_tools: list[str] | None = None,
+        context: dict | None = None,
+        reporter: str = "runtime_detector",
+    ) -> dict | None:
+        data = type(
+            "AutonomousRoleGap",
+            (),
+            {
+                "title": title,
+                "description": description,
+                "severity": severity,
+                "source_agent_id": source_agent_id,
+                "source_type": source_type,
+                "company_namespace": company_namespace or "company:default",
+                "capability": capability,
+                "requested_tools": requested_tools or [],
+                "context": context or {},
+            },
+        )()
+        try:
+            return await self.report_role_gap(data, reporter=reporter)
+        except Exception:
+            return None
+
+    def _looks_like_role_gap_signal(self, text: str) -> bool:
+        normalized = " ".join(str(text or "").lower().split())
+        if not normalized:
+            return False
+        has_blocker = any(phrase in normalized for phrase in self.AUTONOMOUS_GAP_BLOCKERS)
+        has_subject = any(subject in normalized for subject in self.AUTONOMOUS_GAP_SUBJECTS)
+        return has_blocker and has_subject
+
+    def _capability_for_text(self, text: str) -> str:
+        normalized = str(text or "").lower()
+        for hint, capability in self.TOOL_CAPABILITY_HINTS.items():
+            if hint in normalized:
+                return capability
+        for family, signals in OperatingModelBuilder.FAMILY_SIGNALS.items():
+            if any(signal in normalized for signal in signals):
+                return family
+        return "runtime_capability"
+
+    def _requested_tools_for_text(self, text: str) -> list[str]:
+        normalized = str(text or "").lower()
+        tools = [
+            tool_name
+            for hint, tool_name in self.TOOL_NAME_HINTS.items()
+            if hint in normalized
+        ]
+        return self._unique(tools)
+
+    @staticmethod
+    def _autonomous_gap_title(text: str, capability: str) -> str:
+        normalized = " ".join(str(text or "").split())
+        if len(normalized) > 0:
+            return f"Blocked work needs {capability.replace('_', ' ')} capability"
+        return "Blocked work needs additional capability"
+
+    @staticmethod
+    def _excerpt(text: str, limit: int = 240) -> str:
+        normalized = " ".join(str(text or "").split())
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[: limit - 3].rstrip() + "..."
 
     async def _seed_company_memory(
         self,

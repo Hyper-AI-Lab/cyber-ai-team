@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 import pytest
 
 from cyber_team.agents.manager import AgentManager, slug_id
@@ -37,6 +39,14 @@ class FakeMemoryService:
         }
         self.entries.append(entry)
         return entry
+
+
+class FakeLLM:
+    def __init__(self, response: str):
+        self.response = response
+
+    async def invoke(self, **kwargs):
+        return self.response
 
 
 def test_operating_model_builds_dynamic_roles_from_company_context():
@@ -154,6 +164,40 @@ def test_role_gap_proposal_maps_gap_to_dynamic_manifest_payload():
     assert "make_call" in manifest["default_tools"]
     assert manifest["memory_namespace"] == "company:acme:gap:need_outbound_client_calls_specialist"
     assert manifest["config"]["role_gap_id"] == "gap_123"
+
+
+@pytest.mark.asyncio
+async def test_missing_agent_invocation_reports_autonomous_role_gap():
+    manager = AgentManager()
+    manager.get_agent = AsyncMock(return_value=None)
+    manager.report_role_gap = AsyncMock(return_value={"id": "gap_missing_agent"})
+
+    with pytest.raises(ValueError, match="Agent outbound_caller not found"):
+        await manager.invoke_agent("outbound_caller", "Call the warm lead.")
+
+    report_data = manager.report_role_gap.await_args.args[0]
+    assert report_data.title == "Missing agent: Outbound Caller"
+    assert report_data.severity == "high"
+    assert report_data.capability == "outbound_caller"
+    assert report_data.context["dedupe_key"] == "missing-agent:outbound_caller"
+
+
+@pytest.mark.asyncio
+async def test_chat_blocked_language_reports_autonomous_role_gap():
+    manager = AgentManager()
+    manager._llm = FakeLLM(
+        "I cannot proceed because a legal specialist role is missing for contract review."
+    )
+    manager.report_role_gap = AsyncMock(return_value={"id": "gap_legal"})
+
+    response = await manager.chat(None, "Review this customer contract.", "conversation-1")
+
+    assert response["agent_id"] == "supervisor"
+    report_data = manager.report_role_gap.await_args.args[0]
+    assert report_data.source_agent_id == "supervisor"
+    assert report_data.capability == "legal"
+    assert report_data.context["trigger"] == "chat"
+    assert report_data.context["conversation_id"] == "conversation-1"
 
 
 @pytest.mark.asyncio

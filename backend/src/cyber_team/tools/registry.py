@@ -186,6 +186,14 @@ class ToolRegistry:
                     outcome="failed",
                     metadata={"error": "tool_not_found"},
                 )
+            await self._report_tool_gap(
+                tool_name,
+                agent_id=agent_id,
+                actor=actor,
+                actor_type=actor_type,
+                reason="tool_not_found",
+                error=f"Tool not found: {tool_name}",
+            )
             return ToolResult(success=False, error=f"Tool not found: {tool_name}")
 
         tool = self._tools[tool_name]
@@ -249,6 +257,15 @@ class ToolRegistry:
                     target_id=tool_name,
                 )
             result = await executor(**params)
+            if self._tool_output_signals_unavailable(result):
+                await self._report_tool_gap(
+                    tool_name,
+                    agent_id=agent_id,
+                    actor=actor,
+                    actor_type=actor_type,
+                    reason="service_unavailable",
+                    error=self._stringify_tool_output(result),
+                )
             if self._audit:
                 await self._audit.record(
                     event_type="tool.execute",
@@ -266,6 +283,15 @@ class ToolRegistry:
             return ToolResult(success=True, output=result)
         except Exception as e:
             logger.error(f"Tool execution failed [{tool_name}]: {e}")
+            if self._tool_output_signals_unavailable(str(e)):
+                await self._report_tool_gap(
+                    tool_name,
+                    agent_id=agent_id,
+                    actor=actor,
+                    actor_type=actor_type,
+                    reason="service_unavailable",
+                    error=str(e),
+                )
             if self._audit:
                 await self._audit.record(
                     event_type="tool.execute",
@@ -305,6 +331,60 @@ class ToolRegistry:
         if parameter_type == "array":
             return isinstance(value, list)
         return True
+
+    async def _report_tool_gap(
+        self,
+        tool_name: str,
+        *,
+        agent_id: str | None,
+        actor: str,
+        actor_type: str,
+        reason: str,
+        error: str | None = None,
+    ) -> None:
+        if not self._agent_manager:
+            return
+        report_tool_gap = getattr(self._agent_manager, "report_tool_gap", None)
+        if not report_tool_gap:
+            return
+        try:
+            await report_tool_gap(
+                tool_name,
+                agent_id=agent_id,
+                actor=actor,
+                actor_type=actor_type,
+                reason=reason,
+                error=error,
+            )
+        except Exception:
+            logger.debug("Failed to report tool role gap for %s", tool_name, exc_info=True)
+
+    @staticmethod
+    def _tool_output_signals_unavailable(output: Any) -> bool:
+        text = ToolRegistry._stringify_tool_output(output).lower()
+        unavailable_phrases = (
+            "not available",
+            "not configured",
+            "missing configuration",
+            "missing credentials",
+            "client unavailable",
+            "client not available",
+            "gateway unavailable",
+            "gateway not available",
+            "provider unavailable",
+            "provider not available",
+        )
+        return any(phrase in text for phrase in unavailable_phrases)
+
+    @staticmethod
+    def _stringify_tool_output(output: Any) -> str:
+        if isinstance(output, str):
+            return output
+        if isinstance(output, dict):
+            return " ".join(str(value) for value in output.values())
+        if isinstance(output, list):
+            return " ".join(ToolRegistry._stringify_tool_output(item) for item in output)
+        return str(output)
 
     def _register_builtin_tools(self):
         """Register built-in tools that ship with Cyber-Team."""

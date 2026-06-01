@@ -166,8 +166,10 @@ Deliverables:
 - [x] Company Builder deterministic proposal for unresolved gaps.
 - [x] Owner-console view for pending role gaps and generated role proposals.
 - [x] Owner-gated application of generated role proposals.
+- [x] Automatic role-gap creation from missing agents, missing tools, unavailable
+  integrations, and blocked execution language.
 - [ ] Fine-grained approval requests for high-risk generated tool grants.
-- [ ] Automatic Supervisor review of open gaps from workflow failures and blocked tasks.
+- [ ] Scheduled Supervisor review of open gaps from workflow failures and blocked tasks.
 
 Exit criteria:
 
@@ -278,7 +280,11 @@ Exit criteria:
 
 ## 6. Current Slice Notes
 
-The first slice intentionally avoids a database migration. It stores the operating model in
-the Company Builder response, generated role manifest config, audit metadata, and seeded
-memory entries. A later phase can add first-class tables for company profiles, role-gap
-events, operating loops, and integration requirements once the runtime behavior is proven.
+The current Phase 2 slice turns role gaps into runtime events. Missing agent invocations,
+missing tool execution, unavailable integrations, and explicit blocked-work language in
+agent/chat responses create de-duplicated `role_gaps` records. The Role Gap Inbox can then
+ask Company Builder for a deterministic role proposal and apply or dismiss the proposal.
+
+The next Phase 2 slice should make high-risk generated tool grants create explicit approval
+requests before role instantiation, rather than relying only on the existing owner-gated
+apply action and per-tool approval policies.
