@@ -211,6 +211,12 @@ class ApiClient {
     });
   }
 
+  async runSupervisorRoleGapReview() {
+    return this.request('/api/roles/role-gaps/supervisor-review', {
+      method: 'POST',
+    });
+  }
+
   async proposeRoleGap(gapId: string, companyProfile: Record<string, any> = {}) {
     return this.request(`/api/roles/role-gaps/${gapId}/proposal`, {
       method: 'POST',

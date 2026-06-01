@@ -31,6 +31,7 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
   const [building, setBuilding] = useState(false)
   const [roleGaps, setRoleGaps] = useState<any[]>([])
   const [loadingRoleGaps, setLoadingRoleGaps] = useState(false)
+  const [reviewingRoleGaps, setReviewingRoleGaps] = useState(false)
 
   // 2. Custom Role Provisioning State
   const [roleFamily, setRoleFamily] = useState('engineering')
@@ -58,6 +59,21 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
       setRoleGaps([])
     } finally {
       setLoadingRoleGaps(false)
+    }
+  }
+
+  const handleSupervisorReview = async () => {
+    setReviewingRoleGaps(true)
+    try {
+      const review = await api.runSupervisorRoleGapReview()
+      await loadRoleGaps()
+      alert(
+        `Supervisor review complete: ${review.role_gaps_reviewed} gaps reviewed, ${review.role_gaps_proposed.length} proposals generated, ${review.workflow_failure_gaps.length} workflow failure gaps surfaced.`
+      )
+    } catch (e: any) {
+      alert(`Error: ${e.message}`)
+    } finally {
+      setReviewingRoleGaps(false)
     }
   }
 
@@ -484,6 +500,13 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
           <button onClick={loadRoleGaps} className="btn-secondary text-sm">
             {loadingRoleGaps ? 'Refreshing...' : 'Refresh'}
           </button>
+          <button
+            onClick={handleSupervisorReview}
+            disabled={reviewingRoleGaps}
+            className="btn-primary text-sm"
+          >
+            {reviewingRoleGaps ? 'Reviewing...' : 'Supervisor Review'}
+          </button>
         </div>
         <div className="mt-4 space-y-3">
           {roleGaps.map((gap: any) => (
@@ -522,6 +545,20 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
                           ({gap.resolution.pending_approval_id})
                         </span>
                       )}
+                    </div>
+                  )}
+                  {gap.context?.supervisor_review && (
+                    <div className="mt-3 rounded border border-blue-900/70 bg-blue-950/30 p-3 text-xs text-blue-100">
+                      <span className="font-semibold">Supervisor:</span>
+                      {' '}
+                      {gap.context.supervisor_review.recommendation}
+                      {' '}
+                      <span className="text-blue-200/80">
+                        ({gap.context.supervisor_review.priority})
+                      </span>
+                      <p className="mt-1 text-blue-100/80">
+                        {gap.context.supervisor_review.reason}
+                      </p>
                     </div>
                   )}
                 </div>

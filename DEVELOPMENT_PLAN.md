@@ -169,7 +169,8 @@ Deliverables:
 - [x] Automatic role-gap creation from missing agents, missing tools, unavailable
   integrations, and blocked execution language.
 - [x] Fine-grained approval requests for high-risk generated tool grants.
-- [ ] Scheduled Supervisor review of open gaps from workflow failures and blocked tasks.
+- [x] Scheduled Supervisor review of open/proposed role gaps, stale approvals, and repeated
+  workflow failures.
 
 Exit criteria:
 
@@ -290,6 +291,11 @@ instantiation. The owner applies the role-gap proposal once to create or reuse a
 approves it in the approval queue, then applies the proposal again to consume that approval
 and instantiate the role.
 
-The next Phase 2 slice should add a scheduled Supervisor review that periodically scans
-open/proposed role gaps, stale approvals, and repeated workflow failures, then recommends
-consolidation, dismissal, or role creation.
+The scheduled Supervisor review now periodically scans open/proposed role gaps, stale
+approvals, and repeated workflow failures. It annotates role gaps with review guidance,
+generates deterministic proposals for open gaps, and creates de-duplicated workflow
+reliability gaps when repeated failures cross the configured threshold.
+
+The next Phase 3 slice should start the explicit memory protocol: agent invocation should
+record what memory was read, what durable memory should be written after completion, and
+which namespace/provenance rules governed those reads and writes.

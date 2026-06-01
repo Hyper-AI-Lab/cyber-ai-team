@@ -164,6 +164,26 @@ def test_role_gap_apply_endpoint_passes_approval_id(test_app_client, mock_agent_
     )
 
 
+def test_supervisor_role_gap_review_endpoint(test_app_client):
+    test_app_client.app.state.supervisor_review_service.run_once.return_value = {
+        "reviewed_at": "2026-06-01T00:00:00",
+        "actor": "owner@example.com",
+        "role_gaps_reviewed": 1,
+        "role_gaps_proposed": ["gap_123"],
+        "role_gap_recommendations": [],
+        "stale_approvals": [],
+        "workflow_failure_gaps": [],
+    }
+
+    response = test_app_client.post("/api/roles/role-gaps/supervisor-review")
+
+    assert response.status_code == 200
+    assert response.json()["role_gaps_proposed"] == ["gap_123"]
+    test_app_client.app.state.supervisor_review_service.run_once.assert_called_once_with(
+        actor="owner@example.com"
+    )
+
+
 def test_legacy_role_gap_endpoint_persists_and_returns_proposal(
     test_app_client,
     mock_agent_manager,

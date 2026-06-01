@@ -60,6 +60,16 @@ class RoleGapResolveRequest(BaseModel):
     note: str = ""
 
 
+class SupervisorReviewResponse(BaseModel):
+    reviewed_at: str
+    actor: str
+    role_gaps_reviewed: int
+    role_gaps_proposed: list[str]
+    role_gap_recommendations: list[dict]
+    stale_approvals: list[dict]
+    workflow_failure_gaps: list[dict]
+
+
 @router.get("/catalog", response_model=list[RoleManifestResponse])
 async def list_role_catalog(
     request: Request,
@@ -201,6 +211,16 @@ async def report_role_gap(
     mgr = request.app.state.agent_manager
     data.source_type = data.source_type or principal.role
     return await mgr.report_role_gap(data, reporter=principal.email)
+
+
+@router.post("/role-gaps/supervisor-review", response_model=SupervisorReviewResponse)
+async def run_supervisor_role_gap_review(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "review", "role_gap")
+    review_service = request.app.state.supervisor_review_service
+    return await review_service.run_once(actor=principal.email)
 
 
 @router.get("/role-gaps/{gap_id}")

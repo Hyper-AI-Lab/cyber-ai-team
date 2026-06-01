@@ -39,6 +39,7 @@ def test_app_client(mock_agent_manager, monkeypatch):
 
     # Inject mocked agent manager into app state
     app.state.agent_manager = mock_agent_manager
+    app.state.supervisor_review_service = AsyncMock()
 
     # Override security dependencies
     async def mock_get_current_principal():

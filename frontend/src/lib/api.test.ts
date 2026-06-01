@@ -112,6 +112,11 @@ describe('ApiClient', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'gap-1' }]))
       .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'open' }))
+      .mockResolvedValueOnce(jsonResponse({
+        role_gaps_reviewed: 1,
+        role_gaps_proposed: ['gap-1'],
+        workflow_failure_gaps: [],
+      }))
       .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'proposed' }))
       .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'resolved' }))
       .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'dismissed' }))
@@ -121,6 +126,7 @@ describe('ApiClient', () => {
     client.setTokens('access-1')
     await client.listRoleGaps('open')
     await client.reportRoleGap({ title: 'Gap', description: 'Blocked work' })
+    await client.runSupervisorRoleGapReview()
     await client.proposeRoleGap('gap-1', { name: 'Acme' })
     await client.applyRoleGap('gap-1', { name: 'Acme' }, 'approval-1')
     await client.resolveRoleGap('gap-1', 'dismissed', 'Not needed')
@@ -128,16 +134,19 @@ describe('ApiClient', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/roles/role-gaps?status=open')
     expect(fetchMock.mock.calls[1][0]).toBe('http://api.test/api/roles/role-gaps')
     expect(fetchMock.mock.calls[2][0]).toBe(
-      'http://api.test/api/roles/role-gaps/gap-1/proposal',
+      'http://api.test/api/roles/role-gaps/supervisor-review',
     )
     expect(fetchMock.mock.calls[3][0]).toBe(
+      'http://api.test/api/roles/role-gaps/gap-1/proposal',
+    )
+    expect(fetchMock.mock.calls[4][0]).toBe(
       'http://api.test/api/roles/role-gaps/gap-1/apply',
     )
-    expect(JSON.parse(fetchMock.mock.calls[3][1]?.body as string)).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[4][1]?.body as string)).toEqual({
       company_profile: { name: 'Acme' },
       approval_id: 'approval-1',
     })
-    expect(fetchMock.mock.calls[4][0]).toBe(
+    expect(fetchMock.mock.calls[5][0]).toBe(
       'http://api.test/api/roles/role-gaps/gap-1/resolve',
     )
   })
