@@ -1,58 +1,279 @@
-# Cyber-Team Development Plan
+# Cyber-Team Autonomous Company OS v2 Development Plan
 
-## 1. Project Purpose & Vision
-The **Cyber-Team** project aims to build an AI-powered, open-source multi-agent company operating system. The system acts as a digital-AI team for a startup, covering roles like project manager, operations manager, legal advisor, accountant, and more.
+## 1. Product North Star
 
-Key defining aspects:
-- **Proactive and Interactive Agents**: Not merely chatbots, these agents operate autonomously, collaborating on tasks and executing processes within defined constraints.
-- **Adaptive Organization**: A "Company Builder" agent dynamically creates and configures new roles based on organizational needs.
-- **Persistent Infinite Memory**: Combining short-term graph state, Mem0/Qdrant retrieval memory, and PostgreSQL/ERPNext canonical records, agents possess an illusion of infinite, correct recall.
-- **Omni-channel Communication**: Support for external messaging (Asterisk/Jasmin for voice/SMS, SMTP, webhooks).
-- **Human Governance**: A dedicated control plane for the founder to monitor, inspect memories, chat, and approve high-stakes agent decisions.
+Cyber-Team is an adaptive AI company operating system. It should not be a fixed bundle
+of demo agents or canned workflows. It should continuously infer what the business needs,
+create or activate roles when gaps appear, orchestrate those roles through governed tools,
+and preserve company memory so agents can operate with stable long-term context.
 
-## 2. Current Architecture & State
-Based on the `README.md` and `docker-compose.yml`, the infrastructure skeleton is robustly defined:
+The core operating principle is:
 
-### Technologies & Infrastructure:
-- **Agent Runtime & Orchestration**: LangGraph, Temporal, and CrewAI for defining workflows, roles, state machines, and task recovery.
-- **Backend API**: Python-based FastAPI service in `backend/` exposing endpoints for agent execution, role building, and chat.
-- **Frontend / Owner Console**: React + Tailwind Next.js application in `frontend/` acting as the control plane for the system.
-- **Memory & Storage**: PostgreSQL (system of record), Qdrant (semantic vector DB for Mem0), Redis (caching and pub/sub).
-- **Enterprise Integrations**: ERPNext (HR, CRM, accounting), Nextcloud (documents).
-- **Governance & Observability**: OpenFGA & OPA (permissions and policies), Keycloak (IAM), Langfuse & Grafana/Prometheus (tracing and metrics).
-- **Communications**: Asterisk & Jasmin for telephony and SMS.
+- Company context drives roles, tools, memory policy, workflows, and integrations.
+- Roles are created from a catalog when possible and generated dynamically when needed.
+- Workflows are adaptive operating loops, not hard-coded default business processes.
+- Memory is treated as company infrastructure, not incidental chat history.
+- The owner can inspect, interrupt, approve, and redirect every important action.
 
-### Current Implementation State:
-- The foundational **Docker Compose** environment is in place, connecting roughly 15 services.
-- Basic scaffolding exists for the **Backend** (`backend/src/cyber_team/` with API routes and agent structure) and **Frontend** Next.js app.
-- Theoretical and design research is thoroughly documented in the `request/` folder (GPT and Perplexity reports) validating the open-source stack.
+## 2. Current State
 
-## 3. Development Roadmap: What Should Be Done Next
+The repository already has a working control-plane foundation:
 
-The repository provides the infrastructure blueprint, but the application layer (agent manifests, workflow graphs, tooling connectors) requires implementation. The execution plan should follow a phased approach:
+- FastAPI backend with auth, audit log, role catalog, agents, workflows, tools, memory,
+  approvals, communications, integrations, and health checks.
+- Next.js owner console with dashboard, agents, memory, workflows, chat, approvals,
+  integrations, and audit views.
+- PostgreSQL, Redis, Qdrant, OPA, Langfuse, Temporal, and related services defined for
+  Docker Compose deployment.
+- Staging deployment path through Caddy and compose release scripts.
+- Seed role manifests covering company builder, supervisor, finance, legal, sales,
+  marketing, support, product, engineering, operations, HR, security, knowledge, and
+  communications.
 
-### Phase 1: Core Orchestration and Role Instantiation
-- [ ] **Agent Manager & Orchestrator Implementation**: Develop the core LangGraph state machine in `backend/src/cyber_team/api/workflows.py` and `agents.py`. Define the supervisor and worker node logic.
-- [ ] **Company Builder Agent**: Implement the bootstrap logic in `roles/company-builder.py` that takes startup details and creates the YAML/JSON manifests for the initial team.
-- [ ] **Role Manifest Schema**: Define the standard schema for roles (goals, allowed tools, memory namespaces). Implement the first core roles: CEO Advisor, Project Manager, and Operations.
-- [ ] **Temporal Integration**: Wire up the Temporal worker (`backend/src/cyber_team/worker.py`) to execute long-running LangGraph processes durably.
+The main product gap is that the existing behavior is still too static. It can provision
+roles, but it does not yet act as a self-evolving digital organization.
 
-### Phase 2: Memory Fabric & Systems of Record
-- [ ] **Memory Service API**: Implement the Memory Service using `mem0` and `qdrant-client` in `backend/src/cyber_team/memory/`. Establish the separation between Episodic, Semantic, and Entity memories.
-- [ ] **ERPNext Connector**: Build tools in `tools/erpnext.py` using `erpnext-client` allowing agents to read and write canonical records (e.g., invoices, CRM entries). Ensure memory retrieval supplements ERP data rather than replacing it.
+## 3. Target Architecture
 
-### Phase 3: Governance, Approvals, and Safety
-- [ ] **Human-in-the-Loop Interruption**: Utilize LangGraph's interrupt features to pause workflows pending human approval for sensitive actions (payments, contract signing, production deployments).
-- [ ] **OpenFGA & OPA Enforcements**: Integrate the OpenFGA client in API endpoints and agent tool executions to ensure agents only access data and perform actions they are authorized for.
+### 3.1 Company Builder
 
-### Phase 4: Omni-Channel Communications
-- [ ] **Communication Adapters**: Implement Asterisk (Voice via Pipecat) and Jasmin (SMS) adapters. Expose these as tools for the Sales, Support, and PR agents.
-- [ ] **Routing Webhooks**: Add endpoints in `backend/src/cyber_team/api/routes/comms.py` to ingest incoming calls/SMS and route them to the active state graph of the assigned agent.
+The Company Builder is the bootstrap and evolution engine. It receives company context,
+builds an operating model, selects immediate roles, defers lower-priority roles, detects
+capability gaps, seeds memory, and creates adaptive operating loops.
 
-### Phase 5: Owner Console / Frontend
-- [ ] **Dashboard Implementation**: Build out the Next.js frontend to visualize LangGraph workflows, display pending approvals, and show top-level metrics.
-- [ ] **Memory Browser & Chat**: Add UI components to let the founder chat directly with agents and inspect their multi-layered memory structures.
+Responsibilities:
 
-### Phase 6: Testing & Iteration
-- [ ] **End-to-End Workflows**: Design and execute tests for complete workflows (e.g., Lead generation -> Outreach via SMS -> CRM Update -> Owner Notification).
-- [ ] **Deployment Tuning**: Optimize Docker container resource limits and refine the configuration management script (`start.sh`).
+- Normalize company profile and infer business needs.
+- Compare needed capabilities against role catalog and tool registry.
+- Instantiate catalog roles where available.
+- Generate specialized role manifests when no catalog role fits.
+- Seed company memory with constitution, role map, operating loops, and gap backlog.
+- Keep the role backlog alive for future activation.
+
+### 3.2 Supervisor / Orchestrator
+
+The Supervisor coordinates execution and enforces safety.
+
+Responsibilities:
+
+- Route work to the right role.
+- Inspect plans before sensitive actions.
+- Detect blocked work, stale tasks, duplicated effort, and conflicting agent outputs.
+- Escalate to the owner when authority, risk, or uncertainty requires it.
+- Trigger Company Builder when a new role, tool, or skill is needed.
+
+### 3.3 Role Factory
+
+The Role Factory turns needs into executable role manifests.
+
+Responsibilities:
+
+- Prefer existing catalog roles when they fit.
+- Generate new specialized roles with clear tools, memory namespace, instructions, metrics,
+  approval policy, and activation triggers.
+- Require approval for high-risk tool access or broad authority.
+- Preserve generated role provenance in manifest config.
+
+### 3.4 Memory Fabric
+
+Memory must create the practical illusion of persistent, reliable context.
+
+Layers:
+
+- Company memory: constitution, goals, operating model, integrations, constraints.
+- Role memory: role-specific procedures, active responsibilities, prior decisions.
+- Workflow memory: task state, decisions, approvals, outputs, follow-ups.
+- Entity memory: customers, vendors, projects, people, deals, documents.
+- Canonical records: ERPNext/PostgreSQL records that override memory when facts conflict.
+
+Rules:
+
+- Agents query memory before material actions.
+- Completed work writes concise episodic and procedural memories.
+- The Memory Steward consolidates stale, duplicated, or conflicting entries.
+- Canonical records are never silently overwritten by retrieved memory.
+
+### 3.5 Adaptive Operating Loops
+
+Operating loops are durable policies that create work when conditions appear.
+
+Initial loops:
+
+- Owner alignment loop.
+- Role gap monitoring loop.
+- Memory consolidation loop.
+- Integration discovery loop.
+- Risk review loop.
+- Customer communication loop when customer channels exist.
+
+Future loops should be created from business context, not installed as static sample
+workflows.
+
+### 3.6 Tool and Integration Layer
+
+Tools are governed capabilities. Integrations are activated when the company context or
+agent work proves the need.
+
+Priority integration families:
+
+- Communications: email, SMS, phone, messaging.
+- CRM and customer records.
+- Accounting and invoicing.
+- Calendar and scheduling.
+- Documents and knowledge base.
+- Support desk.
+- Analytics and reporting.
+- Payments, only behind strict approval and audit controls.
+
+## 4. Implementation Phases
+
+### Phase 1: Dynamic Company Builder Foundation
+
+Status: first foundation slice implemented; remaining Phase 1 work is UI depth,
+role-gap persistence, and deployment validation.
+
+Deliverables:
+
+- [x] Deterministic operating-model builder.
+- [x] Dynamic role specs and generated role manifests.
+- [x] Company memory seed generation.
+- [x] Capability gap detection from tool registry and profile signals.
+- [x] Owner console builder form for richer company context.
+- [x] Focused tests for role inference and builder integration.
+- [ ] Persist role-gap events and generated operating-loop state.
+- [ ] Add deeper owner-console views for operating model details.
+- [ ] Deploy and validate the slice in hosted staging.
+
+Exit criteria:
+
+- Company Builder returns operating model, role specs, role backlog, adaptive loops,
+  memory seeds, and capability gaps.
+- Dynamic roles such as Memory Steward, Outbound Calling Specialist, Integration
+  Architect, Compliance Sentinel, and Growth Experiment Designer are generated only when
+  their triggers apply, except Memory Steward which is foundational.
+- Existing API response remains backward compatible with `blueprint` and
+  `instantiated_agents`.
+
+### Phase 2: Role Gap Runtime Loop
+
+Deliverables:
+
+- Persistent role-gap events.
+- Supervisor tool for reporting blocked work.
+- Company Builder review of unresolved gaps.
+- Approval flow for granting high-risk generated tools.
+- UI view for pending role gaps and generated role proposals.
+
+Exit criteria:
+
+- A failed or blocked task can create a role-gap event.
+- The system can propose a role, request owner approval when needed, and instantiate it.
+
+### Phase 3: Memory Protocol and Memory Steward
+
+Deliverables:
+
+- Explicit memory write/read protocol for agent invocation.
+- Memory namespace policy per company, role, workflow, and entity.
+- Memory consolidation job.
+- Conflict detection between memory and canonical records.
+- UI memory timeline with provenance and importance.
+
+Exit criteria:
+
+- Agents consistently retrieve relevant context before execution.
+- Completed work writes durable summaries.
+- Memory conflicts are visible and resolvable.
+
+### Phase 4: Adaptive Workflow Engine
+
+Deliverables:
+
+- Operating loops represented as workflow intents.
+- Supervisor-driven routing from intent to agent tasks.
+- Durable execution through Temporal where long-running work is needed.
+- Human interruption and resume for sensitive steps.
+- Workflow templates generated from role capabilities and business context.
+
+Exit criteria:
+
+- A business objective can become a governed multi-agent workflow without a static template.
+- Workflow state survives restart and preserves approval history.
+
+### Phase 5: Integration Activation
+
+Deliverables:
+
+- Integration Architect runtime checklist.
+- Credential readiness and health checks for each provider.
+- Email, calendar, CRM, accounting, docs, support, analytics, SMS, and voice connectors
+  activated as the business requires them.
+- Simulation mode for every external side effect.
+- Idempotency and retries for external writes.
+
+Exit criteria:
+
+- Agents can detect a needed external system, request configuration, validate readiness,
+  and use the connector through audited tools.
+
+### Phase 6: Governance and Permissions
+
+Deliverables:
+
+- Policy matrix by role, tool, action type, data class, and environment.
+- OpenFGA relationship model for company, owner, agent, role, workflow, and memory access.
+- OPA policies for approval requirements and external side effects.
+- Red-team tests for tool misuse, prompt injection, and authorization bypass.
+
+Exit criteria:
+
+- High-risk actions cannot execute without approval.
+- Agents cannot access out-of-scope memory or tools.
+
+### Phase 7: Owner Console v2
+
+Deliverables:
+
+- Operating model view.
+- Role backlog and role-gap inbox.
+- Agent trace and decision timeline.
+- Memory graph browser.
+- Integration readiness board.
+- Workflow intent builder and live execution view.
+
+Exit criteria:
+
+- The owner can understand what the AI company is doing, why it is doing it, what it
+  remembers, and what it needs next.
+
+### Phase 8: Production Hardening
+
+Deliverables:
+
+- Hosted staging validation with real staging secrets.
+- Backup and restore rehearsal.
+- Load and soak tests for API, worker, memory, and tool execution.
+- Dependency and image scanning in CI.
+- Runbooks for deploy, rollback, incident response, provider outages, and memory recovery.
+
+Exit criteria:
+
+- Staging and production promotion have repeatable evidence.
+- External effects are observable, idempotent, and recoverable.
+
+## 5. Immediate Execution Plan
+
+1. Implement Phase 1 dynamic Company Builder foundation.
+2. Add tests for deterministic operating-model decisions.
+3. Add tests for `AgentManager.run_company_builder` dynamic manifest creation and memory
+   seeding.
+4. Update the owner console Company Builder form and result view.
+5. Run focused backend and frontend tests.
+6. Deploy the foundation slice to staging after tests pass.
+
+## 6. Current Slice Notes
+
+The first slice intentionally avoids a database migration. It stores the operating model in
+the Company Builder response, generated role manifest config, audit metadata, and seeded
+memory entries. A later phase can add first-class tables for company profiles, role-gap
+events, operating loops, and integration requirements once the runtime behavior is proven.

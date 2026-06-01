@@ -8,6 +8,7 @@ from sqlalchemy import select, update
 
 from cyber_team.audit.service import AuditService
 from cyber_team.clock import utc_now
+from cyber_team.company.operating_model import OperatingModelBuilder
 from cyber_team.config import settings
 from cyber_team.db import async_session
 from cyber_team.db.models import Agent, ApprovalRequest, RoleManifest
@@ -279,19 +280,35 @@ class AgentManager:
         company_name = company_profile.get("name") or company_profile.get("company_name")
         company_name = company_name or settings.app_name
         dry_run = bool(company_profile.get("dry_run"))
-        role_families = self._recommended_role_families(company_profile)
         manifests = await self.list_role_manifests()
-        manifest_by_family = {manifest["family"]: manifest for manifest in manifests}
+        available_tools = self._available_tool_names()
+        operating_model = OperatingModelBuilder().build(
+            company_profile,
+            existing_manifests=manifests,
+            available_tools=available_tools,
+        )
+        planned_specs = operating_model["planned_role_specs"]
         instantiated = []
-        missing_families = []
-        for family in role_families:
-            manifest = manifest_by_family.get(family)
+        generated_manifests = []
+        missing_role_specs = []
+        for role_spec in planned_specs:
+            manifest = self._find_manifest_for_role_spec(role_spec, manifests)
             if not manifest:
-                missing_families.append(family)
+                if dry_run:
+                    manifest = role_spec["manifest_payload"]
+                else:
+                    manifest = await self.create_role_manifest(
+                        self._object_from_dict(role_spec["manifest_payload"])
+                    )
+                    manifests.append(manifest)
+                    generated_manifests.append(manifest)
+            if not manifest:
+                missing_role_specs.append(role_spec)
                 continue
             agent_id = slug_id(manifest["name"])
+            requested_tools = manifest["default_tools"]
             if dry_run:
-                tools, unsupported_tools = self._resolve_tool_names(manifest["default_tools"])
+                tools, unsupported_tools = self._resolve_tool_names(requested_tools)
                 instantiated.append(
                     {
                         "agent_id": agent_id,
@@ -309,7 +326,11 @@ class AgentManager:
                 {
                     **company_profile,
                     "company_name": company_name,
+                    "company_namespace": operating_model["company_namespace"],
+                    "operating_model_version": operating_model["version"],
                     "provisioned_by": "company_builder",
+                    "role_rationale": role_spec["rationale"],
+                    "activation_triggers": role_spec["activation_triggers"],
                 },
             )
             instantiated.append(
@@ -322,15 +343,29 @@ class AgentManager:
                     "unsupported_tools": agent["config"].get("unsupported_tools", []),
                 }
             )
+
+        if not dry_run:
+            await self._seed_company_memory(
+                operating_model=operating_model,
+                instantiated_agents=instantiated,
+            )
+
+        role_families = self._unique(
+            [role_spec["family"] for role_spec in operating_model["planned_role_specs"]]
+        )
         blueprint = {
             "recommended_roles": role_families,
             "org_structure": self._org_structure(role_families),
             "approval_policies": {
-                manifest["family"]: manifest["approval_policy"]
-                for manifest in manifests
-                if manifest["family"] in role_families
+                role_spec["name"]: role_spec["approval_policy"]
+                for role_spec in operating_model["planned_role_specs"]
             },
-            "missing_role_families": missing_families,
+            "missing_role_families": self._unique(
+                role_spec["family"] for role_spec in missing_role_specs
+            ),
+            "generated_role_manifest_ids": [manifest["id"] for manifest in generated_manifests],
+            "capability_gaps": operating_model["capability_gaps"],
+            "adaptive_loops": operating_model["adaptive_loops"],
         }
         if self._audit:
             await self._audit.record(
@@ -344,7 +379,15 @@ class AgentManager:
                     "company_name": company_name,
                     "recommended_roles": role_families,
                     "agents": instantiated,
-                    "missing_role_families": missing_families,
+                    "missing_role_specs": missing_role_specs,
+                    "generated_role_manifest_ids": [
+                        manifest["id"] for manifest in generated_manifests
+                    ],
+                    "operating_model": {
+                        "version": operating_model["version"],
+                        "summary": operating_model["summary"],
+                        "capability_gap_count": len(operating_model["capability_gaps"]),
+                    },
                     "dry_run": dry_run,
                 },
             )
@@ -353,6 +396,12 @@ class AgentManager:
             "blueprint": blueprint,
             "company_profile": company_profile,
             "instantiated_agents": instantiated,
+            "operating_model": operating_model,
+            "role_specs": operating_model["planned_role_specs"],
+            "role_backlog": operating_model["role_backlog"],
+            "capability_gaps": operating_model["capability_gaps"],
+            "adaptive_loops": operating_model["adaptive_loops"],
+            "memory_seed": operating_model["memory_seed"],
         }
 
     async def propose_new_role(self, gap_description: str) -> dict:
@@ -711,12 +760,79 @@ Propose a new role to fill this gap. Return JSON with:
             await session.commit()
             return self._agent_to_dict(db_agent)
 
+    def _available_tool_names(self) -> set[str]:
+        if not self._tool_registry:
+            return set()
+        try:
+            return {tool.name for tool in self._tool_registry.list_tools()}
+        except Exception:
+            return set()
+
+    def _find_manifest_for_role_spec(
+        self,
+        role_spec: dict,
+        manifests: list[dict],
+    ) -> dict | None:
+        target_id = role_spec.get("manifest_id") or slug_id(role_spec["name"])
+        target_name = role_spec["name"].lower()
+        for manifest in manifests:
+            if manifest["id"] == target_id or manifest["name"].lower() == target_name:
+                return manifest
+        return None
+
+    async def _seed_company_memory(
+        self,
+        operating_model: dict,
+        instantiated_agents: list[dict],
+    ) -> None:
+        if not self._memory:
+            return
+        for seed in operating_model.get("memory_seed", []):
+            try:
+                await self._memory.remember(
+                    type(
+                        "MemW",
+                        (),
+                        {
+                            "agent_id": None,
+                            "memory_type": seed["memory_type"],
+                            "namespace": seed["namespace"],
+                            "content": seed["content"],
+                            "metadata": {
+                                "source": "company_builder",
+                                "seed_id": seed["id"],
+                                "company_name": operating_model["company_name"],
+                                "company_namespace": operating_model["company_namespace"],
+                                "operating_model_version": operating_model["version"],
+                                "instantiated_agent_ids": [
+                                    agent["agent_id"] for agent in instantiated_agents
+                                ],
+                            },
+                            "importance": seed["importance"],
+                        },
+                    )()
+                )
+            except Exception:
+                pass
+
     @staticmethod
     def _render_template(template: str, values: dict) -> str:
         rendered = template
         for key, value in values.items():
             rendered = rendered.replace("{" + key + "}", str(value))
         return rendered
+
+    @staticmethod
+    def _object_from_dict(values: dict):
+        return type("DynamicObject", (), values)()
+
+    @staticmethod
+    def _unique(values) -> list:
+        result = []
+        for value in values:
+            if value not in result:
+                result.append(value)
+        return result
 
     @staticmethod
     def _recommended_role_families(company_profile: dict) -> list[str]:

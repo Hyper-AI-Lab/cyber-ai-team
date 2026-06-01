@@ -21,6 +21,12 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
   // 1. Company Builder State
   const [companyName, setCompanyName] = useState('')
   const [companyIndustry, setCompanyIndustry] = useState('')
+  const [companyStage, setCompanyStage] = useState('')
+  const [companyProduct, setCompanyProduct] = useState('')
+  const [companyCustomers, setCompanyCustomers] = useState('')
+  const [companyChannels, setCompanyChannels] = useState('')
+  const [companyGoals, setCompanyGoals] = useState('')
+  const [companyJurisdictions, setCompanyJurisdictions] = useState('')
   const [builderResult, setBuilderResult] = useState<any | null>(null)
   const [building, setBuilding] = useState(false)
 
@@ -65,6 +71,12 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
       const res = await api.runCompanyBuilder({
         name: companyName,
         industry: companyIndustry,
+        stage: companyStage,
+        product: companyProduct,
+        target_customers: companyCustomers,
+        channels: companyChannels,
+        goals: companyGoals,
+        jurisdictions: companyJurisdictions,
       })
       setBuilderResult(res)
       onRefresh()
@@ -148,7 +160,7 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
             </button>
           </div>
           <p className="text-sm text-slate-400 mb-6">
-            Describe your startup, name, and industry. Our system will generate and instantiate a tailored multi-agent squad to bootstrap your corporate execution.
+            Give the builder enough company context to choose roles, surface gaps, seed memory, and start the adaptive operating loops.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
@@ -171,21 +183,103 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
                 placeholder="SaaS, E-commerce, Fintech..."
               />
             </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Stage</label>
+              <input
+                type="text"
+                value={companyStage}
+                onChange={(e) => setCompanyStage(e.target.value)}
+                className={inputClassName}
+                placeholder="Idea, MVP, revenue, growth..."
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Product / Offer</label>
+              <input
+                type="text"
+                value={companyProduct}
+                onChange={(e) => setCompanyProduct(e.target.value)}
+                className={inputClassName}
+                placeholder="AI operations platform, services, marketplace..."
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Customers</label>
+              <input
+                type="text"
+                value={companyCustomers}
+                onChange={(e) => setCompanyCustomers(e.target.value)}
+                className={inputClassName}
+                placeholder="B2B clients, founders, agencies..."
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Channels</label>
+              <input
+                type="text"
+                value={companyChannels}
+                onChange={(e) => setCompanyChannels(e.target.value)}
+                className={inputClassName}
+                placeholder="Email, phone, SMS, web, CRM..."
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Goals</label>
+              <input
+                type="text"
+                value={companyGoals}
+                onChange={(e) => setCompanyGoals(e.target.value)}
+                className={inputClassName}
+                placeholder="Launch, acquire clients, automate ops..."
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Jurisdictions</label>
+              <input
+                type="text"
+                value={companyJurisdictions}
+                onChange={(e) => setCompanyJurisdictions(e.target.value)}
+                className={inputClassName}
+                placeholder="US, EU, Germany..."
+              />
+            </div>
           </div>
           <button onClick={handleCompanyBuilder} disabled={building} className="btn-primary">
-            {building ? 'Synthesizing blueprint...' : 'Generate and Instantiate Squad'}
+            {building ? 'Building operating model...' : 'Build Adaptive Company Team'}
           </button>
 
           {builderResult && (
             <div className="mt-6 rounded-lg border border-slate-700 bg-slate-900/60 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium text-white">Squad Provisioned & Instantiated</p>
+                  <p className="text-sm font-medium text-white">Adaptive Team Provisioned</p>
                   <p className="text-xs text-slate-400">
-                    {builderResult.instantiated_agents?.length ?? 0} agents booted in blueprint
+                    {builderResult.instantiated_agents?.length ?? 0} agents booted,
+                    {' '}
+                    {builderResult.role_backlog?.length ?? 0} roles deferred
                   </p>
                 </div>
                 <span className="badge badge-success">Activated</span>
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div className="rounded border border-slate-700 bg-slate-800 px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Dynamic Roles</p>
+                  <p className="mt-1 text-lg font-semibold text-white">
+                    {builderResult.operating_model?.summary?.dynamic_role_count ?? 0}
+                  </p>
+                </div>
+                <div className="rounded border border-slate-700 bg-slate-800 px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Gaps</p>
+                  <p className="mt-1 text-lg font-semibold text-white">
+                    {builderResult.capability_gaps?.length ?? 0}
+                  </p>
+                </div>
+                <div className="rounded border border-slate-700 bg-slate-800 px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Loops</p>
+                  <p className="mt-1 text-lg font-semibold text-white">
+                    {builderResult.adaptive_loops?.length ?? 0}
+                  </p>
+                </div>
               </div>
               <div className="mt-3 grid gap-2">
                 {builderResult.instantiated_agents?.map((agent: any) => (
@@ -195,12 +289,26 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
                   >
                     <div>
                       <span className="text-sm text-white font-medium">{agent.role_name}</span>
-                      <p className="text-xs text-slate-500">Family: {agent.family}</p>
+                      <p className="text-xs text-slate-500">Family: {agent.role_family}</p>
                     </div>
-                    <span className="badge badge-success">Active</span>
+                    <span className="badge badge-success">{agent.status}</span>
                   </div>
                 ))}
               </div>
+              {builderResult.capability_gaps?.length > 0 && (
+                <div className="mt-4 rounded border border-amber-900/70 bg-amber-950/30 p-3">
+                  <p className="text-sm font-medium text-amber-200">Capability Gaps</p>
+                  <div className="mt-2 space-y-2">
+                    {builderResult.capability_gaps.map((gap: any, index: number) => (
+                      <div key={`${gap.type}-${index}`} className="text-xs text-amber-100/80">
+                        <span className="font-semibold">{gap.type}</span>
+                        {gap.role_name ? ` for ${gap.role_name}` : ''}
+                        {gap.integration ? `: ${gap.integration}` : ''}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
