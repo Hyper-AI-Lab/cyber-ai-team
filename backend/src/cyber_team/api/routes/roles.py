@@ -38,6 +38,27 @@ class RoleManifestResponse(BaseModel):
     config: dict
 
 
+class RoleGapReport(BaseModel):
+    title: str
+    description: str
+    severity: str = Field(default="medium", pattern="^(low|medium|high|critical)$")
+    source_agent_id: str | None = None
+    source_type: str = "owner"
+    company_namespace: str | None = None
+    capability: str | None = None
+    requested_tools: list[str] = Field(default_factory=list)
+    context: dict = Field(default_factory=dict)
+
+
+class RoleGapProposalRequest(BaseModel):
+    company_profile: dict = Field(default_factory=dict)
+
+
+class RoleGapResolveRequest(BaseModel):
+    status: str = Field(default="dismissed", pattern="^(dismissed|resolved)$")
+    note: str = ""
+
+
 @router.get("/catalog", response_model=list[RoleManifestResponse])
 async def list_role_catalog(
     request: Request,
@@ -142,6 +163,109 @@ async def run_company_builder(
     return result
 
 
+@router.get("/role-gaps")
+async def list_role_gaps(
+    request: Request,
+    status: str | None = None,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "role_gap",
+        context={"status": status},
+    )
+    mgr = request.app.state.agent_manager
+    return await mgr.list_role_gaps(status)
+
+
+@router.post("/role-gaps", status_code=201)
+async def report_role_gap(
+    data: RoleGapReport,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "create",
+        "role_gap",
+        context={
+            "severity": data.severity,
+            "capability": data.capability,
+            "requested_tools": data.requested_tools,
+        },
+    )
+    mgr = request.app.state.agent_manager
+    data.source_type = data.source_type or principal.role
+    return await mgr.report_role_gap(data, reporter=principal.email)
+
+
+@router.get("/role-gaps/{gap_id}")
+async def get_role_gap(
+    gap_id: str,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "role_gap", gap_id)
+    mgr = request.app.state.agent_manager
+    gap = await mgr.get_role_gap(gap_id)
+    if not gap:
+        raise HTTPException(404, "Role gap not found")
+    return gap
+
+
+@router.post("/role-gaps/{gap_id}/proposal")
+async def propose_role_gap(
+    gap_id: str,
+    data: RoleGapProposalRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "propose", "role_gap", gap_id)
+    mgr = request.app.state.agent_manager
+    try:
+        return await mgr.propose_role_for_gap(gap_id, data.company_profile)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/role-gaps/{gap_id}/apply")
+async def apply_role_gap(
+    gap_id: str,
+    data: RoleGapProposalRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "apply", "role_gap", gap_id)
+    mgr = request.app.state.agent_manager
+    try:
+        return await mgr.apply_role_gap_proposal(gap_id, data.company_profile)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/role-gaps/{gap_id}/resolve")
+async def resolve_role_gap(
+    gap_id: str,
+    data: RoleGapResolveRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, data.status, "role_gap", gap_id)
+    mgr = request.app.state.agent_manager
+    try:
+        return await mgr.resolve_role_gap(
+            gap_id,
+            status=data.status,
+            note=data.note,
+            resolver=principal.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.post("/role-gap")
 async def propose_new_role(
     request: Request,
@@ -150,5 +274,19 @@ async def propose_new_role(
 ):
     await require_authorization(request, principal, "propose", "role_manifest")
     mgr = request.app.state.agent_manager
-    result = await mgr.propose_new_role(gap_description)
-    return result
+    gap = await mgr.report_role_gap(
+        RoleGapReport(
+            title=gap_description[:120] or "Role gap",
+            description=gap_description,
+            severity="medium",
+            source_type=principal.role,
+        ),
+        reporter=principal.email,
+    )
+    gap = await mgr.propose_role_for_gap(gap["id"])
+    return {
+        "gap_id": gap["id"],
+        "status": gap["status"],
+        "gap": gap,
+        "proposal": gap["proposed_role"],
+    }

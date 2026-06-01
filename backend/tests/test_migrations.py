@@ -29,6 +29,13 @@ def render_offline_downgrade_sql() -> str:
     return stream.getvalue()
 
 
+def render_role_gap_downgrade_sql() -> str:
+    stream = io.StringIO()
+    with redirect_stdout(stream):
+        command.downgrade(alembic_config(), "0004_role_gaps:0003_retention_indexes", sql=True)
+    return stream.getvalue()
+
+
 def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
     sql = render_offline_upgrade_sql()
 
@@ -41,6 +48,7 @@ def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
         "audit_events",
         "communication_logs",
         "role_manifests",
+        "role_gaps",
     ]:
         assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
 
@@ -52,6 +60,9 @@ def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
     assert "CREATE INDEX IF NOT EXISTS ix_communication_logs_created_at" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_memory_entries_expires_at" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_workflow_runs_completed_at" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_role_gaps_status" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_role_gaps_company_namespace" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_role_gaps_created_at" in sql
 
 
 def test_initial_migration_preserves_pre_alembic_approval_compatibility():
@@ -81,3 +92,11 @@ def test_initial_migration_downgrade_policy_is_explicit_destructive_cleanup():
         "agents",
     ]:
         assert f"DROP TABLE IF EXISTS {table} CASCADE" in sql
+
+
+def test_role_gap_migration_downgrade_removes_role_gap_table_and_indexes():
+    sql = render_role_gap_downgrade_sql()
+
+    assert "DROP INDEX IF EXISTS ix_role_gaps_status" in sql
+    assert "DROP INDEX IF EXISTS ix_role_gaps_company_namespace" in sql
+    assert "DROP TABLE IF EXISTS role_gaps CASCADE" in sql

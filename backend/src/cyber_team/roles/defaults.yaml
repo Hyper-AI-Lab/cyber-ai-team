@@ -18,6 +18,7 @@ roles:
       - role_catalog_search
       - role_instantiate
       - company_profile_read
+      - role_gap_report
       - approval_request
     approval_policy: auto
     success_metrics:
@@ -41,6 +42,7 @@ roles:
       - agent_invoke
       - approval_resolve
       - memory_read
+      - role_gap_report
       - owner_notify
     approval_policy: auto
     success_metrics:

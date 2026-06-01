@@ -125,6 +125,37 @@ def test_operating_model_defers_untriggered_roles_without_losing_the_backlog():
     assert model["recommended_next_questions"]
 
 
+def test_role_gap_proposal_maps_gap_to_dynamic_manifest_payload():
+    manager = AgentManager()
+    proposal = manager._role_gap_proposal(
+        {
+            "id": "gap_123",
+            "title": "Need outbound client calls",
+            "description": "Sales work is blocked until the team can call clients.",
+            "status": "open",
+            "severity": "high",
+            "source_agent_id": "sales_agent",
+            "source_type": "agent",
+            "company_namespace": "company:acme",
+            "capability": "outbound_voice",
+            "requested_tools": ["make_call", "send_sms"],
+            "context": {},
+            "proposed_role": {},
+            "resolution": {},
+        },
+        {"name": "Acme"},
+    )
+
+    manifest = proposal["manifest_payload"]
+
+    assert proposal["family"] == "communications"
+    assert manifest["name"] == "Need outbound client calls Specialist"
+    assert manifest["approval_policy"] == "sensitive"
+    assert "make_call" in manifest["default_tools"]
+    assert manifest["memory_namespace"] == "company:acme:gap:need_outbound_client_calls_specialist"
+    assert manifest["config"]["role_gap_id"] == "gap_123"
+
+
 @pytest.mark.asyncio
 async def test_agent_manager_company_builder_creates_dynamic_manifests_and_memory():
     tool_names = {

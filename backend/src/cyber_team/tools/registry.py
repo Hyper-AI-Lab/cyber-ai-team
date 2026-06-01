@@ -170,6 +170,9 @@ class ToolRegistry:
         approval_id = params.pop("_approval_id", None)
         actor = params.pop("_actor", agent_id or "owner")
         actor_type = params.pop("_actor_type", "agent" if agent_id else "user")
+        if tool_name == "role_gap_report" and agent_id:
+            params.setdefault("source_agent_id", agent_id)
+            params.setdefault("source_type", "agent")
 
         if tool_name not in self._tools:
             if self._audit:
@@ -531,6 +534,64 @@ class ToolRegistry:
                 risk_level="high",
             ),
             self._tool_role_instantiate,
+        )
+
+        self.register(
+            ToolDefinition(
+                name="role_gap_report",
+                description="Report a missing role, skill, tool, or capability to Company Builder",
+                parameters=[
+                    ToolParameter(name="title", description="Short gap title"),
+                    ToolParameter(name="description", description="What work is blocked and why"),
+                    ToolParameter(
+                        name="severity",
+                        description="Gap severity",
+                        required=False,
+                        default="medium",
+                        enum=["low", "medium", "high", "critical"],
+                    ),
+                    ToolParameter(
+                        name="capability",
+                        description="Missing business capability",
+                        required=False,
+                    ),
+                    ToolParameter(
+                        name="requested_tools",
+                        type="list",
+                        description="Tools that would unblock the work",
+                        required=False,
+                        default=[],
+                    ),
+                    ToolParameter(
+                        name="company_namespace",
+                        description="Company memory namespace",
+                        required=False,
+                        default="company:default",
+                    ),
+                    ToolParameter(
+                        name="context",
+                        type="dict",
+                        description="Structured context about the blocked work",
+                        required=False,
+                        default={},
+                    ),
+                    ToolParameter(
+                        name="source_agent_id",
+                        description="Reporting agent ID",
+                        required=False,
+                    ),
+                    ToolParameter(
+                        name="source_type",
+                        description="Reporter type",
+                        required=False,
+                        default="agent",
+                        enum=["agent", "system", "owner", "user"],
+                    ),
+                ],
+                category="roles",
+                risk_level="medium",
+            ),
+            self._tool_role_gap_report,
         )
 
         # ─── Agent Management Tools ──────────────────────────────────
@@ -1247,6 +1308,37 @@ class ToolRegistry:
         if not self._agent_manager:
             return "Agent manager not available"
         return await self._agent_manager.instantiate_role(manifest_id, overrides)
+
+    async def _tool_role_gap_report(
+        self,
+        title: str,
+        description: str,
+        severity: str = "medium",
+        capability: str = None,
+        requested_tools: list = None,
+        company_namespace: str = "company:default",
+        context: dict = None,
+        source_agent_id: str = None,
+        source_type: str = "agent",
+    ):
+        if not self._agent_manager:
+            return "Agent manager not available"
+        data = type(
+            "RoleGapReport",
+            (),
+            {
+                "title": title,
+                "description": description,
+                "severity": severity,
+                "source_agent_id": source_agent_id,
+                "source_type": source_type,
+                "company_namespace": company_namespace,
+                "capability": capability,
+                "requested_tools": requested_tools or [],
+                "context": context or {},
+            },
+        )()
+        return await self._agent_manager.report_role_gap(data, reporter=source_agent_id or "agent")
 
     async def _tool_agent_status_read(self):
         if not self._agent_manager:

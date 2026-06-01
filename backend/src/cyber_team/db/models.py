@@ -140,3 +140,28 @@ class RoleManifest(Base):
     success_metrics: Mapped[dict] = mapped_column(JSON, default=dict)
     is_core: Mapped[bool] = mapped_column(Boolean, default=True)
     config: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class RoleGap(Base):
+    __tablename__ = "role_gaps"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="open", index=True)
+    severity: Mapped[str] = mapped_column(String(20), default="medium", index=True)
+    source_agent_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source_type: Mapped[str] = mapped_column(String(30), default="agent")
+    company_namespace: Mapped[str] = mapped_column(
+        String(200),
+        default="company:default",
+        index=True,
+    )
+    capability: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    requested_tools: Mapped[list] = mapped_column(JSON, default=list)
+    context: Mapped[dict] = mapped_column(JSON, default=dict)
+    proposed_role: Mapped[dict] = mapped_column(JSON, default=dict)
+    resolution: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

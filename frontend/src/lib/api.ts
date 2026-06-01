@@ -199,6 +199,39 @@ class ApiClient {
     });
   }
 
+  async listRoleGaps(status?: string) {
+    const params = status ? `?status=${encodeURIComponent(status)}` : '';
+    return this.request(`/api/roles/role-gaps${params}`);
+  }
+
+  async reportRoleGap(data: Record<string, any>) {
+    return this.request('/api/roles/role-gaps', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async proposeRoleGap(gapId: string, companyProfile: Record<string, any> = {}) {
+    return this.request(`/api/roles/role-gaps/${gapId}/proposal`, {
+      method: 'POST',
+      body: JSON.stringify({ company_profile: companyProfile }),
+    });
+  }
+
+  async applyRoleGap(gapId: string, companyProfile: Record<string, any> = {}) {
+    return this.request(`/api/roles/role-gaps/${gapId}/apply`, {
+      method: 'POST',
+      body: JSON.stringify({ company_profile: companyProfile }),
+    });
+  }
+
+  async resolveRoleGap(gapId: string, status: string = 'dismissed', note: string = '') {
+    return this.request(`/api/roles/role-gaps/${gapId}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ status, note }),
+    });
+  }
+
   // Memory
   async recallMemory(query: string, namespace?: string, limit: number = 10) {
     return this.request('/api/memory/recall', {

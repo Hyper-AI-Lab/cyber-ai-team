@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { Bot, Play, Plus, Cpu, Shield, HelpCircle, Check, X } from 'lucide-react'
 
@@ -29,6 +29,8 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
   const [companyJurisdictions, setCompanyJurisdictions] = useState('')
   const [builderResult, setBuilderResult] = useState<any | null>(null)
   const [building, setBuilding] = useState(false)
+  const [roleGaps, setRoleGaps] = useState<any[]>([])
+  const [loadingRoleGaps, setLoadingRoleGaps] = useState(false)
 
   // 2. Custom Role Provisioning State
   const [roleFamily, setRoleFamily] = useState('engineering')
@@ -42,6 +44,22 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
   const inputClassName = 'w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500'
   const textareaClassName = 'h-32 w-full resize-none rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500'
   const selectClassName = 'w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-white focus:outline-none focus:border-blue-500'
+
+  useEffect(() => {
+    loadRoleGaps()
+  }, [])
+
+  const loadRoleGaps = async () => {
+    setLoadingRoleGaps(true)
+    try {
+      const gaps = await api.listRoleGaps()
+      setRoleGaps(gaps)
+    } catch {
+      setRoleGaps([])
+    } finally {
+      setLoadingRoleGaps(false)
+    }
+  }
 
   const toggleTool = (tool: string) => {
     if (selectedTools.includes(tool)) {
@@ -79,6 +97,7 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
         jurisdictions: companyJurisdictions,
       })
       setBuilderResult(res)
+      loadRoleGaps()
       onRefresh()
     } catch (e: any) {
       alert(`Error: ${e.message}`)
@@ -119,6 +138,22 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
       alert(`Error: ${e.message}`)
     } finally {
       setProvisioning(false)
+    }
+  }
+
+  const handleRoleGapAction = async (gapId: string, action: 'propose' | 'apply' | 'dismiss') => {
+    try {
+      if (action === 'propose') {
+        await api.proposeRoleGap(gapId, { name: companyName })
+      } else if (action === 'apply') {
+        await api.applyRoleGap(gapId, { name: companyName })
+        onRefresh()
+      } else {
+        await api.resolveRoleGap(gapId, 'dismissed', 'Dismissed from owner console')
+      }
+      await loadRoleGaps()
+    } catch (e: any) {
+      alert(`Error: ${e.message}`)
     }
   }
 
@@ -431,6 +466,83 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
           </button>
         </div>
       )}
+
+      <div className="card">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-semibold text-white">Role Gap Inbox</h3>
+            <p className="text-sm text-slate-400 mt-1">
+              Missing roles, tools, or skills reported by agents and operating loops
+            </p>
+          </div>
+          <button onClick={loadRoleGaps} className="btn-secondary text-sm">
+            {loadingRoleGaps ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
+        <div className="mt-4 space-y-3">
+          {roleGaps.map((gap: any) => (
+            <div key={gap.id} className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="font-medium text-white">{gap.title}</h4>
+                    <span className="badge badge-info">{gap.status}</span>
+                    <span className="badge-warning">{gap.severity}</span>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-400">{gap.description}</p>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                    {gap.capability && <span>Capability: {gap.capability}</span>}
+                    {gap.source_agent_id && <span>Reporter: {gap.source_agent_id}</span>}
+                    {gap.requested_tools?.length > 0 && (
+                      <span>Tools: {gap.requested_tools.join(', ')}</span>
+                    )}
+                  </div>
+                  {gap.proposed_role?.manifest_payload && (
+                    <div className="mt-3 rounded border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-300">
+                      <span className="font-semibold text-slate-100">Proposal:</span>
+                      {' '}
+                      {gap.proposed_role.manifest_payload.name}
+                      {' '}
+                      ({gap.proposed_role.manifest_payload.family})
+                    </div>
+                  )}
+                </div>
+                <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                  {gap.status === 'open' && (
+                    <button
+                      onClick={() => handleRoleGapAction(gap.id, 'propose')}
+                      className="btn-secondary text-sm"
+                    >
+                      Propose Role
+                    </button>
+                  )}
+                  {gap.status === 'proposed' && (
+                    <button
+                      onClick={() => handleRoleGapAction(gap.id, 'apply')}
+                      className="btn-primary text-sm"
+                    >
+                      Create Role
+                    </button>
+                  )}
+                  {['open', 'proposed'].includes(gap.status) && (
+                    <button
+                      onClick={() => handleRoleGapAction(gap.id, 'dismiss')}
+                      className="btn-danger text-sm"
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+          {!loadingRoleGaps && roleGaps.length === 0 && (
+            <div className="rounded-lg border border-dashed border-slate-700 p-6 text-center text-sm text-slate-500">
+              No role gaps reported yet.
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Agent Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

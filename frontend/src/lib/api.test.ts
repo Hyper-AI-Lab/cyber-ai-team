@@ -107,4 +107,34 @@ describe('ApiClient', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/integrations/status')
     expect(fetchMock.mock.calls[0][1]?.headers.Authorization).toBe('Bearer access-1')
   })
+
+  it('manages role gaps through the authenticated API client', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'gap-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'open' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'proposed' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'resolved' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'dismissed' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.listRoleGaps('open')
+    await client.reportRoleGap({ title: 'Gap', description: 'Blocked work' })
+    await client.proposeRoleGap('gap-1', { name: 'Acme' })
+    await client.applyRoleGap('gap-1', { name: 'Acme' })
+    await client.resolveRoleGap('gap-1', 'dismissed', 'Not needed')
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/roles/role-gaps?status=open')
+    expect(fetchMock.mock.calls[1][0]).toBe('http://api.test/api/roles/role-gaps')
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/roles/role-gaps/gap-1/proposal',
+    )
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      'http://api.test/api/roles/role-gaps/gap-1/apply',
+    )
+    expect(fetchMock.mock.calls[4][0]).toBe(
+      'http://api.test/api/roles/role-gaps/gap-1/resolve',
+    )
+  })
 })

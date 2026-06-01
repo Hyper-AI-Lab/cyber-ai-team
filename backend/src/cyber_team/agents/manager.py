@@ -4,14 +4,14 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import desc, select, update
 
 from cyber_team.audit.service import AuditService
 from cyber_team.clock import utc_now
 from cyber_team.company.operating_model import OperatingModelBuilder
 from cyber_team.config import settings
 from cyber_team.db import async_session
-from cyber_team.db.models import Agent, ApprovalRequest, RoleManifest
+from cyber_team.db.models import Agent, ApprovalRequest, RoleGap, RoleManifest
 from cyber_team.llm.gateway import LLMGateway
 from cyber_team.memory.service import MemoryService
 
@@ -423,6 +423,205 @@ Propose a new role to fill this gap. Return JSON with:
         )
         return {"proposal": result}
 
+    # ─── Role Gap Runtime Loop ───────────────────────────────────────
+
+    async def report_role_gap(self, data, reporter: str = "system") -> dict:
+        gap_id = f"gap_{uuid.uuid4().hex[:12]}"
+        company_namespace = getattr(data, "company_namespace", None) or "company:default"
+        severity = getattr(data, "severity", None) or "medium"
+        status = "open"
+        now = utc_now()
+        async with async_session() as session:
+            gap = RoleGap(
+                id=gap_id,
+                title=getattr(data, "title"),
+                description=getattr(data, "description"),
+                status=status,
+                severity=severity,
+                source_agent_id=getattr(data, "source_agent_id", None),
+                source_type=getattr(data, "source_type", None) or "system",
+                company_namespace=company_namespace,
+                capability=getattr(data, "capability", None),
+                requested_tools=list(getattr(data, "requested_tools", None) or []),
+                context=dict(getattr(data, "context", None) or {}),
+                proposed_role={},
+                resolution={},
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(gap)
+            await session.commit()
+            response = self._role_gap_to_dict(gap)
+
+        if self._audit:
+            await self._audit.record(
+                event_type="role_gap.reported",
+                actor=reporter,
+                actor_type=getattr(data, "source_type", None) or "system",
+                resource_type="role_gap",
+                resource_id=gap_id,
+                action="report",
+                metadata={
+                    "title": response["title"],
+                    "severity": response["severity"],
+                    "source_agent_id": response["source_agent_id"],
+                    "company_namespace": response["company_namespace"],
+                    "capability": response["capability"],
+                    "requested_tools": response["requested_tools"],
+                },
+            )
+        return response
+
+    async def list_role_gaps(self, status: str | None = None) -> list[dict]:
+        async with async_session() as session:
+            query = select(RoleGap)
+            if status:
+                query = query.where(RoleGap.status == status)
+            result = await session.execute(query.order_by(desc(RoleGap.created_at)))
+            return [self._role_gap_to_dict(gap) for gap in result.scalars().all()]
+
+    async def get_role_gap(self, gap_id: str) -> dict | None:
+        async with async_session() as session:
+            result = await session.execute(select(RoleGap).where(RoleGap.id == gap_id))
+            gap = result.scalar_one_or_none()
+            return self._role_gap_to_dict(gap) if gap else None
+
+    async def propose_role_for_gap(
+        self,
+        gap_id: str,
+        company_profile: dict | None = None,
+    ) -> dict:
+        async with async_session() as session:
+            result = await session.execute(select(RoleGap).where(RoleGap.id == gap_id))
+            gap = result.scalar_one_or_none()
+            if not gap:
+                raise ValueError(f"Role gap {gap_id} not found")
+            proposal = self._role_gap_proposal(
+                self._role_gap_to_dict(gap),
+                company_profile or {},
+            )
+            gap.proposed_role = proposal
+            gap.status = "proposed"
+            gap.updated_at = utc_now()
+            await session.commit()
+            response = self._role_gap_to_dict(gap)
+
+        if self._audit:
+            await self._audit.record(
+                event_type="role_gap.proposed",
+                actor="company_builder",
+                actor_type="agent",
+                resource_type="role_gap",
+                resource_id=gap_id,
+                action="propose",
+                metadata={
+                    "role_name": proposal["manifest_payload"]["name"],
+                    "family": proposal["manifest_payload"]["family"],
+                    "requested_tools": proposal["manifest_payload"]["default_tools"],
+                },
+            )
+        return response
+
+    async def apply_role_gap_proposal(
+        self,
+        gap_id: str,
+        company_profile: dict | None = None,
+    ) -> dict:
+        gap = await self.get_role_gap(gap_id)
+        if not gap:
+            raise ValueError(f"Role gap {gap_id} not found")
+        if not gap["proposed_role"]:
+            gap = await self.propose_role_for_gap(gap_id, company_profile)
+        proposal = gap["proposed_role"]
+        manifest_payload = proposal["manifest_payload"]
+        manifest_id = slug_id(manifest_payload["name"])
+        existing_manifest = await self.get_role_manifest(manifest_id)
+        if existing_manifest:
+            manifest = existing_manifest
+        else:
+            manifest = await self.create_role_manifest(
+                self._object_from_dict(manifest_payload)
+            )
+
+        agent = await self.instantiate_role(
+            manifest["id"],
+            {
+                **(company_profile or {}),
+                "provisioned_by": "role_gap_loop",
+                "role_gap_id": gap_id,
+                "role_gap_title": gap["title"],
+                "company_namespace": gap["company_namespace"],
+            },
+        )
+        resolution = {
+            "manifest_id": manifest["id"],
+            "agent_id": agent["id"],
+            "role_name": agent["role_name"],
+            "applied_at": utc_now().isoformat(),
+        }
+        async with async_session() as session:
+            result = await session.execute(select(RoleGap).where(RoleGap.id == gap_id))
+            db_gap = result.scalar_one_or_none()
+            if not db_gap:
+                raise ValueError(f"Role gap {gap_id} not found")
+            db_gap.status = "resolved"
+            db_gap.resolution = resolution
+            db_gap.resolved_at = utc_now()
+            db_gap.updated_at = utc_now()
+            await session.commit()
+            response = self._role_gap_to_dict(db_gap)
+
+        if self._audit:
+            await self._audit.record(
+                event_type="role_gap.applied",
+                actor="company_builder",
+                actor_type="agent",
+                resource_type="role_gap",
+                resource_id=gap_id,
+                action="apply",
+                metadata=resolution,
+            )
+        return response
+
+    async def resolve_role_gap(
+        self,
+        gap_id: str,
+        status: str = "dismissed",
+        note: str = "",
+        resolver: str = "owner",
+    ) -> dict:
+        allowed_statuses = {"dismissed", "resolved"}
+        if status not in allowed_statuses:
+            raise ValueError(f"Status must be one of: {', '.join(sorted(allowed_statuses))}")
+        async with async_session() as session:
+            result = await session.execute(select(RoleGap).where(RoleGap.id == gap_id))
+            gap = result.scalar_one_or_none()
+            if not gap:
+                raise ValueError(f"Role gap {gap_id} not found")
+            gap.status = status
+            gap.resolution = {
+                **(gap.resolution or {}),
+                "note": note,
+                "resolver": resolver,
+                "resolved_at": utc_now().isoformat(),
+            }
+            gap.resolved_at = utc_now()
+            gap.updated_at = utc_now()
+            await session.commit()
+            response = self._role_gap_to_dict(gap)
+
+        if self._audit:
+            await self._audit.record(
+                event_type=f"role_gap.{status}",
+                actor=resolver,
+                actor_type="user",
+                resource_type="role_gap",
+                resource_id=gap_id,
+                action=status,
+                metadata={"note": note},
+            )
+        return response
+
     # ─── Approval Queue ───────────────────────────────────────────────
 
     async def _check_approval_policy(self, agent_id: str, action_type: str, policy: str) -> bool:
@@ -780,6 +979,142 @@ Propose a new role to fill this gap. Return JSON with:
                 return manifest
         return None
 
+    def _role_gap_proposal(self, gap: dict, company_profile: dict) -> dict:
+        family = self._role_gap_family(gap)
+        definition = OperatingModelBuilder.ROLE_DEFINITIONS.get(
+            family,
+            OperatingModelBuilder.ROLE_DEFINITIONS["operations"],
+        )
+        requested_tools = list(gap.get("requested_tools") or [])
+        default_tools = self._unique([*definition.default_tools, *requested_tools])
+        role_name = self._role_gap_role_name(gap, definition.name)
+        company_name = (
+            company_profile.get("name")
+            or company_profile.get("company_name")
+            or settings.app_name
+        )
+        company_namespace = gap.get("company_namespace") or "company:default"
+        instructions = (
+            f"You are the {role_name} for {{company_name}}. This role was created "
+            f"because the system reported a capability gap: {gap['title']}. "
+            f"Gap description: {gap['description']} "
+            "Your first responsibility is to unblock that work safely, document the "
+            "new operating procedure, use company memory before acting, and escalate "
+            "any high-risk external action for approval."
+        )
+        manifest_payload = {
+            "family": family,
+            "name": role_name,
+            "description": (
+                f"Dynamic role generated from role gap '{gap['title']}' to cover "
+                f"{gap.get('capability') or family} capability."
+            ),
+            "instructions_template": instructions,
+            "default_tools": default_tools,
+            "memory_namespace": f"{company_namespace}:gap:{slug_id(role_name)}",
+            "approval_policy": self._role_gap_approval_policy(gap, definition.approval_policy),
+            "success_metrics": self._unique(
+                [
+                    "gap_resolution_time",
+                    "blocked_work_unblocked",
+                    *list(definition.success_metrics),
+                ]
+            ),
+            "is_core": False,
+            "config": {
+                "source": "role_gap_loop",
+                "role_gap_id": gap["id"],
+                "role_gap_title": gap["title"],
+                "role_gap_severity": gap["severity"],
+                "rationale": [
+                    "Generated from a persistent role gap event.",
+                    *self._role_gap_rationale(gap, family),
+                ],
+                "capabilities": self._unique(
+                    [
+                        *(definition.capabilities or []),
+                        gap.get("capability"),
+                    ]
+                ),
+                "company_name": company_name,
+                "operating_model_version": "role-gap-loop-v1",
+            },
+        }
+        return {
+            "role_gap_id": gap["id"],
+            "confidence": "medium",
+            "family": family,
+            "manifest_payload": manifest_payload,
+            "rationale": manifest_payload["config"]["rationale"],
+            "activation_triggers": [
+                gap["title"],
+                gap.get("capability"),
+                *requested_tools,
+            ],
+        }
+
+    def _role_gap_family(self, gap: dict) -> str:
+        text = " ".join(
+            str(value).lower()
+            for value in [
+                gap.get("title"),
+                gap.get("description"),
+                gap.get("capability"),
+                " ".join(gap.get("requested_tools") or []),
+            ]
+        )
+        family_signals = OperatingModelBuilder.FAMILY_SIGNALS
+        best_family = "operations"
+        best_score = 0
+        for family, signals in family_signals.items():
+            score = sum(1 for signal in signals if signal in text)
+            if score > best_score:
+                best_family = family
+                best_score = score
+        if any(term in text for term in {"phone", "call", "sms", "whatsapp", "message"}):
+            return "communications"
+        return best_family
+
+    @staticmethod
+    def _role_gap_role_name(gap: dict, fallback_name: str) -> str:
+        title = " ".join(str(gap.get("title") or "").strip().split())
+        if not title:
+            title = fallback_name
+        title = title[:80].strip(" .:-_")
+        lower_title = title.lower()
+        if any(suffix in lower_title for suffix in {"agent", "specialist", "manager", "advisor"}):
+            return title
+        return f"{title} Specialist"
+
+    @staticmethod
+    def _role_gap_approval_policy(gap: dict, default_policy: str) -> str:
+        high_risk_tools = {
+            "make_call",
+            "send_sms",
+            "send_email",
+            "send_message",
+            "erpnext_create_lead",
+            "erpnext_invoice_create",
+            "procurement_request",
+        }
+        requested_tools = set(gap.get("requested_tools") or [])
+        if gap.get("severity") in {"high", "critical"} or requested_tools & high_risk_tools:
+            return "sensitive"
+        return default_policy
+
+    @staticmethod
+    def _role_gap_rationale(gap: dict, family: str) -> list[str]:
+        rationale = [f"Mapped the gap to the {family} role family."]
+        if gap.get("requested_tools"):
+            rationale.append(
+                "The gap explicitly requested tools: "
+                + ", ".join(gap["requested_tools"])
+                + "."
+            )
+        if gap.get("source_agent_id"):
+            rationale.append(f"Reported by agent {gap['source_agent_id']}.")
+        return rationale
+
     async def _seed_company_memory(
         self,
         operating_model: dict,
@@ -830,9 +1165,30 @@ Propose a new role to fill this gap. Return JSON with:
     def _unique(values) -> list:
         result = []
         for value in values:
-            if value not in result:
+            if value and value not in result:
                 result.append(value)
         return result
+
+    @staticmethod
+    def _role_gap_to_dict(gap: RoleGap) -> dict:
+        return {
+            "id": gap.id,
+            "title": gap.title,
+            "description": gap.description,
+            "status": gap.status,
+            "severity": gap.severity,
+            "source_agent_id": gap.source_agent_id,
+            "source_type": gap.source_type,
+            "company_namespace": gap.company_namespace,
+            "capability": gap.capability,
+            "requested_tools": gap.requested_tools or [],
+            "context": gap.context or {},
+            "proposed_role": gap.proposed_role or {},
+            "resolution": gap.resolution or {},
+            "created_at": gap.created_at.isoformat(),
+            "updated_at": gap.updated_at.isoformat(),
+            "resolved_at": gap.resolved_at.isoformat() if gap.resolved_at else None,
+        }
 
     @staticmethod
     def _recommended_role_families(company_profile: dict) -> list[str]:

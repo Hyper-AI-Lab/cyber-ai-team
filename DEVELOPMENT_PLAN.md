@@ -156,13 +156,18 @@ Exit criteria:
 
 ### Phase 2: Role Gap Runtime Loop
 
+Status: first persistent role-gap slice implemented; remaining work is deeper
+Supervisor routing, approval-policy refinement, and loop-driven automatic gap review.
+
 Deliverables:
 
-- Persistent role-gap events.
-- Supervisor tool for reporting blocked work.
-- Company Builder review of unresolved gaps.
-- Approval flow for granting high-risk generated tools.
-- UI view for pending role gaps and generated role proposals.
+- [x] Persistent role-gap events.
+- [x] Supervisor/agent tool for reporting blocked work.
+- [x] Company Builder deterministic proposal for unresolved gaps.
+- [x] Owner-console view for pending role gaps and generated role proposals.
+- [x] Owner-gated application of generated role proposals.
+- [ ] Fine-grained approval requests for high-risk generated tool grants.
+- [ ] Automatic Supervisor review of open gaps from workflow failures and blocked tasks.
 
 Exit criteria:
 
