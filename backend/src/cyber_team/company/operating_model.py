@@ -10,7 +10,6 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-
 OPERATING_MODEL_VERSION = "autonomous-company-os-v2.0"
 
 
@@ -364,7 +363,12 @@ class OperatingModelBuilder:
                 "policies, identify legal risk, and escalate legal commitments for human "
                 "review before execution."
             ),
-            default_tools=["contract_draft", "policy_draft", "regulation_search", "approval_request"],
+            default_tools=[
+                "contract_draft",
+                "policy_draft",
+                "regulation_search",
+                "approval_request",
+            ],
             approval_policy="sensitive",
             success_metrics=["policy_coverage", "legal_risk_turnaround"],
             capabilities=["contract_review", "policy_design", "legal_risk_triage"],
@@ -400,7 +404,12 @@ class OperatingModelBuilder:
                 "draft content, monitor brand signals, and request approval before "
                 "external publication."
             ),
-            default_tools=["content_create", "social_post_draft", "brand_monitor", "analytics_read"],
+            default_tools=[
+                "content_create",
+                "social_post_draft",
+                "brand_monitor",
+                "analytics_read",
+            ],
             approval_policy="sensitive",
             success_metrics=["engagement_rate", "campaign_output", "brand_sentiment"],
             capabilities=["content_strategy", "public_relations", "growth_marketing"],
@@ -742,10 +751,14 @@ class OperatingModelBuilder:
                     capabilities=["compliance_monitoring", "policy_watchlist"],
                     source="dynamic",
                     priority=80,
-                    rationale=["The company profile contains regulated, privacy, or security terms."],
+                    rationale=[
+                        "The company profile contains regulated, privacy, or security terms."
+                    ],
                     needed_now=True,
                     activation_triggers=sorted(regulated_terms),
-                    supervisor_notes=["Review external communications and contracts before release."],
+                    supervisor_notes=[
+                        "Review external communications and contracts before release."
+                    ],
                 )
             )
 
@@ -918,13 +931,19 @@ class OperatingModelBuilder:
                 "owner_family": "company_builder",
                 "purpose": "Detect missing roles, skills, tools, or permissions during operation.",
                 "trigger": "agent reports blocked work or repeated unsupported tool requests",
-                "approval_boundary": "Dynamic role creation is logged and sensitive tools stay gated.",
+                "approval_boundary": (
+                    "Dynamic role creation is logged and sensitive tools stay gated."
+                ),
             },
             {
                 "id": "memory_consolidation_loop",
                 "owner_family": "knowledge",
-                "purpose": "Maintain long-term company memory and resolve stale or conflicting facts.",
-                "trigger": "new project, completed workflow, contradictory memory, or daily cadence",
+                "purpose": (
+                    "Maintain long-term company memory and resolve stale or conflicting facts."
+                ),
+                "trigger": (
+                    "new project, completed workflow, contradictory memory, or daily cadence"
+                ),
                 "approval_boundary": "Deleting or overwriting canonical records requires review.",
             },
             {
@@ -937,7 +956,9 @@ class OperatingModelBuilder:
             {
                 "id": "risk_review_loop",
                 "owner_family": "supervisor",
-                "purpose": "Review financial, legal, public, production, and personal-data actions.",
+                "purpose": (
+                    "Review financial, legal, public, production, and personal-data actions."
+                ),
                 "trigger": "sensitive tool call, external publication, payment, or contract action",
                 "approval_boundary": "Sensitive and irreversible actions require approval.",
             },

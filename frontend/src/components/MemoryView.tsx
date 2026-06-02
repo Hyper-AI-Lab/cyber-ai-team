@@ -1,15 +1,19 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
-import { Brain, Search, Clock, Tag } from 'lucide-react'
+import { Activity, Brain, Clock, RefreshCw, Search, Tag } from 'lucide-react'
 
 export default function MemoryView() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<any[]>([])
   const [searching, setSearching] = useState(false)
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
-  const [agentMemory, setAgentMemory] = useState<any[]>([])
+  const [traces, setTraces] = useState<any[]>([])
+  const [loadingTraces, setLoadingTraces] = useState(false)
+
+  useEffect(() => {
+    void loadTraces()
+  }, [])
 
   const handleSearch = async () => {
     if (!query) return
@@ -24,20 +28,25 @@ export default function MemoryView() {
     }
   }
 
-  const handleAgentMemory = async (agentId: string) => {
+  const loadTraces = async () => {
+    setLoadingTraces(true)
     try {
-      const res = await api.getAgentMemory(agentId)
-      setAgentMemory(res)
-      setSelectedAgent(agentId)
+      const res = await api.listMemoryTraces(undefined, 25)
+      setTraces(res)
     } catch (e: any) {
-      console.error('Agent memory fetch failed:', e)
+      console.error('Memory trace fetch failed:', e)
+    } finally {
+      setLoadingTraces(false)
     }
   }
 
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-2xl font-bold">Memory</h2>
+        <div className="flex items-center gap-3">
+          <Brain className="w-7 h-7 text-blue-400" />
+          <h2 className="text-2xl font-bold">Memory</h2>
+        </div>
         <p className="text-slate-400 mt-1">Search and browse the company&apos;s collective memory</p>
       </div>
 
@@ -86,6 +95,85 @@ export default function MemoryView() {
           No results found. Try a different query.
         </div>
       )}
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">Invocation Memory Traces</h3>
+            <p className="text-sm text-slate-400 mt-1">Recent agent memory reads and writes</p>
+          </div>
+          <button
+            onClick={loadTraces}
+            disabled={loadingTraces}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <RefreshCw className={`w-4 h-4 ${loadingTraces ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+
+        {traces.length > 0 ? (
+          <div className="space-y-3">
+            {traces.map((trace: any) => (
+              <div key={trace.id} className="card">
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <Activity className="w-4 h-4 text-emerald-400" />
+                  <span className="badge-info">{trace.source_type}</span>
+                  {trace.agent_id && (
+                    <span className="text-xs text-slate-400">{trace.agent_id}</span>
+                  )}
+                  {trace.memory_namespace && (
+                    <span className="text-xs text-slate-500">{trace.memory_namespace}</span>
+                  )}
+                  <span className="ml-auto flex items-center gap-1 text-xs text-slate-500">
+                    <Clock className="w-3.5 h-3.5" />
+                    {new Date(trace.created_at).toLocaleString()}
+                  </span>
+                </div>
+                <p className="text-sm text-slate-300">{trace.task_excerpt}</p>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  <span className="rounded border border-slate-700 px-2 py-1 text-slate-300">
+                    Recalled {trace.recall_count}
+                  </span>
+                  <span className="rounded border border-slate-700 px-2 py-1 text-slate-300">
+                    Wrote {trace.write_count}
+                  </span>
+                  {trace.errors.length > 0 && (
+                    <span className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-amber-200">
+                      Errors {trace.errors.length}
+                    </span>
+                  )}
+                </div>
+                <details className="mt-3 text-xs text-slate-400">
+                  <summary className="cursor-pointer text-slate-300">Memory IDs</summary>
+                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                    <div>
+                      <div className="mb-1 font-medium text-slate-300">Recalled</div>
+                      <div className="break-all">
+                        {trace.recalled_memory_ids.length > 0
+                          ? trace.recalled_memory_ids.join(', ')
+                          : 'None'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="mb-1 font-medium text-slate-300">Written</div>
+                      <div className="break-all">
+                        {trace.written_memory_ids.length > 0
+                          ? trace.written_memory_ids.join(', ')
+                          : 'None'}
+                      </div>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="card text-center text-slate-500">
+            {loadingTraces ? 'Loading traces...' : 'No invocation memory traces yet.'}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

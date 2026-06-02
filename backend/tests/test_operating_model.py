@@ -41,11 +41,64 @@ class FakeMemoryService:
         return entry
 
 
+class FakeTraceMemoryService:
+    def __init__(self):
+        self.recall_requests = []
+        self.entries = []
+        self.traces = []
+
+    async def recall(self, data):
+        self.recall_requests.append(data)
+        return [
+            {
+                "id": "memory-1",
+                "content": "The launch plan should prioritize customer interviews.",
+                "memory_type": "semantic",
+                "namespace": data.namespace,
+                "agent_id": data.agent_id,
+                "importance": 0.9,
+                "score": 1.0,
+            }
+        ]
+
+    async def remember(self, data):
+        entry = {
+            "id": "memory-2",
+            "agent_id": data.agent_id,
+            "memory_type": data.memory_type,
+            "namespace": data.namespace,
+            "content": data.content,
+            "metadata": data.metadata,
+            "importance": data.importance,
+        }
+        self.entries.append(entry)
+        return entry
+
+    async def record_trace(self, data):
+        trace = {
+            "invocation_id": data.invocation_id,
+            "agent_id": data.agent_id,
+            "memory_namespace": data.memory_namespace,
+            "read_policy": data.read_policy,
+            "write_policy": data.write_policy,
+            "recalled_memory_ids": data.recalled_memory_ids,
+            "written_memory_ids": data.written_memory_ids,
+            "recall_count": data.recall_count,
+            "write_count": data.write_count,
+            "errors": data.errors,
+            "metadata": data.metadata,
+        }
+        self.traces.append(trace)
+        return trace
+
+
 class FakeLLM:
     def __init__(self, response: str):
         self.response = response
+        self.calls = []
 
     async def invoke(self, **kwargs):
+        self.calls.append(kwargs)
         return self.response
 
 
@@ -211,6 +264,41 @@ async def test_missing_agent_invocation_reports_autonomous_role_gap():
     assert report_data.severity == "high"
     assert report_data.capability == "outbound_caller"
     assert report_data.context["dedupe_key"] == "missing-agent:outbound_caller"
+
+
+@pytest.mark.asyncio
+async def test_agent_invocation_records_memory_trace():
+    memory = FakeTraceMemoryService()
+    manager = AgentManager(memory_service=memory)
+    manager._llm = FakeLLM("Launch brief complete.")
+    manager.get_agent = AsyncMock(
+        return_value={
+            "id": "ops_agent",
+            "role_family": "operations",
+            "role_name": "Operations Manager",
+            "instructions": "Run company operations.",
+            "tools": [],
+            "memory_namespace": "company:acme:ops",
+            "approval_policy": "auto",
+            "status": "active",
+            "config": {},
+        }
+    )
+    manager._check_approval_policy = AsyncMock(return_value=False)
+    manager._maybe_report_autonomous_role_gap = AsyncMock()
+
+    result = await manager.invoke_agent("ops_agent", "Prepare the launch brief.")
+
+    assert result == "Launch brief complete."
+    assert memory.recall_requests[0].namespace == "company:acme:ops"
+    assert "customer interviews" in manager._llm.calls[0]["system_prompt"]
+    assert memory.entries[0]["metadata"]["type"] == "invocation"
+    assert memory.entries[0]["metadata"]["traceable"] is True
+    assert memory.traces[0]["recalled_memory_ids"] == ["memory-1"]
+    assert memory.traces[0]["written_memory_ids"] == ["memory-2"]
+    assert memory.traces[0]["read_policy"]["limit"] == 5
+    assert memory.traces[0]["write_policy"]["memory_type"] == "episodic"
+    assert memory.traces[0]["metadata"]["role_name"] == "Operations Manager"
 
 
 @pytest.mark.asyncio

@@ -19,7 +19,7 @@ from sqlalchemy import and_, desc, select
 from cyber_team.clock import utc_now
 from cyber_team.config import settings
 from cyber_team.db import async_session
-from cyber_team.db.models import MemoryEntry
+from cyber_team.db.models import MemoryEntry, MemoryTrace
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +200,53 @@ class MemoryService:
 
         return results
 
+    async def record_trace(self, data) -> dict:
+        trace_id = getattr(data, "id", None) or str(uuid.uuid4())
+        recalled_memory_ids = list(getattr(data, "recalled_memory_ids", None) or [])
+        written_memory_ids = list(getattr(data, "written_memory_ids", None) or [])
+        errors = list(getattr(data, "errors", None) or [])
+        now = utc_now()
+
+        async with async_session() as session:
+            trace = MemoryTrace(
+                id=trace_id,
+                invocation_id=getattr(data, "invocation_id"),
+                agent_id=getattr(data, "agent_id", None),
+                conversation_id=getattr(data, "conversation_id", None),
+                source_type=getattr(data, "source_type", None) or "agent_invocation",
+                task_excerpt=getattr(data, "task_excerpt", ""),
+                memory_namespace=getattr(data, "memory_namespace", None),
+                read_policy=dict(getattr(data, "read_policy", None) or {}),
+                write_policy=dict(getattr(data, "write_policy", None) or {}),
+                recalled_memory_ids=recalled_memory_ids,
+                written_memory_ids=written_memory_ids,
+                recall_count=getattr(data, "recall_count", None) or len(recalled_memory_ids),
+                write_count=getattr(data, "write_count", None) or len(written_memory_ids),
+                errors=errors,
+                metadata_=dict(getattr(data, "metadata", None) or {}),
+                created_at=now,
+            )
+            session.add(trace)
+            await session.commit()
+            return self._trace_to_dict(trace)
+
+    async def list_memory_traces(
+        self,
+        agent_id: str | None = None,
+        invocation_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        safe_limit = max(1, min(limit, 200))
+        async with async_session() as session:
+            query = select(MemoryTrace)
+            if agent_id:
+                query = query.where(MemoryTrace.agent_id == agent_id)
+            if invocation_id:
+                query = query.where(MemoryTrace.invocation_id == invocation_id)
+            query = query.order_by(desc(MemoryTrace.created_at)).limit(safe_limit)
+            traces = (await session.execute(query)).scalars().all()
+            return [self._trace_to_dict(trace) for trace in traces]
+
     async def get_entity_profile(self, entity_id: str) -> dict:
         async with async_session() as session:
             result = await session.execute(
@@ -336,3 +383,24 @@ class MemoryService:
                 parsed = parsed.astimezone(UTC).replace(tzinfo=None)
             return parsed
         return None
+
+    @staticmethod
+    def _trace_to_dict(trace: MemoryTrace) -> dict:
+        return {
+            "id": trace.id,
+            "invocation_id": trace.invocation_id,
+            "agent_id": trace.agent_id,
+            "conversation_id": trace.conversation_id,
+            "source_type": trace.source_type,
+            "task_excerpt": trace.task_excerpt,
+            "memory_namespace": trace.memory_namespace,
+            "read_policy": trace.read_policy,
+            "write_policy": trace.write_policy,
+            "recalled_memory_ids": trace.recalled_memory_ids,
+            "written_memory_ids": trace.written_memory_ids,
+            "recall_count": trace.recall_count,
+            "write_count": trace.write_count,
+            "errors": trace.errors,
+            "metadata": trace.metadata_,
+            "created_at": trace.created_at.isoformat(),
+        }

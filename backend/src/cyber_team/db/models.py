@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from cyber_team.clock import utc_now
@@ -72,6 +72,27 @@ class MemoryEntry(Base):
     importance: Mapped[float] = mapped_column(Float, default=0.5)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class MemoryTrace(Base):
+    __tablename__ = "memory_traces"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    invocation_id: Mapped[str] = mapped_column(String(64), index=True)
+    agent_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    conversation_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source_type: Mapped[str] = mapped_column(String(50), default="agent_invocation", index=True)
+    task_excerpt: Mapped[str] = mapped_column(Text)
+    memory_namespace: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    read_policy: Mapped[dict] = mapped_column(JSON, default=dict)
+    write_policy: Mapped[dict] = mapped_column(JSON, default=dict)
+    recalled_memory_ids: Mapped[list] = mapped_column(JSON, default=list)
+    written_memory_ids: Mapped[list] = mapped_column(JSON, default=list)
+    recall_count: Mapped[int] = mapped_column(Integer, default=0)
+    write_count: Mapped[int] = mapped_column(Integer, default=0)
+    errors: Mapped[list] = mapped_column(JSON, default=list)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
 
 
 class ApprovalRequest(Base):

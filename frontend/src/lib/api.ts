@@ -257,6 +257,14 @@ class ApiClient {
     return this.request(`/api/memory/agent/${agentId}`);
   }
 
+  async listMemoryTraces(agentId?: string, limit: number = 50) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (agentId) {
+      params.set('agent_id', agentId);
+    }
+    return this.request(`/api/memory/traces?${params.toString()}`);
+  }
+
   // Workflows
   async listWorkflows() {
     return this.request('/api/workflows/');

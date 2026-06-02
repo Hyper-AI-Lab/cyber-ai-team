@@ -1,7 +1,7 @@
 """Memory management routes."""
 
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
 from cyber_team.api.authorization import require_authorization
@@ -47,6 +47,25 @@ class MemoryResponse(BaseModel):
     content: str
     metadata: dict = Field(default_factory=dict)
     importance: float
+
+
+class MemoryTraceResponse(BaseModel):
+    id: str
+    invocation_id: str
+    agent_id: str | None = None
+    conversation_id: str | None = None
+    source_type: str
+    task_excerpt: str
+    memory_namespace: str | None = None
+    read_policy: dict = Field(default_factory=dict)
+    write_policy: dict = Field(default_factory=dict)
+    recalled_memory_ids: list[str] = Field(default_factory=list)
+    written_memory_ids: list[str] = Field(default_factory=list)
+    recall_count: int
+    write_count: int
+    errors: list[str] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+    created_at: str
 
 
 @router.post("/remember", response_model=MemoryResponse)
@@ -105,6 +124,30 @@ async def get_agent_memory(
     await require_authorization(request, principal, "read", "agent_memory", agent_id)
     svc: MemoryService = request.app.state.memory_service
     return await svc.get_agent_memory(agent_id)
+
+
+@router.get("/traces", response_model=list[MemoryTraceResponse])
+async def list_memory_traces(
+    request: Request,
+    agent_id: str | None = None,
+    invocation_id: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "memory_trace",
+        invocation_id,
+        context={"agent_id": agent_id, "limit": limit},
+    )
+    svc: MemoryService = request.app.state.memory_service
+    return await svc.list_memory_traces(
+        agent_id=agent_id,
+        invocation_id=invocation_id,
+        limit=limit,
+    )
 
 
 @router.delete("/{memory_id}", status_code=204)

@@ -108,6 +108,22 @@ describe('ApiClient', () => {
     expect(fetchMock.mock.calls[0][1]?.headers.Authorization).toBe('Bearer access-1')
   })
 
+  it('lists memory traces with optional agent filtering', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'trace-1' }]))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.listMemoryTraces('agent 1', 25)
+
+    const url = new URL(fetchMock.mock.calls[0][0] as string)
+    expect(url.pathname).toBe('/api/memory/traces')
+    expect(url.searchParams.get('agent_id')).toBe('agent 1')
+    expect(url.searchParams.get('limit')).toBe('25')
+    expect(fetchMock.mock.calls[0][1]?.headers.Authorization).toBe('Bearer access-1')
+  })
+
   it('manages role gaps through the authenticated API client', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'gap-1' }]))

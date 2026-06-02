@@ -36,6 +36,13 @@ def render_role_gap_downgrade_sql() -> str:
     return stream.getvalue()
 
 
+def render_memory_trace_downgrade_sql() -> str:
+    stream = io.StringIO()
+    with redirect_stdout(stream):
+        command.downgrade(alembic_config(), "0005_memory_traces:0004_role_gaps", sql=True)
+    return stream.getvalue()
+
+
 def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
     sql = render_offline_upgrade_sql()
 
@@ -49,6 +56,7 @@ def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
         "communication_logs",
         "role_manifests",
         "role_gaps",
+        "memory_traces",
     ]:
         assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
 
@@ -63,6 +71,9 @@ def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
     assert "CREATE INDEX IF NOT EXISTS ix_role_gaps_status" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_role_gaps_company_namespace" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_role_gaps_created_at" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_memory_traces_invocation_id" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_memory_traces_agent_id" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_memory_traces_created_at" in sql
 
 
 def test_initial_migration_preserves_pre_alembic_approval_compatibility():
@@ -100,3 +111,11 @@ def test_role_gap_migration_downgrade_removes_role_gap_table_and_indexes():
     assert "DROP INDEX IF EXISTS ix_role_gaps_status" in sql
     assert "DROP INDEX IF EXISTS ix_role_gaps_company_namespace" in sql
     assert "DROP TABLE IF EXISTS role_gaps CASCADE" in sql
+
+
+def test_memory_trace_migration_downgrade_removes_trace_table_and_indexes():
+    sql = render_memory_trace_downgrade_sql()
+
+    assert "DROP INDEX IF EXISTS ix_memory_traces_invocation_id" in sql
+    assert "DROP INDEX IF EXISTS ix_memory_traces_created_at" in sql
+    assert "DROP TABLE IF EXISTS memory_traces CASCADE" in sql
