@@ -12,12 +12,23 @@ MIGRATION_REHEARSAL_CLEANUP="${MIGRATION_REHEARSAL_CLEANUP:-1}"
 MIGRATION_REHEARSAL_RUN_REPRESENTATIVE="${MIGRATION_REHEARSAL_RUN_REPRESENTATIVE:-1}"
 MIGRATION_REHEARSAL_SYNTHETIC_ROWS="${MIGRATION_REHEARSAL_SYNTHETIC_ROWS:-25}"
 BACKEND_VENV="${BACKEND_VENV:-$ROOT_DIR/.venv-quality}"
-ALEMBIC_HEAD="0003_retention_indexes"
+ALEMBIC_HEAD="${ALEMBIC_HEAD:-}"
 
 if [ -x "$BACKEND_VENV/bin/alembic" ]; then
   ALEMBIC_BIN="$BACKEND_VENV/bin/alembic"
 else
   ALEMBIC_BIN="${ALEMBIC_BIN:-alembic}"
+fi
+
+if [ -z "$ALEMBIC_HEAD" ]; then
+  ALEMBIC_HEAD="$(
+    cd "$BACKEND_DIR"
+    env PYTHONPATH=src "$ALEMBIC_BIN" heads | awk '/\(head\)/ { print $1 }'
+  )"
+fi
+if [ "$(printf "%s\n" "$ALEMBIC_HEAD" | sed '/^$/d' | wc -l | tr -d " ")" != "1" ]; then
+  echo "Expected exactly one Alembic head, got: $ALEMBIC_HEAD" >&2
+  exit 1
 fi
 
 cleanup() {
@@ -84,8 +95,8 @@ if [ "$legacy_rows" != "1" ]; then
   exit 1
 fi
 
-workflow_tables="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('workflows', 'workflow_runs', 'memory_entries', 'audit_events', 'communication_logs', 'role_manifests')")"
-if [ "$workflow_tables" != "6" ]; then
+workflow_tables="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('workflows', 'workflow_runs', 'memory_entries', 'audit_events', 'communication_logs', 'role_manifests', 'role_gaps', 'memory_traces', 'memory_steward_findings')")"
+if [ "$workflow_tables" != "9" ]; then
   echo "Expected new Cyber-Team tables were not created" >&2
   exit 1
 fi
@@ -105,6 +116,12 @@ fi
 retention_index="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_communication_logs_created_at', 'ix_memory_entries_expires_at', 'ix_workflow_runs_completed_at')")"
 if [ "$retention_index" != "3" ]; then
   echo "Expected retention indexes are missing" >&2
+  exit 1
+fi
+
+adaptive_operations_indexes="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_role_gaps_status', 'ix_role_gaps_severity', 'ix_role_gaps_source_agent_id', 'ix_role_gaps_company_namespace', 'ix_role_gaps_capability', 'ix_role_gaps_created_at', 'ix_role_gaps_resolved_at', 'ix_memory_traces_invocation_id', 'ix_memory_traces_agent_id', 'ix_memory_traces_conversation_id', 'ix_memory_traces_source_type', 'ix_memory_traces_memory_namespace', 'ix_memory_traces_created_at', 'ix_memory_steward_findings_finding_type', 'ix_memory_steward_findings_severity', 'ix_memory_steward_findings_status', 'ix_memory_steward_findings_agent_id', 'ix_memory_steward_findings_memory_namespace', 'ix_memory_steward_findings_company_namespace', 'ix_memory_steward_findings_created_at')")"
+if [ "$adaptive_operations_indexes" != "20" ]; then
+  echo "Expected adaptive operations indexes are missing: $adaptive_operations_indexes" >&2
   exit 1
 fi
 
@@ -166,8 +183,8 @@ if [ "$MIGRATION_REHEARSAL_RUN_REPRESENTATIVE" = "1" ]; then
     fi
   done <<<"$representative_counts"
 
-  representative_indexes="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_communication_logs_idempotency_key', 'ix_communication_logs_created_at', 'ix_memory_entries_expires_at', 'ix_workflow_runs_completed_at', 'ix_approval_requests_resolved_at')")"
-  if [ "$representative_indexes" != "5" ]; then
+  representative_indexes="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_communication_logs_idempotency_key', 'ix_communication_logs_created_at', 'ix_memory_entries_expires_at', 'ix_workflow_runs_completed_at', 'ix_approval_requests_resolved_at', 'ix_role_gaps_status', 'ix_role_gaps_severity', 'ix_role_gaps_source_agent_id', 'ix_role_gaps_company_namespace', 'ix_role_gaps_capability', 'ix_role_gaps_created_at', 'ix_role_gaps_resolved_at', 'ix_memory_traces_invocation_id', 'ix_memory_traces_agent_id', 'ix_memory_traces_conversation_id', 'ix_memory_traces_source_type', 'ix_memory_traces_memory_namespace', 'ix_memory_traces_created_at', 'ix_memory_steward_findings_finding_type', 'ix_memory_steward_findings_severity', 'ix_memory_steward_findings_status', 'ix_memory_steward_findings_agent_id', 'ix_memory_steward_findings_memory_namespace', 'ix_memory_steward_findings_company_namespace', 'ix_memory_steward_findings_created_at')")"
+  if [ "$representative_indexes" != "25" ]; then
     echo "Representative migration indexes missing: $representative_indexes" >&2
     exit 1
   fi
