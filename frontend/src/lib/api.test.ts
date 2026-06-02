@@ -127,6 +127,7 @@ describe('ApiClient', () => {
   it('manages memory steward reviews and findings', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ findings_created: 1 }))
+      .mockResolvedValueOnce(jsonResponse({ actions_applied: 1 }))
       .mockResolvedValueOnce(jsonResponse([{ id: 'finding-1' }]))
       .mockResolvedValueOnce(jsonResponse({ id: 'finding-1', status: 'resolved' }))
       .mockResolvedValueOnce(jsonResponse({
@@ -138,6 +139,7 @@ describe('ApiClient', () => {
 
     client.setTokens('access-1')
     await client.runMemorySteward()
+    await client.planMemorySteward(true, true, 25)
     await client.listMemoryStewardFindings('open', 25)
     await client.resolveMemoryStewardFinding('finding-1', 'resolved', 'Seeded memory')
     await client.executeMemoryStewardAction('finding-1', 'seed_memory')
@@ -145,19 +147,27 @@ describe('ApiClient', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/memory/steward/run')
     expect(fetchMock.mock.calls[0][1]?.method).toBe('POST')
     expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/memory/steward/plan',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({
+      apply_safe_actions: true,
+      request_approvals: true,
+      limit: 25,
+    })
+    expect(fetchMock.mock.calls[2][0]).toBe(
       'http://api.test/api/memory/steward/findings?status=open&limit=25',
     )
-    expect(fetchMock.mock.calls[2][0]).toBe(
+    expect(fetchMock.mock.calls[3][0]).toBe(
       'http://api.test/api/memory/steward/findings/finding-1/resolve',
     )
-    expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[3][1]?.body as string)).toEqual({
       status: 'resolved',
       note: 'Seeded memory',
     })
-    expect(fetchMock.mock.calls[3][0]).toBe(
+    expect(fetchMock.mock.calls[4][0]).toBe(
       'http://api.test/api/memory/steward/findings/finding-1/actions',
     )
-    expect(JSON.parse(fetchMock.mock.calls[3][1]?.body as string)).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[4][1]?.body as string)).toEqual({
       action_type: 'seed_memory',
       params: {},
     })

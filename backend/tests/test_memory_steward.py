@@ -31,6 +31,9 @@ class FakeMemoryService:
 class FakeAgentManager:
     def __init__(self):
         self.gaps = []
+        self.approvals = []
+        self.approved = set()
+        self.consumed = []
 
     async def report_role_gap(self, data, reporter="system"):
         gap_id = f"gap-{len(self.gaps) + 1}"
@@ -49,6 +52,47 @@ class FakeAgentManager:
             "reporter": reporter,
         })
         return self.gaps[-1]
+
+    async def _request_approval(
+        self,
+        agent_id,
+        action_type,
+        description,
+        payload,
+        **kwargs,
+    ):
+        approval_id = f"approval-{len(self.approvals) + 1}"
+        self.approvals.append({
+            "id": approval_id,
+            "agent_id": agent_id,
+            "action_type": action_type,
+            "description": description,
+            "payload": payload,
+            **kwargs,
+        })
+        return approval_id
+
+    async def approval_is_executable(
+        self,
+        approval_id,
+        target_type=None,
+        target_id=None,
+    ):
+        return approval_id in self.approved
+
+    async def consume_approval(
+        self,
+        approval_id,
+        consumer="system",
+        target_type=None,
+        target_id=None,
+    ):
+        self.consumed.append({
+            "approval_id": approval_id,
+            "consumer": consumer,
+            "target_type": target_type,
+            "target_id": target_id,
+        })
 
 
 async def build_session_factory():
@@ -108,6 +152,7 @@ async def test_memory_steward_creates_and_dedupes_findings(monkeypatch):
     monkeypatch.setattr(settings, "memory_steward_empty_recall_threshold", 2)
     monkeypatch.setattr(settings, "memory_steward_trace_lookback_hours", 24)
     monkeypatch.setattr(settings, "memory_steward_trace_limit", 100)
+    monkeypatch.setattr(settings, "memory_steward_planner_enabled", False)
 
     try:
         async with session_factory() as session:
@@ -176,6 +221,7 @@ async def test_memory_steward_executes_seed_memory_action(monkeypatch):
     monkeypatch.setattr(settings, "memory_steward_empty_recall_threshold", 2)
     monkeypatch.setattr(settings, "memory_steward_trace_lookback_hours", 24)
     monkeypatch.setattr(settings, "memory_steward_trace_limit", 100)
+    monkeypatch.setattr(settings, "memory_steward_planner_enabled", False)
 
     try:
         async with session_factory() as session:
@@ -244,6 +290,7 @@ async def test_memory_steward_executes_role_gap_action(monkeypatch):
     monkeypatch.setattr(settings, "memory_steward_empty_recall_threshold", 2)
     monkeypatch.setattr(settings, "memory_steward_trace_lookback_hours", 24)
     monkeypatch.setattr(settings, "memory_steward_trace_limit", 100)
+    monkeypatch.setattr(settings, "memory_steward_planner_enabled", False)
 
     try:
         async with session_factory() as session:
@@ -287,5 +334,122 @@ async def test_memory_steward_executes_role_gap_action(monkeypatch):
         ]
         assert manager.gaps[0]["context"]["finding_id"] == finding["id"]
         assert manager.gaps[0]["reporter"] == "owner@example.com"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_memory_steward_planner_auto_applies_safe_seed_once(monkeypatch):
+    now = datetime(2026, 6, 2, 12, 0, 0)
+    engine, session_factory = await build_session_factory()
+    monkeypatch.setattr(settings, "memory_steward_empty_recall_threshold", 2)
+    monkeypatch.setattr(settings, "memory_steward_trace_lookback_hours", 24)
+    monkeypatch.setattr(settings, "memory_steward_trace_limit", 100)
+    monkeypatch.setattr(settings, "memory_steward_planner_enabled", False)
+
+    try:
+        async with session_factory() as session:
+            session.add_all([
+                memory_trace(
+                    "trace-plan-1",
+                    created_at=now - timedelta(minutes=2),
+                    scope_results=[],
+                ),
+                memory_trace(
+                    "trace-plan-2",
+                    created_at=now - timedelta(minutes=1),
+                    scope_results=[],
+                ),
+            ])
+            await session.commit()
+
+        memory = FakeMemoryService()
+        steward = MemoryStewardService(
+            memory_service=memory,
+            session_factory=session_factory,
+        )
+        await steward.run_once(now=now, actor="test")
+
+        first = await steward.plan_remediations(
+            actor="planner",
+            apply_safe_actions=True,
+            request_approvals=False,
+        )
+        second = await steward.plan_remediations(
+            actor="planner",
+            apply_safe_actions=True,
+            request_approvals=False,
+        )
+
+        assert first["actions_applied"] == 1
+        assert first["already_applied"] == 0
+        assert second["actions_applied"] == 0
+        assert second["already_applied"] == 1
+        assert len(memory.writes) == 1
+
+        finding = (await steward.list_findings(status="acknowledged"))[0]
+        plan = finding["metadata"]["remediation_plan"]
+        assert plan["action_type"] == "seed_memory"
+        assert plan["status"] == "already_applied"
+        assert finding["metadata"]["last_action"]["action_type"] == "seed_memory"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_memory_steward_planner_requests_and_consumes_approval(monkeypatch):
+    now = datetime(2026, 6, 2, 12, 0, 0)
+    engine, session_factory = await build_session_factory()
+    monkeypatch.setattr(settings, "memory_steward_empty_recall_threshold", 2)
+    monkeypatch.setattr(settings, "memory_steward_trace_lookback_hours", 24)
+    monkeypatch.setattr(settings, "memory_steward_trace_limit", 100)
+    monkeypatch.setattr(settings, "memory_steward_planner_enabled", False)
+
+    try:
+        async with session_factory() as session:
+            session.add(
+                memory_trace(
+                    "trace-plan-error-1",
+                    errors=["write:RuntimeError:database unavailable"],
+                    recall_count=1,
+                    created_at=now - timedelta(minutes=1),
+                    scope_results=[],
+                )
+            )
+            await session.commit()
+
+        manager = FakeAgentManager()
+        steward = MemoryStewardService(
+            agent_manager=manager,
+            session_factory=session_factory,
+        )
+        await steward.run_once(now=now, actor="test")
+
+        requested = await steward.plan_remediations(
+            actor="planner",
+            apply_safe_actions=True,
+            request_approvals=True,
+        )
+        manager.approved.add("approval-1")
+        applied = await steward.plan_remediations(
+            actor="planner",
+            apply_safe_actions=True,
+            request_approvals=True,
+        )
+
+        assert requested["approvals_requested"] == 1
+        assert requested["actions_applied"] == 0
+        assert manager.approvals[0]["action_type"] == "memory_steward.report_role_gap"
+        assert manager.approvals[0]["target_type"] == "memory_steward_finding"
+        assert applied["actions_applied"] == 1
+        assert len(manager.gaps) == 1
+        assert manager.gaps[0]["capability"] == "memory_operations"
+        assert manager.consumed[0]["approval_id"] == "approval-1"
+
+        finding = (await steward.list_findings(status="acknowledged"))[0]
+        plan = finding["metadata"]["remediation_plan"]
+        assert plan["status"] == "applied"
+        assert plan["approval_id"] == "approval-1"
+        assert finding["metadata"]["last_action"]["action_type"] == "report_role_gap"
     finally:
         await engine.dispose()

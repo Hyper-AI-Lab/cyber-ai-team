@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     memory_steward_trace_lookback_hours: int = 24
     memory_steward_trace_limit: int = 200
     memory_steward_empty_recall_threshold: int = 3
+    memory_steward_planner_enabled: bool = True
+    memory_steward_auto_apply_safe_actions: bool = True
+    memory_steward_request_action_approvals: bool = True
 
     # Mistral / LLM
     mistral_api_key: str = ""

@@ -25,6 +25,7 @@ export default function MemoryView() {
   const [findings, setFindings] = useState<any[]>([])
   const [loadingFindings, setLoadingFindings] = useState(false)
   const [runningSteward, setRunningSteward] = useState(false)
+  const [planningRemediations, setPlanningRemediations] = useState(false)
   const [runningAction, setRunningAction] = useState<string | null>(null)
 
   useEffect(() => {
@@ -79,6 +80,19 @@ export default function MemoryView() {
       console.error('Memory steward run failed:', e)
     } finally {
       setRunningSteward(false)
+    }
+  }
+
+  const planRemediations = async () => {
+    setPlanningRemediations(true)
+    try {
+      await api.planMemorySteward(true, true, 100)
+      await loadFindings()
+      await loadTraces()
+    } catch (e: any) {
+      console.error('Memory steward planning failed:', e)
+    } finally {
+      setPlanningRemediations(false)
     }
   }
 
@@ -187,6 +201,14 @@ export default function MemoryView() {
               <Play className="w-4 h-4" />
               {runningSteward ? 'Running...' : 'Run Review'}
             </button>
+            <button
+              onClick={planRemediations}
+              disabled={planningRemediations}
+              className="btn-primary flex items-center gap-2"
+            >
+              <GitBranch className="w-4 h-4" />
+              {planningRemediations ? 'Planning...' : 'Plan Actions'}
+            </button>
           </div>
         </div>
 
@@ -214,6 +236,34 @@ export default function MemoryView() {
                 <h4 className="font-semibold text-slate-100">{finding.title}</h4>
                 <p className="mt-2 text-sm text-slate-300">{finding.description}</p>
                 <p className="mt-2 text-sm text-slate-400">{finding.recommendation}</p>
+                {finding.metadata?.remediation_plan && (
+                  <div className="mt-3 rounded border border-slate-700 bg-slate-900/40 p-3 text-xs text-slate-300">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="badge-info">
+                        {finding.metadata.remediation_plan.action_type}
+                      </span>
+                      <span className="rounded border border-slate-700 px-2 py-1 text-slate-400">
+                        {finding.metadata.remediation_plan.status}
+                      </span>
+                      <span className="rounded border border-slate-700 px-2 py-1 text-slate-400">
+                        {finding.metadata.remediation_plan.priority}
+                      </span>
+                      {finding.metadata.remediation_plan.approval_id && (
+                        <span className="break-all rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-amber-200">
+                          Approval {finding.metadata.remediation_plan.approval_id}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-2 text-slate-400">
+                      {finding.metadata.remediation_plan.reason}
+                    </div>
+                  </div>
+                )}
+                {finding.metadata?.last_action && (
+                  <div className="mt-3 text-xs text-emerald-300">
+                    Last action: {finding.metadata.last_action.action_type} - {finding.metadata.last_action.status}
+                  </div>
+                )}
                 <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
                   <span className="rounded border border-slate-700 px-2 py-1">
                     Traces {finding.trace_ids.length}

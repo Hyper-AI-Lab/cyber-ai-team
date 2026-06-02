@@ -269,6 +269,21 @@ class ApiClient {
     return this.request('/api/memory/steward/run', { method: 'POST' });
   }
 
+  async planMemorySteward(
+    applySafeActions?: boolean,
+    requestApprovals?: boolean,
+    limit: number = 100
+  ) {
+    return this.request('/api/memory/steward/plan', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...(applySafeActions === undefined ? {} : { apply_safe_actions: applySafeActions }),
+        ...(requestApprovals === undefined ? {} : { request_approvals: requestApprovals }),
+        limit,
+      }),
+    });
+  }
+
   async listMemoryStewardFindings(status: string = 'open', limit: number = 50) {
     const params = new URLSearchParams({ status, limit: String(limit) });
     return this.request(`/api/memory/steward/findings?${params.toString()}`);

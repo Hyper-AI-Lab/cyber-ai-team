@@ -98,6 +98,7 @@ class MemoryStewardRunResponse(BaseModel):
     findings_created: int
     findings_updated: int
     findings: list[MemoryStewardFindingResponse] = Field(default_factory=list)
+    remediation_plan: dict | None = None
 
 
 class MemoryStewardResolve(BaseModel):
@@ -113,6 +114,25 @@ class MemoryStewardActionRequest(BaseModel):
 class MemoryStewardActionResponse(BaseModel):
     action: dict
     finding: MemoryStewardFindingResponse
+
+
+class MemoryStewardPlanRequest(BaseModel):
+    apply_safe_actions: bool | None = None
+    request_approvals: bool | None = None
+    limit: int = Field(default=100, ge=1, le=200)
+
+
+class MemoryStewardPlanResponse(BaseModel):
+    reviewed_at: str
+    actor: str
+    findings_reviewed: int
+    plans_created: int
+    actions_applied: int
+    approvals_requested: int
+    approvals_pending: int
+    already_applied: int
+    blocked: int
+    plans: list[dict] = Field(default_factory=list)
 
 
 @router.post("/remember", response_model=MemoryResponse)
@@ -211,6 +231,32 @@ async def run_memory_steward(
     )
     return await request.app.state.memory_steward_service.run_once(
         actor=principal.email,
+    )
+
+
+@router.post("/steward/plan", response_model=MemoryStewardPlanResponse)
+async def plan_memory_steward_remediations(
+    data: MemoryStewardPlanRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "plan",
+        "memory_steward",
+        "remediations",
+        context={
+            "apply_safe_actions": data.apply_safe_actions,
+            "request_approvals": data.request_approvals,
+            "limit": data.limit,
+        },
+    )
+    return await request.app.state.memory_steward_service.plan_remediations(
+        actor=principal.email,
+        apply_safe_actions=data.apply_safe_actions,
+        request_approvals=data.request_approvals,
+        limit=data.limit,
     )
 
 

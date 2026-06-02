@@ -61,6 +61,10 @@ class MemoryStewardService:
             "findings_updated": updated,
             "findings": findings,
         }
+        if settings.memory_steward_planner_enabled:
+            summary["remediation_plan"] = await self.plan_remediations(
+                actor="memory_steward_planner",
+            )
         if self._audit:
             await self._audit.record(
                 event_type="memory_steward.review",
@@ -188,6 +192,103 @@ class MemoryStewardService:
             "finding": updated,
         }
 
+    async def plan_remediations(
+        self,
+        *,
+        actor: str = "memory_steward_planner",
+        apply_safe_actions: bool | None = None,
+        request_approvals: bool | None = None,
+        limit: int = 100,
+    ) -> dict:
+        apply_safe = (
+            settings.memory_steward_auto_apply_safe_actions
+            if apply_safe_actions is None
+            else apply_safe_actions
+        )
+        request_action_approvals = (
+            settings.memory_steward_request_action_approvals
+            if request_approvals is None
+            else request_approvals
+        )
+        reviewed_at = utc_now()
+        findings = await self._load_open_findings(limit)
+        planned_items = []
+        counts = {
+            "findings_reviewed": len(findings),
+            "plans_created": 0,
+            "actions_applied": 0,
+            "approvals_requested": 0,
+            "approvals_pending": 0,
+            "already_applied": 0,
+            "blocked": 0,
+        }
+
+        for finding in findings:
+            plan = self._build_remediation_plan(finding, reviewed_at)
+            if not plan:
+                continue
+            existing_plan = dict(
+                (finding.get("metadata") or {}).get("remediation_plan") or {}
+            )
+            if self._action_already_applied(finding, plan["action_type"]):
+                plan["status"] = "already_applied"
+                if existing_plan.get("action_type") == plan["action_type"]:
+                    for key in ("approval_id", "applied_at", "result"):
+                        if key in existing_plan:
+                            plan[key] = existing_plan[key]
+                counts["already_applied"] += 1
+            elif plan["autonomous_allowed"] and apply_safe:
+                try:
+                    result = await self.execute_action(
+                        finding["id"],
+                        action_type=plan["action_type"],
+                        params=plan.get("params") or {},
+                        actor=actor,
+                    )
+                    plan["status"] = "applied"
+                    plan["applied_at"] = utc_now().isoformat()
+                    plan["result"] = result["action"]["result"] if result else {}
+                    counts["actions_applied"] += 1
+                except ValueError as exc:
+                    plan["status"] = "blocked"
+                    plan["reason"] = str(exc)
+                    counts["blocked"] += 1
+            elif not plan["autonomous_allowed"] and request_action_approvals:
+                outcome = await self._handle_planned_approval_action(
+                    finding,
+                    plan,
+                    existing_plan,
+                    actor,
+                )
+                counts[outcome] += 1
+            else:
+                plan["status"] = "planned"
+                counts["plans_created"] += 1
+
+            updated = await self._record_remediation_plan(finding["id"], plan)
+            planned_items.append({
+                "finding_id": finding["id"],
+                "finding_type": finding["finding_type"],
+                "plan": updated["metadata"].get("remediation_plan", plan),
+            })
+
+        summary = {
+            "reviewed_at": reviewed_at.isoformat(),
+            "actor": actor,
+            **counts,
+            "plans": planned_items,
+        }
+        if self._audit:
+            await self._audit.record(
+                event_type="memory_steward.remediation_planned",
+                actor=actor,
+                actor_type="agent",
+                resource_type="memory_steward",
+                action="plan_remediations",
+                metadata={key: value for key, value in summary.items() if key != "plans"},
+            )
+        return summary
+
     async def get_finding(self, finding_id: str) -> dict | None:
         async with self._session_factory() as session:
             result = await session.execute(
@@ -195,6 +296,17 @@ class MemoryStewardService:
             )
             finding = result.scalar_one_or_none()
             return self._finding_to_dict(finding) if finding else None
+
+    async def _load_open_findings(self, limit: int) -> list[dict]:
+        safe_limit = max(1, min(limit, 200))
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(MemoryStewardFinding)
+                .where(MemoryStewardFinding.status.in_(self.OPEN_STATUSES))
+                .order_by(desc(MemoryStewardFinding.updated_at))
+                .limit(safe_limit)
+            )
+            return [self._finding_to_dict(finding) for finding in result.scalars().all()]
 
     async def _load_recent_traces(self, now: datetime) -> list[dict]:
         cutoff = now - timedelta(hours=settings.memory_steward_trace_lookback_hours)
@@ -477,6 +589,114 @@ class MemoryStewardService:
             "capability": gap.get("capability"),
         }
 
+    async def _handle_planned_approval_action(
+        self,
+        finding: dict,
+        plan: dict,
+        existing_plan: dict,
+        actor: str,
+    ) -> str:
+        if not self._agent_manager:
+            plan["status"] = "blocked"
+            plan["reason"] = "Agent manager is not available for approval routing."
+            return "blocked"
+        approval_id = existing_plan.get("approval_id")
+        if approval_id and await self._approval_is_executable(approval_id, finding["id"]):
+            try:
+                result = await self.execute_action(
+                    finding["id"],
+                    action_type=plan["action_type"],
+                    params=plan.get("params") or {},
+                    actor=actor,
+                )
+                await self._consume_approval(approval_id, finding["id"])
+            except ValueError as exc:
+                plan["status"] = "blocked"
+                plan["approval_id"] = approval_id
+                plan["reason"] = str(exc)
+                return "blocked"
+            plan["status"] = "applied"
+            plan["approval_id"] = approval_id
+            plan["applied_at"] = utc_now().isoformat()
+            plan["result"] = result["action"]["result"] if result else {}
+            return "actions_applied"
+        if approval_id:
+            plan["status"] = "approval_pending"
+            plan["approval_id"] = approval_id
+            return "approvals_pending"
+        approval_id = await self._request_action_approval(finding, plan, actor)
+        if not approval_id:
+            plan["status"] = "planned"
+            plan["reason"] = "Approval routing is not available."
+            return "plans_created"
+        plan["status"] = "approval_requested"
+        plan["approval_id"] = approval_id
+        plan["requested_at"] = utc_now().isoformat()
+        return "approvals_requested"
+
+    async def _record_remediation_plan(self, finding_id: str, plan: dict) -> dict:
+        now = utc_now()
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(MemoryStewardFinding).where(MemoryStewardFinding.id == finding_id)
+            )
+            finding = result.scalar_one()
+            metadata = dict(finding.metadata_ or {})
+            history = list(metadata.get("remediation_plan_history") or [])[-9:]
+            metadata["remediation_plan"] = plan
+            metadata["remediation_plan_history"] = [*history, plan]
+            finding.metadata_ = metadata
+            finding.updated_at = now
+            await session.commit()
+            return self._finding_to_dict(finding)
+
+    async def _request_action_approval(
+        self,
+        finding: dict,
+        plan: dict,
+        actor: str,
+    ) -> str | None:
+        request_approval = getattr(self._agent_manager, "_request_approval", None)
+        if not request_approval:
+            return None
+        return await request_approval(
+            finding.get("agent_id"),
+            f"memory_steward.{plan['action_type']}",
+            plan["description"],
+            {
+                "finding_id": finding["id"],
+                "finding_type": finding["finding_type"],
+                "action_type": plan["action_type"],
+                "params": plan.get("params") or {},
+            },
+            requester=actor,
+            requester_type="agent",
+            risk_level=plan["risk_level"],
+            target_type="memory_steward_finding",
+            target_id=finding["id"],
+        )
+
+    async def _approval_is_executable(self, approval_id: str, finding_id: str) -> bool:
+        approval_is_executable = getattr(self._agent_manager, "approval_is_executable", None)
+        if not approval_is_executable:
+            return False
+        return await approval_is_executable(
+            approval_id,
+            target_type="memory_steward_finding",
+            target_id=finding_id,
+        )
+
+    async def _consume_approval(self, approval_id: str, finding_id: str) -> None:
+        consume_approval = getattr(self._agent_manager, "consume_approval", None)
+        if not consume_approval:
+            return
+        await consume_approval(
+            approval_id,
+            consumer="memory_steward_planner",
+            target_type="memory_steward_finding",
+            target_id=finding_id,
+        )
+
     async def _record_action(self, finding_id: str, action_record: dict) -> dict:
         now = utc_now()
         async with self._session_factory() as session:
@@ -502,6 +722,72 @@ class MemoryStewardService:
         async with self._session_factory() as session:
             result = await session.execute(select(Agent.id).where(Agent.id == agent_id))
             return agent_id if result.scalar_one_or_none() else None
+
+    def _build_remediation_plan(
+        self,
+        finding: dict,
+        reviewed_at: datetime,
+    ) -> dict | None:
+        actions = {action["type"] for action in finding.get("available_actions", [])}
+        if finding["finding_type"] in {
+            "repeated_empty_recall",
+            "missing_company_shared_memory",
+        } and "seed_memory" in actions:
+            return {
+                "id": f"mem_plan_{uuid.uuid4().hex[:12]}",
+                "finding_id": finding["id"],
+                "finding_type": finding["finding_type"],
+                "action_type": "seed_memory",
+                "status": "planned",
+                "priority": self._priority_for_finding(finding),
+                "risk_level": "low",
+                "autonomous_allowed": True,
+                "reason": (
+                    "Low-risk internal memory seed can reduce repeated context misses "
+                    "without touching external systems."
+                ),
+                "description": self._default_seed_content(finding),
+                "params": {},
+                "planned_at": reviewed_at.isoformat(),
+            }
+        if finding["finding_type"] == "memory_operation_errors" and "report_role_gap" in actions:
+            return {
+                "id": f"mem_plan_{uuid.uuid4().hex[:12]}",
+                "finding_id": finding["id"],
+                "finding_type": finding["finding_type"],
+                "action_type": "report_role_gap",
+                "status": "planned",
+                "priority": self._priority_for_finding(finding),
+                "risk_level": "medium",
+                "autonomous_allowed": False,
+                "reason": (
+                    "Memory infrastructure or capability gaps can create operational "
+                    "backlog and should be approved before escalation."
+                ),
+                "description": self._default_role_gap_description(finding),
+                "params": {
+                    "capability": self._capability_for_finding(finding),
+                    "requested_tools": self._requested_tools_for_finding(finding),
+                },
+                "planned_at": reviewed_at.isoformat(),
+            }
+        return None
+
+    @staticmethod
+    def _action_already_applied(finding: dict, action_type: str) -> bool:
+        metadata = finding.get("metadata") or {}
+        return any(
+            action.get("action_type") == action_type and action.get("status") == "applied"
+            for action in metadata.get("action_history") or []
+        )
+
+    @staticmethod
+    def _priority_for_finding(finding: dict) -> str:
+        if finding["severity"] in {"critical", "high"}:
+            return "high"
+        if finding["severity"] == "medium":
+            return "medium"
+        return "low"
 
     @staticmethod
     def _matching_open_finding(
