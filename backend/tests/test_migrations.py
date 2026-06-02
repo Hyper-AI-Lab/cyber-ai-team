@@ -43,6 +43,17 @@ def render_memory_trace_downgrade_sql() -> str:
     return stream.getvalue()
 
 
+def render_memory_steward_downgrade_sql() -> str:
+    stream = io.StringIO()
+    with redirect_stdout(stream):
+        command.downgrade(
+            alembic_config(),
+            "0006_memory_steward_findings:0005_memory_traces",
+            sql=True,
+        )
+    return stream.getvalue()
+
+
 def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
     sql = render_offline_upgrade_sql()
 
@@ -57,6 +68,7 @@ def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
         "role_manifests",
         "role_gaps",
         "memory_traces",
+        "memory_steward_findings",
     ]:
         assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
 
@@ -74,6 +86,9 @@ def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
     assert "CREATE INDEX IF NOT EXISTS ix_memory_traces_invocation_id" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_memory_traces_agent_id" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_memory_traces_created_at" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_memory_steward_findings_status" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_memory_steward_findings_finding_type" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_memory_steward_findings_created_at" in sql
 
 
 def test_initial_migration_preserves_pre_alembic_approval_compatibility():
@@ -119,3 +134,11 @@ def test_memory_trace_migration_downgrade_removes_trace_table_and_indexes():
     assert "DROP INDEX IF EXISTS ix_memory_traces_invocation_id" in sql
     assert "DROP INDEX IF EXISTS ix_memory_traces_created_at" in sql
     assert "DROP TABLE IF EXISTS memory_traces CASCADE" in sql
+
+
+def test_memory_steward_migration_downgrade_removes_findings_table_and_indexes():
+    sql = render_memory_steward_downgrade_sql()
+
+    assert "DROP INDEX IF EXISTS ix_memory_steward_findings_status" in sql
+    assert "DROP INDEX IF EXISTS ix_memory_steward_findings_created_at" in sql
+    assert "DROP TABLE IF EXISTS memory_steward_findings CASCADE" in sql

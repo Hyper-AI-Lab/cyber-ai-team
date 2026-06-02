@@ -39,6 +39,7 @@ from cyber_team.db import async_session, init_db
 from cyber_team.integrations.erpnext import ERPNextClient
 from cyber_team.memory.service import MemoryService
 from cyber_team.observability.metrics import MetricsService
+from cyber_team.operations.memory_steward import MemoryStewardService
 from cyber_team.operations.supervisor_review import SupervisorReviewService
 from cyber_team.roles.loader import load_default_roles
 from cyber_team.tools.registry import ToolRegistry
@@ -75,6 +76,9 @@ async def lifespan(app: FastAPI):
         agent_manager=app.state.agent_manager,
         audit_service=app.state.audit_service,
     )
+    app.state.memory_steward_service = MemoryStewardService(
+        audit_service=app.state.audit_service,
+    )
     app.state.tool_registry.set_services(
         comms=app.state.comms_gateway,
         memory=app.state.memory_service,
@@ -89,16 +93,22 @@ async def lifespan(app: FastAPI):
         app.state.supervisor_review_task = asyncio.create_task(
             _supervisor_review_loop(app)
         )
+    app.state.memory_steward_task = None
+    if settings.memory_steward_enabled:
+        app.state.memory_steward_task = asyncio.create_task(
+            _memory_steward_loop(app)
+        )
     try:
         yield
     finally:
-        task = getattr(app.state, "supervisor_review_task", None)
-        if task:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        for task_name in ("supervisor_review_task", "memory_steward_task"):
+            task = getattr(app.state, task_name, None)
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
     # Shutdown
     await app.state.memory_service.shutdown()
     await app.state.erpnext.close()
@@ -116,6 +126,21 @@ async def _supervisor_review_loop(app: FastAPI) -> None:
             raise
         except Exception:
             logger.exception("Supervisor review loop failed")
+        await asyncio.sleep(interval)
+
+
+async def _memory_steward_loop(app: FastAPI) -> None:
+    initial_delay = max(0, settings.memory_steward_initial_delay_seconds)
+    interval = max(60, settings.memory_steward_interval_seconds)
+    if initial_delay:
+        await asyncio.sleep(initial_delay)
+    while True:
+        try:
+            await app.state.memory_steward_service.run_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Memory steward loop failed")
         await asyncio.sleep(interval)
 
 

@@ -124,6 +124,33 @@ describe('ApiClient', () => {
     expect(fetchMock.mock.calls[0][1]?.headers.Authorization).toBe('Bearer access-1')
   })
 
+  it('manages memory steward reviews and findings', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ findings_created: 1 }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'finding-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'finding-1', status: 'resolved' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.runMemorySteward()
+    await client.listMemoryStewardFindings('open', 25)
+    await client.resolveMemoryStewardFinding('finding-1', 'resolved', 'Seeded memory')
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/memory/steward/run')
+    expect(fetchMock.mock.calls[0][1]?.method).toBe('POST')
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/memory/steward/findings?status=open&limit=25',
+    )
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/memory/steward/findings/finding-1/resolve',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toEqual({
+      status: 'resolved',
+      note: 'Seeded memory',
+    })
+  })
+
   it('manages role gaps through the authenticated API client', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'gap-1' }]))

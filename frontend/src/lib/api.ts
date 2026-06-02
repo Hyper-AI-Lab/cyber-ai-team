@@ -265,6 +265,26 @@ class ApiClient {
     return this.request(`/api/memory/traces?${params.toString()}`);
   }
 
+  async runMemorySteward() {
+    return this.request('/api/memory/steward/run', { method: 'POST' });
+  }
+
+  async listMemoryStewardFindings(status: string = 'open', limit: number = 50) {
+    const params = new URLSearchParams({ status, limit: String(limit) });
+    return this.request(`/api/memory/steward/findings?${params.toString()}`);
+  }
+
+  async resolveMemoryStewardFinding(
+    findingId: string,
+    status: string = 'resolved',
+    note: string = ''
+  ) {
+    return this.request(`/api/memory/steward/findings/${findingId}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ status, note }),
+    });
+  }
+
   // Workflows
   async listWorkflows() {
     return this.request('/api/workflows/');

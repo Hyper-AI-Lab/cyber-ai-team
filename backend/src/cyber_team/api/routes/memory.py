@@ -1,7 +1,10 @@
 """Memory management routes."""
 
 
-from fastapi import APIRouter, Depends, Query, Request
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import status as http_status
 from pydantic import BaseModel, Field
 
 from cyber_team.api.authorization import require_authorization
@@ -66,6 +69,39 @@ class MemoryTraceResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
     created_at: str
+
+
+class MemoryStewardFindingResponse(BaseModel):
+    id: str
+    finding_type: str
+    severity: str
+    status: str
+    agent_id: str | None = None
+    memory_namespace: str | None = None
+    company_namespace: str | None = None
+    title: str
+    description: str
+    recommendation: str
+    trace_ids: list[str] = Field(default_factory=list)
+    evidence: dict = Field(default_factory=dict)
+    metadata: dict = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+    resolved_at: str | None = None
+
+
+class MemoryStewardRunResponse(BaseModel):
+    reviewed_at: str
+    actor: str
+    traces_reviewed: int
+    findings_created: int
+    findings_updated: int
+    findings: list[MemoryStewardFindingResponse] = Field(default_factory=list)
+
+
+class MemoryStewardResolve(BaseModel):
+    status: Literal["resolved", "acknowledged", "open"] = "resolved"
+    note: str = ""
 
 
 @router.post("/remember", response_model=MemoryResponse)
@@ -148,6 +184,75 @@ async def list_memory_traces(
         invocation_id=invocation_id,
         limit=limit,
     )
+
+
+@router.post("/steward/run", response_model=MemoryStewardRunResponse)
+async def run_memory_steward(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "execute",
+        "memory_steward",
+        "run",
+    )
+    return await request.app.state.memory_steward_service.run_once(
+        actor=principal.email,
+    )
+
+
+@router.get("/steward/findings", response_model=list[MemoryStewardFindingResponse])
+async def list_memory_steward_findings(
+    request: Request,
+    status: str | None = "open",
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "memory_steward_finding",
+        status,
+        context={"limit": limit},
+    )
+    return await request.app.state.memory_steward_service.list_findings(
+        status=status,
+        limit=limit,
+    )
+
+
+@router.post(
+    "/steward/findings/{finding_id}/resolve",
+    response_model=MemoryStewardFindingResponse,
+)
+async def resolve_memory_steward_finding(
+    finding_id: str,
+    data: MemoryStewardResolve,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        data.status,
+        "memory_steward_finding",
+        finding_id,
+    )
+    finding = await request.app.state.memory_steward_service.resolve_finding(
+        finding_id,
+        status=data.status,
+        note=data.note,
+        actor=principal.email,
+    )
+    if finding is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="Memory steward finding not found",
+        )
+    return finding
 
 
 @router.delete("/{memory_id}", status_code=204)

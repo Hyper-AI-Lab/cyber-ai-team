@@ -95,6 +95,27 @@ class MemoryTrace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
 
 
+class MemoryStewardFinding(Base):
+    __tablename__ = "memory_steward_findings"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    finding_type: Mapped[str] = mapped_column(String(80), index=True)
+    severity: Mapped[str] = mapped_column(String(20), default="medium", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="open", index=True)
+    agent_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    memory_namespace: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    company_namespace: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    recommendation: Mapped[str] = mapped_column(Text)
+    trace_ids: Mapped[list] = mapped_column(JSON, default=list)
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class ApprovalRequest(Base):
     __tablename__ = "approval_requests"
 

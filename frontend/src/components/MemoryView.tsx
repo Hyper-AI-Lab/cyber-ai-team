@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
-import { Activity, Brain, Clock, RefreshCw, Search, Tag } from 'lucide-react'
+import { Activity, AlertTriangle, Brain, CheckCircle, Clock, Play, RefreshCw, Search, Tag } from 'lucide-react'
 
 export default function MemoryView() {
   const [query, setQuery] = useState('')
@@ -10,9 +10,13 @@ export default function MemoryView() {
   const [searching, setSearching] = useState(false)
   const [traces, setTraces] = useState<any[]>([])
   const [loadingTraces, setLoadingTraces] = useState(false)
+  const [findings, setFindings] = useState<any[]>([])
+  const [loadingFindings, setLoadingFindings] = useState(false)
+  const [runningSteward, setRunningSteward] = useState(false)
 
   useEffect(() => {
     void loadTraces()
+    void loadFindings()
   }, [])
 
   const handleSearch = async () => {
@@ -37,6 +41,40 @@ export default function MemoryView() {
       console.error('Memory trace fetch failed:', e)
     } finally {
       setLoadingTraces(false)
+    }
+  }
+
+  const loadFindings = async () => {
+    setLoadingFindings(true)
+    try {
+      const res = await api.listMemoryStewardFindings('open', 25)
+      setFindings(res)
+    } catch (e: any) {
+      console.error('Memory steward finding fetch failed:', e)
+    } finally {
+      setLoadingFindings(false)
+    }
+  }
+
+  const runSteward = async () => {
+    setRunningSteward(true)
+    try {
+      await api.runMemorySteward()
+      await loadFindings()
+      await loadTraces()
+    } catch (e: any) {
+      console.error('Memory steward run failed:', e)
+    } finally {
+      setRunningSteward(false)
+    }
+  }
+
+  const resolveFinding = async (findingId: string) => {
+    try {
+      await api.resolveMemoryStewardFinding(findingId, 'resolved', 'Reviewed in owner console')
+      await loadFindings()
+    } catch (e: any) {
+      console.error('Memory steward finding resolution failed:', e)
     }
   }
 
@@ -95,6 +133,83 @@ export default function MemoryView() {
           No results found. Try a different query.
         </div>
       )}
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">Memory Steward</h3>
+            <p className="text-sm text-slate-400 mt-1">Trace-driven memory health findings</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={loadFindings}
+              disabled={loadingFindings}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <RefreshCw className={`w-4 h-4 ${loadingFindings ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+            <button
+              onClick={runSteward}
+              disabled={runningSteward}
+              className="btn-primary flex items-center gap-2"
+            >
+              <Play className="w-4 h-4" />
+              {runningSteward ? 'Running...' : 'Run Review'}
+            </button>
+          </div>
+        </div>
+
+        {findings.length > 0 ? (
+          <div className="space-y-3">
+            {findings.map((finding: any) => (
+              <div key={finding.id} className="card">
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <AlertTriangle className="w-4 h-4 text-amber-300" />
+                  <span className={
+                    finding.severity === 'high' || finding.severity === 'critical'
+                      ? 'badge-danger'
+                      : 'badge-warning'
+                  }>
+                    {finding.severity}
+                  </span>
+                  <span className="badge-info">{finding.finding_type}</span>
+                  {finding.agent_id && (
+                    <span className="text-xs text-slate-400">{finding.agent_id}</span>
+                  )}
+                  {finding.company_namespace && (
+                    <span className="text-xs text-slate-500">{finding.company_namespace}</span>
+                  )}
+                  <button
+                    onClick={() => resolveFinding(finding.id)}
+                    className="ml-auto btn-secondary text-xs flex items-center gap-1"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    Resolve
+                  </button>
+                </div>
+                <h4 className="font-semibold text-slate-100">{finding.title}</h4>
+                <p className="mt-2 text-sm text-slate-300">{finding.description}</p>
+                <p className="mt-2 text-sm text-slate-400">{finding.recommendation}</p>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
+                  <span className="rounded border border-slate-700 px-2 py-1">
+                    Traces {finding.trace_ids.length}
+                  </span>
+                  {finding.memory_namespace && (
+                    <span className="rounded border border-slate-700 px-2 py-1">
+                      {finding.memory_namespace}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="card text-center text-slate-500">
+            {loadingFindings ? 'Loading findings...' : 'No open memory steward findings.'}
+          </div>
+        )}
+      </div>
 
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">

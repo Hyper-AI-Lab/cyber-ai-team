@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     supervisor_review_stale_approval_hours: int = 24
     supervisor_review_failure_lookback_hours: int = 24
     supervisor_review_failure_threshold: int = 3
+    memory_steward_enabled: bool = True
+    memory_steward_initial_delay_seconds: int = 120
+    memory_steward_interval_seconds: int = 1800
+    memory_steward_trace_lookback_hours: int = 24
+    memory_steward_trace_limit: int = 200
+    memory_steward_empty_recall_threshold: int = 3
 
     # Mistral / LLM
     mistral_api_key: str = ""
