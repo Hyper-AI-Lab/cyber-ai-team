@@ -285,6 +285,17 @@ class ApiClient {
     });
   }
 
+  async executeMemoryStewardAction(
+    findingId: string,
+    actionType: 'seed_memory' | 'report_role_gap',
+    params: Record<string, any> = {}
+  ) {
+    return this.request(`/api/memory/steward/findings/${findingId}/actions`, {
+      method: 'POST',
+      body: JSON.stringify({ action_type: actionType, params }),
+    });
+  }
+
   // Workflows
   async listWorkflows() {
     return this.request('/api/workflows/');

@@ -129,6 +129,10 @@ describe('ApiClient', () => {
       .mockResolvedValueOnce(jsonResponse({ findings_created: 1 }))
       .mockResolvedValueOnce(jsonResponse([{ id: 'finding-1' }]))
       .mockResolvedValueOnce(jsonResponse({ id: 'finding-1', status: 'resolved' }))
+      .mockResolvedValueOnce(jsonResponse({
+        action: { action_type: 'seed_memory' },
+        finding: { id: 'finding-1', status: 'acknowledged' },
+      }))
     vi.stubGlobal('fetch', fetchMock)
     const client = new ApiClient('http://api.test')
 
@@ -136,6 +140,7 @@ describe('ApiClient', () => {
     await client.runMemorySteward()
     await client.listMemoryStewardFindings('open', 25)
     await client.resolveMemoryStewardFinding('finding-1', 'resolved', 'Seeded memory')
+    await client.executeMemoryStewardAction('finding-1', 'seed_memory')
 
     expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/memory/steward/run')
     expect(fetchMock.mock.calls[0][1]?.method).toBe('POST')
@@ -148,6 +153,13 @@ describe('ApiClient', () => {
     expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toEqual({
       status: 'resolved',
       note: 'Seeded memory',
+    })
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      'http://api.test/api/memory/steward/findings/finding-1/actions',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[3][1]?.body as string)).toEqual({
+      action_type: 'seed_memory',
+      params: {},
     })
   })
 

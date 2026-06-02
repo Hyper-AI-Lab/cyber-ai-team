@@ -85,6 +85,7 @@ class MemoryStewardFindingResponse(BaseModel):
     trace_ids: list[str] = Field(default_factory=list)
     evidence: dict = Field(default_factory=dict)
     metadata: dict = Field(default_factory=dict)
+    available_actions: list[dict] = Field(default_factory=list)
     created_at: str
     updated_at: str
     resolved_at: str | None = None
@@ -102,6 +103,16 @@ class MemoryStewardRunResponse(BaseModel):
 class MemoryStewardResolve(BaseModel):
     status: Literal["resolved", "acknowledged", "open"] = "resolved"
     note: str = ""
+
+
+class MemoryStewardActionRequest(BaseModel):
+    action_type: Literal["seed_memory", "report_role_gap"]
+    params: dict = Field(default_factory=dict)
+
+
+class MemoryStewardActionResponse(BaseModel):
+    action: dict
+    finding: MemoryStewardFindingResponse
 
 
 @router.post("/remember", response_model=MemoryResponse)
@@ -253,6 +264,44 @@ async def resolve_memory_steward_finding(
             detail="Memory steward finding not found",
         )
     return finding
+
+
+@router.post(
+    "/steward/findings/{finding_id}/actions",
+    response_model=MemoryStewardActionResponse,
+)
+async def execute_memory_steward_action(
+    finding_id: str,
+    data: MemoryStewardActionRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "execute",
+        "memory_steward_finding",
+        finding_id,
+        context={"action_type": data.action_type},
+    )
+    try:
+        result = await request.app.state.memory_steward_service.execute_action(
+            finding_id,
+            action_type=data.action_type,
+            params=data.params,
+            actor=principal.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="Memory steward finding not found",
+        )
+    return result
 
 
 @router.delete("/{memory_id}", status_code=204)

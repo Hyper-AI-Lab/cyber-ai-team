@@ -2,7 +2,19 @@
 
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
-import { Activity, AlertTriangle, Brain, CheckCircle, Clock, Play, RefreshCw, Search, Tag } from 'lucide-react'
+import {
+  Activity,
+  AlertTriangle,
+  Brain,
+  CheckCircle,
+  Clock,
+  Database,
+  GitBranch,
+  Play,
+  RefreshCw,
+  Search,
+  Tag,
+} from 'lucide-react'
 
 export default function MemoryView() {
   const [query, setQuery] = useState('')
@@ -13,6 +25,7 @@ export default function MemoryView() {
   const [findings, setFindings] = useState<any[]>([])
   const [loadingFindings, setLoadingFindings] = useState(false)
   const [runningSteward, setRunningSteward] = useState(false)
+  const [runningAction, setRunningAction] = useState<string | null>(null)
 
   useEffect(() => {
     void loadTraces()
@@ -75,6 +88,23 @@ export default function MemoryView() {
       await loadFindings()
     } catch (e: any) {
       console.error('Memory steward finding resolution failed:', e)
+    }
+  }
+
+  const executeFindingAction = async (findingId: string, actionType: string) => {
+    const actionKey = `${findingId}:${actionType}`
+    setRunningAction(actionKey)
+    try {
+      await api.executeMemoryStewardAction(
+        findingId,
+        actionType as 'seed_memory' | 'report_role_gap',
+      )
+      await loadFindings()
+      await loadTraces()
+    } catch (e: any) {
+      console.error('Memory steward action failed:', e)
+    } finally {
+      setRunningAction(null)
     }
   }
 
@@ -180,13 +210,6 @@ export default function MemoryView() {
                   {finding.company_namespace && (
                     <span className="text-xs text-slate-500">{finding.company_namespace}</span>
                   )}
-                  <button
-                    onClick={() => resolveFinding(finding.id)}
-                    className="ml-auto btn-secondary text-xs flex items-center gap-1"
-                  >
-                    <CheckCircle className="w-3.5 h-3.5" />
-                    Resolve
-                  </button>
                 </div>
                 <h4 className="font-semibold text-slate-100">{finding.title}</h4>
                 <p className="mt-2 text-sm text-slate-300">{finding.description}</p>
@@ -200,6 +223,32 @@ export default function MemoryView() {
                       {finding.memory_namespace}
                     </span>
                   )}
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {(finding.available_actions || []).map((action: any) => {
+                    const actionKey = `${finding.id}:${action.type}`
+                    const isRunning = runningAction === actionKey
+                    const Icon = action.type === 'seed_memory' ? Database : GitBranch
+                    return (
+                      <button
+                        key={action.type}
+                        onClick={() => executeFindingAction(finding.id, action.type)}
+                        disabled={Boolean(runningAction)}
+                        className="btn-secondary text-xs flex items-center gap-1"
+                        title={action.description}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                        {isRunning ? 'Applying...' : action.label}
+                      </button>
+                    )
+                  })}
+                  <button
+                    onClick={() => resolveFinding(finding.id)}
+                    className="btn-secondary text-xs flex items-center gap-1"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    Resolve
+                  </button>
                 </div>
               </div>
             ))}

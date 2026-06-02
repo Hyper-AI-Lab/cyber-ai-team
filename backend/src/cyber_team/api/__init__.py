@@ -78,6 +78,8 @@ async def lifespan(app: FastAPI):
     )
     app.state.memory_steward_service = MemoryStewardService(
         audit_service=app.state.audit_service,
+        memory_service=app.state.memory_service,
+        agent_manager=app.state.agent_manager,
     )
     app.state.tool_registry.set_services(
         comms=app.state.comms_gateway,

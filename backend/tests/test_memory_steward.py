@@ -10,6 +10,47 @@ from cyber_team.db.models import MemoryStewardFinding, MemoryTrace
 from cyber_team.operations.memory_steward import MemoryStewardService
 
 
+class FakeMemoryService:
+    def __init__(self):
+        self.writes = []
+
+    async def remember(self, data):
+        memory_id = f"memory-{len(self.writes) + 1}"
+        self.writes.append({
+            "id": memory_id,
+            "agent_id": data.agent_id,
+            "memory_type": data.memory_type,
+            "namespace": data.namespace,
+            "content": data.content,
+            "metadata": data.metadata,
+            "importance": data.importance,
+        })
+        return self.writes[-1]
+
+
+class FakeAgentManager:
+    def __init__(self):
+        self.gaps = []
+
+    async def report_role_gap(self, data, reporter="system"):
+        gap_id = f"gap-{len(self.gaps) + 1}"
+        self.gaps.append({
+            "id": gap_id,
+            "title": data.title,
+            "description": data.description,
+            "status": "open",
+            "severity": data.severity,
+            "source_agent_id": data.source_agent_id,
+            "source_type": data.source_type,
+            "company_namespace": data.company_namespace,
+            "capability": data.capability,
+            "requested_tools": data.requested_tools,
+            "context": data.context,
+            "reporter": reporter,
+        })
+        return self.gaps[-1]
+
+
 async def build_session_factory():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
@@ -124,5 +165,127 @@ async def test_memory_steward_creates_and_dedupes_findings(monkeypatch):
                 )
             ).scalar_one()
             assert db_finding.metadata_["resolution"]["note"] == "Seeded memory."
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_memory_steward_executes_seed_memory_action(monkeypatch):
+    now = datetime(2026, 6, 2, 12, 0, 0)
+    engine, session_factory = await build_session_factory()
+    monkeypatch.setattr(settings, "memory_steward_empty_recall_threshold", 2)
+    monkeypatch.setattr(settings, "memory_steward_trace_lookback_hours", 24)
+    monkeypatch.setattr(settings, "memory_steward_trace_limit", 100)
+
+    try:
+        async with session_factory() as session:
+            session.add_all([
+                memory_trace("trace-action-1", created_at=now - timedelta(minutes=2)),
+                memory_trace("trace-action-2", created_at=now - timedelta(minutes=1)),
+            ])
+            await session.commit()
+
+        memory = FakeMemoryService()
+        steward = MemoryStewardService(
+            memory_service=memory,
+            session_factory=session_factory,
+        )
+        await steward.run_once(now=now, actor="test")
+        findings = await steward.list_findings(status="open")
+        finding = next(
+            item
+            for item in findings
+            if item["finding_type"] == "repeated_empty_recall"
+        )
+
+        result = await steward.execute_action(
+            finding["id"],
+            action_type="seed_memory",
+            actor="owner@example.com",
+        )
+
+        assert result is not None
+        assert result["action"]["action_type"] == "seed_memory"
+        assert result["finding"]["status"] == "acknowledged"
+        assert result["finding"]["available_actions"] == [
+            {
+                "type": "seed_memory",
+                "label": "Seed Memory",
+                "description": "Write a durable memory entry that guides future recall.",
+            },
+            {
+                "type": "report_role_gap",
+                "label": "Open Gap",
+                "description": "Create a role or capability gap for follow-up.",
+            },
+        ]
+        assert len(memory.writes) == 1
+        assert memory.writes[0]["namespace"] == "company:acme:ops"
+        assert memory.writes[0]["memory_type"] == "procedural"
+        assert memory.writes[0]["metadata"]["finding_id"] == finding["id"]
+
+        async with session_factory() as session:
+            db_finding = (
+                await session.execute(
+                    select(MemoryStewardFinding).where(
+                        MemoryStewardFinding.id == finding["id"]
+                    )
+                )
+            ).scalar_one()
+            assert db_finding.metadata_["last_action"]["action_type"] == "seed_memory"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_memory_steward_executes_role_gap_action(monkeypatch):
+    now = datetime(2026, 6, 2, 12, 0, 0)
+    engine, session_factory = await build_session_factory()
+    monkeypatch.setattr(settings, "memory_steward_empty_recall_threshold", 2)
+    monkeypatch.setattr(settings, "memory_steward_trace_lookback_hours", 24)
+    monkeypatch.setattr(settings, "memory_steward_trace_limit", 100)
+
+    try:
+        async with session_factory() as session:
+            session.add(
+                memory_trace(
+                    "trace-error-1",
+                    errors=["write:RuntimeError:database unavailable"],
+                    created_at=now - timedelta(minutes=1),
+                )
+            )
+            await session.commit()
+
+        manager = FakeAgentManager()
+        steward = MemoryStewardService(
+            agent_manager=manager,
+            session_factory=session_factory,
+        )
+        await steward.run_once(now=now, actor="test")
+        findings = await steward.list_findings(status="open")
+        finding = next(
+            item
+            for item in findings
+            if item["finding_type"] == "memory_operation_errors"
+        )
+
+        result = await steward.execute_action(
+            finding["id"],
+            action_type="report_role_gap",
+            actor="owner@example.com",
+        )
+
+        assert result is not None
+        assert result["action"]["action_type"] == "report_role_gap"
+        assert result["action"]["result"]["role_gap_id"] == "gap-1"
+        assert result["finding"]["status"] == "acknowledged"
+        assert len(manager.gaps) == 1
+        assert manager.gaps[0]["capability"] == "memory_operations"
+        assert manager.gaps[0]["requested_tools"] == [
+            "memory_remember",
+            "knowledge_query",
+        ]
+        assert manager.gaps[0]["context"]["finding_id"] == finding["id"]
+        assert manager.gaps[0]["reporter"] == "owner@example.com"
     finally:
         await engine.dispose()

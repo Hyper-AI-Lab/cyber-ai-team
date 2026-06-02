@@ -5,13 +5,14 @@ from __future__ import annotations
 import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 from sqlalchemy import desc, select
 
 from cyber_team.clock import utc_now
 from cyber_team.config import settings
 from cyber_team.db import async_session
-from cyber_team.db.models import MemoryStewardFinding, MemoryTrace
+from cyber_team.db.models import Agent, MemoryStewardFinding, MemoryTrace
 
 
 class MemoryStewardService:
@@ -22,9 +23,13 @@ class MemoryStewardService:
     def __init__(
         self,
         audit_service=None,
+        memory_service=None,
+        agent_manager=None,
         session_factory=async_session,
     ):
         self._audit = audit_service
+        self._memory = memory_service
+        self._agent_manager = agent_manager
         self._session_factory = session_factory
 
     async def run_once(
@@ -128,6 +133,68 @@ class MemoryStewardService:
                 metadata={"note": note},
             )
         return response
+
+    async def execute_action(
+        self,
+        finding_id: str,
+        *,
+        action_type: str,
+        params: dict | None = None,
+        actor: str = "owner",
+    ) -> dict | None:
+        params = dict(params or {})
+        finding = await self.get_finding(finding_id)
+        if not finding:
+            return None
+
+        allowed_actions = {
+            action["type"] for action in finding.get("available_actions", [])
+        }
+        if action_type not in allowed_actions:
+            raise ValueError(f"Action {action_type} is not available for this finding")
+
+        if action_type == "seed_memory":
+            action_result = await self._execute_seed_memory(finding, params)
+        elif action_type == "report_role_gap":
+            action_result = await self._execute_report_role_gap(finding, params, actor)
+        else:
+            raise ValueError(f"Unsupported memory steward action: {action_type}")
+
+        action_record = {
+            "id": f"mem_action_{uuid.uuid4().hex[:12]}",
+            "action_type": action_type,
+            "actor": actor,
+            "status": "applied",
+            "applied_at": utc_now().isoformat(),
+            "params": self._safe_params(params),
+            "result": action_result,
+        }
+        updated = await self._record_action(finding_id, action_record)
+        if self._audit:
+            await self._audit.record(
+                event_type="memory_steward.action_applied",
+                actor=actor,
+                actor_type="user",
+                resource_type="memory_steward_finding",
+                resource_id=finding_id,
+                action=action_type,
+                metadata={
+                    "finding_type": finding["finding_type"],
+                    "result": action_result,
+                },
+            )
+        return {
+            "action": action_record,
+            "finding": updated,
+        }
+
+    async def get_finding(self, finding_id: str) -> dict | None:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(MemoryStewardFinding).where(MemoryStewardFinding.id == finding_id)
+            )
+            finding = result.scalar_one_or_none()
+            return self._finding_to_dict(finding) if finding else None
 
     async def _load_recent_traces(self, now: datetime) -> list[dict]:
         cutoff = now - timedelta(hours=settings.memory_steward_trace_lookback_hours)
@@ -337,6 +404,105 @@ class MemoryStewardService:
             await session.commit()
             return self._finding_to_dict(finding), True
 
+    async def _execute_seed_memory(self, finding: dict, params: dict) -> dict:
+        if not self._memory:
+            raise ValueError("Memory service is not available")
+        namespace = (
+            params.get("namespace")
+            or finding.get("memory_namespace")
+            or finding.get("company_namespace")
+        )
+        if not namespace:
+            raise ValueError("No memory namespace is available for this finding")
+        agent_id = await self._existing_agent_id(finding.get("agent_id"))
+        memory_type = params.get("memory_type") or self._seed_memory_type(finding)
+        content = params.get("content") or self._default_seed_content(finding)
+        memory = await self._memory.remember(
+            SimpleNamespace(
+                agent_id=agent_id,
+                memory_type=memory_type,
+                namespace=namespace,
+                content=content,
+                metadata={
+                    "source": "memory_steward_action",
+                    "finding_id": finding["id"],
+                    "finding_type": finding["finding_type"],
+                    "trace_ids": finding.get("trace_ids", []),
+                    "action_type": "seed_memory",
+                },
+                importance=float(params.get("importance") or 0.75),
+            )
+        )
+        return {
+            "memory_id": memory["id"],
+            "namespace": namespace,
+            "memory_type": memory_type,
+            "agent_id": agent_id,
+        }
+
+    async def _execute_report_role_gap(
+        self,
+        finding: dict,
+        params: dict,
+        actor: str,
+    ) -> dict:
+        if not self._agent_manager:
+            raise ValueError("Agent manager is not available")
+        title = params.get("title") or f"Memory remediation: {finding['title']}"
+        gap = await self._agent_manager.report_role_gap(
+            SimpleNamespace(
+                title=title[:200],
+                description=params.get("description")
+                or self._default_role_gap_description(finding),
+                severity=params.get("severity") or finding["severity"],
+                source_agent_id=finding.get("agent_id"),
+                source_type="memory_steward",
+                company_namespace=finding.get("company_namespace") or "company:default",
+                capability=params.get("capability") or self._capability_for_finding(finding),
+                requested_tools=params.get("requested_tools")
+                or self._requested_tools_for_finding(finding),
+                context={
+                    "trigger": "memory_steward_action",
+                    "finding_id": finding["id"],
+                    "finding_type": finding["finding_type"],
+                    "dedupe_key": f"memory_steward_action:{finding['id']}:role_gap",
+                    "evidence": finding.get("evidence", {}),
+                },
+            ),
+            reporter=actor,
+        )
+        return {
+            "role_gap_id": gap["id"],
+            "role_gap_status": gap["status"],
+            "capability": gap.get("capability"),
+        }
+
+    async def _record_action(self, finding_id: str, action_record: dict) -> dict:
+        now = utc_now()
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(MemoryStewardFinding).where(MemoryStewardFinding.id == finding_id)
+            )
+            finding = result.scalar_one()
+            metadata = dict(finding.metadata_ or {})
+            action_history = list(metadata.get("action_history") or [])
+            action_history.append(action_record)
+            metadata["action_history"] = action_history
+            metadata["last_action"] = action_record
+            finding.metadata_ = metadata
+            if finding.status == "open":
+                finding.status = "acknowledged"
+            finding.updated_at = now
+            await session.commit()
+            return self._finding_to_dict(finding)
+
+    async def _existing_agent_id(self, agent_id: str | None) -> str | None:
+        if not agent_id:
+            return None
+        async with self._session_factory() as session:
+            result = await session.execute(select(Agent.id).where(Agent.id == agent_id))
+            return agent_id if result.scalar_one_or_none() else None
+
     @staticmethod
     def _matching_open_finding(
         findings: list[MemoryStewardFinding],
@@ -373,7 +539,7 @@ class MemoryStewardService:
 
     @staticmethod
     def _finding_to_dict(finding: MemoryStewardFinding) -> dict:
-        return {
+        response = {
             "id": finding.id,
             "finding_type": finding.finding_type,
             "severity": finding.severity,
@@ -390,6 +556,91 @@ class MemoryStewardService:
             "created_at": finding.created_at.isoformat(),
             "updated_at": finding.updated_at.isoformat(),
             "resolved_at": finding.resolved_at.isoformat() if finding.resolved_at else None,
+        }
+        response["available_actions"] = MemoryStewardService._available_actions_for(
+            response
+        )
+        return response
+
+    @staticmethod
+    def _available_actions_for(finding: dict) -> list[dict]:
+        if finding["status"] not in MemoryStewardService.OPEN_STATUSES:
+            return []
+        actions = []
+        if finding["finding_type"] in {
+            "repeated_empty_recall",
+            "missing_company_shared_memory",
+        }:
+            actions.append({
+                "type": "seed_memory",
+                "label": "Seed Memory",
+                "description": "Write a durable memory entry that guides future recall.",
+            })
+        actions.append({
+            "type": "report_role_gap",
+            "label": "Open Gap",
+            "description": "Create a role or capability gap for follow-up.",
+        })
+        return actions
+
+    @staticmethod
+    def _seed_memory_type(finding: dict) -> str:
+        if finding["finding_type"] == "missing_company_shared_memory":
+            return "semantic"
+        return "procedural"
+
+    @staticmethod
+    def _default_seed_content(finding: dict) -> str:
+        sample_tasks = finding.get("evidence", {}).get("sample_tasks") or []
+        sample_text = "; ".join(sample_tasks[:3]) or "No sample tasks captured."
+        if finding["finding_type"] == "missing_company_shared_memory":
+            return (
+                "Memory Steward observed that agents searched shared company memory "
+                f"for {finding.get('company_namespace') or 'the company namespace'} "
+                "but found no durable context. Until the company builder or owner "
+                "adds specific company facts, agents should ask for missing operating "
+                "context before making assumptions. Recent tasks: "
+                f"{sample_text}"
+            )
+        return (
+            "Memory Steward observed repeated empty recall for "
+            f"{finding.get('agent_id') or 'an agent'} in namespace "
+            f"{finding.get('memory_namespace') or 'unknown'}. Future work in this "
+            "namespace should reuse durable company, role, and procedural memories "
+            "when available, and should write important decisions back to memory. "
+            f"Recent tasks: {sample_text}"
+        )
+
+    @staticmethod
+    def _default_role_gap_description(finding: dict) -> str:
+        return (
+            f"{finding['description']} Recommendation: {finding['recommendation']} "
+            "This gap was opened from a Memory Steward finding and should be reviewed "
+            "as part of the adaptive company operating loop."
+        )
+
+    @staticmethod
+    def _capability_for_finding(finding: dict) -> str:
+        mapping = {
+            "repeated_empty_recall": "memory_curation",
+            "missing_company_shared_memory": "company_knowledge_management",
+            "memory_operation_errors": "memory_operations",
+        }
+        return mapping.get(finding["finding_type"], "memory_reliability")
+
+    @staticmethod
+    def _requested_tools_for_finding(finding: dict) -> list[str]:
+        if finding["finding_type"] == "memory_operation_errors":
+            return ["memory_remember", "knowledge_query"]
+        return ["memory_remember"]
+
+    @staticmethod
+    def _safe_params(params: dict) -> dict:
+        blocked = ("password", "token", "secret", "key")
+        return {
+            key: value
+            for key, value in params.items()
+            if not any(term in key.lower() for term in blocked)
         }
 
     @staticmethod
