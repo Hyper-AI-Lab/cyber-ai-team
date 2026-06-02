@@ -47,13 +47,21 @@ docker run -d \
   -p "127.0.0.1:${POSTGRES_PORT}:5432" \
   postgres:16-alpine >/dev/null
 
+database_ready=0
 for _ in $(seq 1 60); do
-  if docker exec "$CONTAINER_NAME" pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+  if docker exec "$CONTAINER_NAME" \
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT 1" \
+    >/dev/null 2>&1; then
+    database_ready=1
     break
   fi
   sleep 1
 done
-docker exec "$CONTAINER_NAME" pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null
+if [ "$database_ready" != "1" ]; then
+  echo "Timed out waiting for PostgreSQL database '$POSTGRES_DB' in $CONTAINER_NAME" >&2
+  docker logs "$CONTAINER_NAME" >&2 || true
+  exit 1
+fi
 
 docker exec -i "$CONTAINER_NAME" \
   psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
