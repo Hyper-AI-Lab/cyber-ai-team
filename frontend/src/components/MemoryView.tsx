@@ -145,22 +145,44 @@ export default function MemoryView() {
                   )}
                 </div>
                 <details className="mt-3 text-xs text-slate-400">
-                  <summary className="cursor-pointer text-slate-300">Memory IDs</summary>
-                  <div className="mt-2 grid gap-2 md:grid-cols-2">
-                    <div>
-                      <div className="mb-1 font-medium text-slate-300">Recalled</div>
-                      <div className="break-all">
-                        {trace.recalled_memory_ids.length > 0
-                          ? trace.recalled_memory_ids.join(', ')
-                          : 'None'}
+                  <summary className="cursor-pointer text-slate-300">Trace details</summary>
+                  <div className="mt-2 space-y-3">
+                    {trace.read_policy?.scope_results?.length > 0 && (
+                      <div>
+                        <div className="mb-1 font-medium text-slate-300">Scopes</div>
+                        <div className="grid gap-2 md:grid-cols-2">
+                          {trace.read_policy.scope_results.map((scope: any) => (
+                            <div
+                              key={`${trace.id}-${scope.name}-${scope.namespace}`}
+                              className="rounded border border-slate-700 p-2"
+                            >
+                              <div className="font-medium text-slate-300">{scope.name}</div>
+                              <div className="break-all text-slate-500">{scope.namespace}</div>
+                              <div className="mt-1 text-slate-400">
+                                Returned {scope.returned ?? 0}
+                                {scope.added !== undefined && `, added ${scope.added}`}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                    <div>
-                      <div className="mb-1 font-medium text-slate-300">Written</div>
-                      <div className="break-all">
-                        {trace.written_memory_ids.length > 0
-                          ? trace.written_memory_ids.join(', ')
-                          : 'None'}
+                    )}
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <div>
+                        <div className="mb-1 font-medium text-slate-300">Recalled</div>
+                        <div className="break-all">
+                          {trace.recalled_memory_ids.length > 0
+                            ? trace.recalled_memory_ids.join(', ')
+                            : 'None'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="mb-1 font-medium text-slate-300">Written</div>
+                        <div className="break-all">
+                          {trace.written_memory_ids.length > 0
+                            ? trace.written_memory_ids.join(', ')
+                            : 'None'}
+                        </div>
                       </div>
                     </div>
                   </div>

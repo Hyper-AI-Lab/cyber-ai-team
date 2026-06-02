@@ -43,9 +43,67 @@ class FakeMemoryService:
 
 class FakeTraceMemoryService:
     def __init__(self):
+        self.policy_requests = []
         self.recall_requests = []
         self.entries = []
         self.traces = []
+
+    async def recall_with_policy(self, data):
+        self.policy_requests.append(data)
+        return {
+            "items": [
+                {
+                    "id": "memory-1",
+                    "content": "The launch plan should prioritize customer interviews.",
+                    "memory_type": "semantic",
+                    "namespace": data.memory_namespace,
+                    "agent_id": data.agent_id,
+                    "importance": 0.9,
+                    "score": 1.0,
+                    "scope": "agent_private",
+                },
+                {
+                    "id": "memory-company",
+                    "content": "Acme agents must preserve company context across roles.",
+                    "memory_type": "semantic",
+                    "namespace": "company:acme",
+                    "agent_id": None,
+                    "importance": 0.95,
+                    "score": 1.0,
+                    "scope": "company_constitution",
+                },
+            ],
+            "policy": {
+                "version": "memory-policy-v1",
+                "strategy": "agent-private-plus-company-shared",
+                "agent_id": data.agent_id,
+                "role_family": data.role_family,
+                "role_name": data.role_name,
+                "memory_namespace": data.memory_namespace,
+                "company_namespace": "company:acme",
+                "limit": data.limit,
+                "scopes": [
+                    {"name": "agent_private", "namespace": data.memory_namespace},
+                    {"name": "company_constitution", "namespace": "company:acme"},
+                ],
+                "scope_results": [
+                    {
+                        "name": "agent_private",
+                        "namespace": data.memory_namespace,
+                        "returned": 1,
+                        "added": 1,
+                    },
+                    {
+                        "name": "company_constitution",
+                        "namespace": "company:acme",
+                        "returned": 1,
+                        "added": 1,
+                    },
+                ],
+                "returned": 2,
+            },
+            "errors": [],
+        }
 
     async def recall(self, data):
         self.recall_requests.append(data)
@@ -290,15 +348,19 @@ async def test_agent_invocation_records_memory_trace():
     result = await manager.invoke_agent("ops_agent", "Prepare the launch brief.")
 
     assert result == "Launch brief complete."
-    assert memory.recall_requests[0].namespace == "company:acme:ops"
+    assert memory.policy_requests[0].memory_namespace == "company:acme:ops"
+    assert memory.policy_requests[0].role_family == "operations"
     assert "customer interviews" in manager._llm.calls[0]["system_prompt"]
+    assert "company context across roles" in manager._llm.calls[0]["system_prompt"]
     assert memory.entries[0]["metadata"]["type"] == "invocation"
     assert memory.entries[0]["metadata"]["traceable"] is True
-    assert memory.traces[0]["recalled_memory_ids"] == ["memory-1"]
+    assert memory.traces[0]["recalled_memory_ids"] == ["memory-1", "memory-company"]
     assert memory.traces[0]["written_memory_ids"] == ["memory-2"]
-    assert memory.traces[0]["read_policy"]["limit"] == 5
+    assert memory.traces[0]["read_policy"]["strategy"] == "agent-private-plus-company-shared"
+    assert memory.traces[0]["read_policy"]["scope_results"][0]["added"] == 1
     assert memory.traces[0]["write_policy"]["memory_type"] == "episodic"
     assert memory.traces[0]["metadata"]["role_name"] == "Operations Manager"
+    assert memory.traces[0]["metadata"]["memory_coverage"] == "hit"
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import desc, select, update
@@ -227,7 +228,12 @@ class AgentManager:
 
         invocation_id = str(uuid.uuid4())
         memory_namespace = agent["memory_namespace"]
+        company_namespace = (
+            self._company_namespace_from_memory_namespace(memory_namespace)
+            or memory_namespace
+        )
         read_policy = {
+            "version": "legacy-agent-namespace",
             "scope": "agent_namespace",
             "agent_id": agent_id,
             "namespace": memory_namespace,
@@ -249,25 +255,38 @@ class AgentManager:
         memory_context = ""
         if self._memory:
             try:
-                mem_results = await self._memory.recall(
-                    type(
-                        "MemQ",
-                        (),
-                        {
-                            "query": task,
-                            "agent_id": agent_id,
-                            "namespace": memory_namespace,
-                            "memory_type": None,
-                            "limit": 5,
-                        },
-                    )()
-                )
+                recall_with_policy = getattr(self._memory, "recall_with_policy", None)
+                if recall_with_policy:
+                    recall_result = await recall_with_policy(
+                        SimpleNamespace(
+                            query=task,
+                            agent_id=agent_id,
+                            memory_namespace=memory_namespace,
+                            role_family=agent["role_family"],
+                            role_name=agent["role_name"],
+                            limit=8,
+                        )
+                    )
+                    mem_results = recall_result.get("items", [])
+                    read_policy = recall_result.get("policy", read_policy)
+                    memory_errors.extend(recall_result.get("errors", []))
+                else:
+                    mem_results = await self._memory.recall(
+                        SimpleNamespace(
+                            query=task,
+                            agent_id=agent_id,
+                            namespace=memory_namespace,
+                            memory_type=None,
+                            limit=5,
+                        )
+                    )
                 recalled_memory_ids = [
                     str(memory["id"]) for memory in mem_results if memory.get("id")
                 ]
                 if mem_results:
                     memory_context = "\n\nRelevant memories:\n" + "\n".join(
-                        f"- {m['content']}" for m in mem_results[:5]
+                        f"- [{m.get('scope', 'agent_private')}] {m['content']}"
+                        for m in mem_results[:8]
                     )
             except Exception as exc:
                 memory_errors.append(f"recall:{type(exc).__name__}:{self._excerpt(str(exc), 160)}")
@@ -282,7 +301,7 @@ class AgentManager:
         await self._maybe_report_autonomous_role_gap(
             trigger="agent_invocation",
             source_agent_id=agent_id,
-            company_namespace=memory_namespace,
+            company_namespace=company_namespace,
             task=task,
             result=result,
             context={
@@ -343,6 +362,11 @@ class AgentManager:
                                     "role_family": agent["role_family"],
                                     "role_name": agent["role_name"],
                                     "result_excerpt": self._excerpt(result, 500),
+                                    "memory_scope_results": read_policy.get(
+                                        "scope_results",
+                                        [],
+                                    ),
+                                    "memory_coverage": "hit" if mem_results else "empty",
                                 },
                             },
                         )()
@@ -1633,6 +1657,15 @@ Propose a new role to fill this gap. Return JSON with:
         if len(normalized) > 0:
             return f"Blocked work needs {capability.replace('_', ' ')} capability"
         return "Blocked work needs additional capability"
+
+    @staticmethod
+    def _company_namespace_from_memory_namespace(memory_namespace: str | None) -> str | None:
+        if not memory_namespace:
+            return None
+        parts = memory_namespace.split(":")
+        if len(parts) >= 2 and parts[0] == "company" and parts[1]:
+            return ":".join(parts[:2])
+        return None
 
     @staticmethod
     def _excerpt(text: str, limit: int = 240) -> str:

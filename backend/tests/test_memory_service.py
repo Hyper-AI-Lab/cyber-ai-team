@@ -63,3 +63,74 @@ async def test_memory_trace_record_and_list_filters_by_agent(monkeypatch):
         assert unrelated == []
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_policy_recall_queries_agent_and_company_scopes():
+    service = MemoryService()
+    calls = []
+
+    async def fake_recall(data):
+        calls.append(data)
+        if data.namespace == "company:acme:ops":
+            return [
+                {
+                    "id": "private-1",
+                    "content": "Private operations note.",
+                    "memory_type": "episodic",
+                    "namespace": data.namespace,
+                    "agent_id": data.agent_id,
+                    "importance": 0.8,
+                    "score": 1.0,
+                }
+            ]
+        if data.namespace == "company:acme":
+            return [
+                {
+                    "id": "company-1",
+                    "content": "Company constitution.",
+                    "memory_type": "semantic",
+                    "namespace": data.namespace,
+                    "agent_id": None,
+                    "importance": 0.95,
+                    "score": 1.0,
+                }
+            ]
+        if data.namespace == "company:acme:roles":
+            return [
+                {
+                    "id": "company-1",
+                    "content": "Duplicate company constitution.",
+                    "memory_type": "semantic",
+                    "namespace": data.namespace,
+                    "agent_id": None,
+                    "importance": 0.9,
+                    "score": 0.8,
+                }
+            ]
+        return []
+
+    service.recall = fake_recall
+
+    result = await service.recall_with_policy(
+        SimpleNamespace(
+            query="launch operations",
+            agent_id="ops_agent",
+            memory_namespace="company:acme:ops",
+            role_family="operations",
+            role_name="Operations Manager",
+            limit=8,
+        )
+    )
+
+    assert [call.namespace for call in calls][:3] == [
+        "company:acme:ops",
+        "company:acme",
+        "company:acme:roles",
+    ]
+    assert result["policy"]["company_namespace"] == "company:acme"
+    assert result["policy"]["strategy"] == "agent-private-plus-company-shared"
+    assert result["policy"]["scope_results"][0]["name"] == "agent_private"
+    assert [memory["id"] for memory in result["items"]] == ["private-1", "company-1"]
+    assert result["items"][0]["scope"] == "agent_private"
+    assert result["items"][1]["scope"] == "company_constitution"

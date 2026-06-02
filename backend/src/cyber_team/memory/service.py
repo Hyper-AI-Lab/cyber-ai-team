@@ -4,6 +4,7 @@ import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -199,6 +200,163 @@ class MemoryService:
                 })
 
         return results
+
+    async def recall_with_policy(self, data) -> dict:
+        query = getattr(data, "query")
+        agent_id = getattr(data, "agent_id", None)
+        memory_namespace = (
+            getattr(data, "memory_namespace", None)
+            or getattr(data, "namespace", None)
+        )
+        role_family = getattr(data, "role_family", None)
+        role_name = getattr(data, "role_name", None)
+        limit = max(1, min(getattr(data, "limit", 8), 20))
+        policy = self.build_recall_policy(
+            agent_id=agent_id,
+            memory_namespace=memory_namespace,
+            role_family=role_family,
+            role_name=role_name,
+            limit=limit,
+        )
+        results: list[dict] = []
+        seen_ids: set[str] = set()
+        errors: list[str] = []
+        scope_results = []
+
+        for scope in policy["scopes"]:
+            try:
+                scope_memories = await self.recall(
+                    SimpleNamespace(
+                        query=query,
+                        agent_id=scope.get("agent_id"),
+                        namespace=scope["namespace"],
+                        memory_type=scope.get("memory_type"),
+                        limit=scope["limit"],
+                    )
+                )
+            except Exception as exc:
+                error = f"{scope['name']}:{type(exc).__name__}:{self._excerpt(str(exc), 160)}"
+                errors.append(error)
+                scope_results.append({
+                    "name": scope["name"],
+                    "namespace": scope["namespace"],
+                    "returned": 0,
+                    "error": error,
+                })
+                continue
+
+            added = 0
+            for memory in scope_memories:
+                memory_id = str(memory.get("id") or "")
+                if not memory_id or memory_id in seen_ids:
+                    continue
+                seen_ids.add(memory_id)
+                results.append({**memory, "scope": scope["name"]})
+                added += 1
+                if len(results) >= limit:
+                    break
+            scope_results.append({
+                "name": scope["name"],
+                "namespace": scope["namespace"],
+                "returned": len(scope_memories),
+                "added": added,
+            })
+            if len(results) >= limit:
+                break
+
+        policy["scope_results"] = scope_results
+        policy["returned"] = len(results)
+        return {
+            "items": results,
+            "policy": policy,
+            "errors": errors,
+        }
+
+    def build_recall_policy(
+        self,
+        *,
+        agent_id: str | None,
+        memory_namespace: str | None,
+        role_family: str | None = None,
+        role_name: str | None = None,
+        limit: int = 8,
+    ) -> dict:
+        safe_limit = max(1, min(limit, 20))
+        scopes = []
+        private_limit = min(4, safe_limit)
+        if memory_namespace:
+            scopes.append({
+                "name": "agent_private",
+                "namespace": memory_namespace,
+                "agent_id": agent_id,
+                "memory_type": None,
+                "limit": private_limit,
+                "purpose": "Recall memories written for this specific agent namespace.",
+            })
+
+        company_namespace = self._company_namespace_for(memory_namespace)
+        if company_namespace:
+            scopes.extend([
+                {
+                    "name": "company_constitution",
+                    "namespace": company_namespace,
+                    "agent_id": None,
+                    "memory_type": "semantic",
+                    "limit": 2,
+                    "purpose": "Recall durable company operating context.",
+                },
+                {
+                    "name": "company_roles",
+                    "namespace": f"{company_namespace}:roles",
+                    "agent_id": None,
+                    "memory_type": "semantic",
+                    "limit": 2,
+                    "purpose": "Recall role map and ownership boundaries.",
+                },
+                {
+                    "name": "company_operations",
+                    "namespace": f"{company_namespace}:operations",
+                    "agent_id": None,
+                    "memory_type": "procedural",
+                    "limit": 2,
+                    "purpose": "Recall adaptive operating loops and procedures.",
+                },
+            ])
+            if role_family:
+                role_namespace = f"{company_namespace}:{role_family}"
+                if (
+                    role_namespace != memory_namespace
+                    and not any(scope["namespace"] == role_namespace for scope in scopes)
+                ):
+                    scopes.append({
+                        "name": "role_family_shared",
+                        "namespace": role_namespace,
+                        "agent_id": None,
+                        "memory_type": None,
+                        "limit": 2,
+                        "purpose": "Recall shared memories for this role family.",
+                    })
+            if role_family in {"communications", "sales", "support", "operations"}:
+                scopes.append({
+                    "name": "company_gaps",
+                    "namespace": f"{company_namespace}:gaps",
+                    "agent_id": None,
+                    "memory_type": "procedural",
+                    "limit": 2,
+                    "purpose": "Recall capability gaps that may block the work.",
+                })
+
+        return {
+            "version": "memory-policy-v1",
+            "strategy": "agent-private-plus-company-shared",
+            "agent_id": agent_id,
+            "role_family": role_family,
+            "role_name": role_name,
+            "memory_namespace": memory_namespace,
+            "company_namespace": company_namespace,
+            "limit": safe_limit,
+            "scopes": scopes,
+        }
 
     async def record_trace(self, data) -> dict:
         trace_id = getattr(data, "id", None) or str(uuid.uuid4())
@@ -404,3 +562,19 @@ class MemoryService:
             "metadata": trace.metadata_,
             "created_at": trace.created_at.isoformat(),
         }
+
+    @staticmethod
+    def _company_namespace_for(memory_namespace: str | None) -> str | None:
+        if not memory_namespace:
+            return None
+        parts = memory_namespace.split(":")
+        if len(parts) >= 2 and parts[0] == "company" and parts[1]:
+            return ":".join(parts[:2])
+        return None
+
+    @staticmethod
+    def _excerpt(text: str, limit: int = 240) -> str:
+        normalized = " ".join(str(text or "").split())
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[: limit - 3].rstrip() + "..."
