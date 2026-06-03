@@ -1,15 +1,22 @@
 'use client'
 
-import { Bot, ShieldCheck, GitBranch, AlertTriangle } from 'lucide-react'
+import { Activity, AlertTriangle, Bot, GitBranch, ShieldCheck } from 'lucide-react'
 
 interface DashboardViewProps {
   kpis: any
   agents: any[]
   approvals: any[]
+  autonomousCycles: any[]
   loading: boolean
 }
 
-export default function DashboardView({ kpis, agents, approvals, loading }: DashboardViewProps) {
+export default function DashboardView({
+  kpis,
+  agents,
+  approvals,
+  autonomousCycles,
+  loading,
+}: DashboardViewProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -48,6 +55,10 @@ export default function DashboardView({ kpis, agents, approvals, loading }: Dash
       bg: 'bg-purple-900/30',
     },
   ]
+  const latestCycle = autonomousCycles[0]
+  const latestCycleMetadata = latestCycle?.metadata || {}
+  const latestCycleCounts = latestCycleMetadata.counts || {}
+  const latestDecisions = latestCycleMetadata.decisions || []
 
   return (
     <div className="space-y-8">
@@ -71,6 +82,81 @@ export default function DashboardView({ kpis, agents, approvals, loading }: Dash
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Agent Status Grid */}
+      <div>
+        <h3 className="text-lg font-semibold mb-4">Autonomous Operations</h3>
+        <div className="card">
+          {latestCycle ? (
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="rounded-lg bg-blue-900/30 p-3">
+                  <Activity className="h-6 w-6 text-blue-300" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold">Latest cycle</p>
+                    <span
+                      className={`rounded-full px-2 py-1 text-xs ${
+                        latestCycle.outcome === 'completed'
+                          ? 'bg-green-600/20 text-green-300'
+                          : latestCycle.outcome === 'failed'
+                          ? 'bg-red-600/20 text-red-300'
+                          : latestCycle.outcome === 'degraded'
+                          ? 'bg-amber-600/20 text-amber-300'
+                          : 'bg-slate-700 text-slate-300'
+                      }`}
+                    >
+                      {latestCycle.outcome}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-400">
+                    {new Date(latestCycle.created_at).toLocaleString()}
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-300">
+                    {latestDecisions.slice(0, 3).map((decision: any, index: number) => (
+                      <span
+                        key={`${decision.step}-${decision.decision}-${index}`}
+                        className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-blue-200"
+                      >
+                        {decision.decision}
+                      </span>
+                    ))}
+                    {latestDecisions.length === 0 && (
+                      <span className="text-slate-500">No decisions recorded</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-center text-sm">
+                <div>
+                  <p className="text-lg font-bold text-white">
+                    {(latestCycleCounts.memory_findings_created || 0)
+                      + (latestCycleCounts.memory_findings_updated || 0)}
+                  </p>
+                  <p className="text-xs text-slate-400">Findings</p>
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-white">
+                    {latestCycleCounts.memory_actions_applied || 0}
+                  </p>
+                  <p className="text-xs text-slate-400">Actions</p>
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-white">
+                    {latestCycleCounts.role_gaps_proposed || 0}
+                  </p>
+                  <p className="text-xs text-slate-400">Roles</p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center text-slate-500 py-8">
+              No autonomous operation cycle has run yet.
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Agent Status Grid */}

@@ -1,0 +1,382 @@
+'use client'
+
+import { useEffect, useMemo, useState } from 'react'
+import { api } from '@/lib/api'
+import {
+  Activity,
+  AlertTriangle,
+  Brain,
+  CheckCircle,
+  Clock,
+  GitBranch,
+  Play,
+  RefreshCw,
+  ShieldCheck,
+  XCircle,
+} from 'lucide-react'
+
+interface OperationsViewProps {
+  cycles: any[]
+  onRefresh: () => Promise<void> | void
+}
+
+const statusClass: Record<string, string> = {
+  completed: 'bg-green-600/20 text-green-300',
+  degraded: 'bg-amber-600/20 text-amber-300',
+  failed: 'bg-red-600/20 text-red-300',
+  skipped: 'bg-slate-600/30 text-slate-300',
+  running: 'bg-blue-600/20 text-blue-300',
+}
+
+function formatDate(value?: string) {
+  if (!value) return '-'
+  return new Date(value).toLocaleString()
+}
+
+function cycleMetadata(event: any) {
+  return event?.metadata || {}
+}
+
+function cycleCounts(event: any) {
+  return cycleMetadata(event).counts || {}
+}
+
+function cycleStatus(event: any) {
+  return event?.outcome || 'unknown'
+}
+
+export default function OperationsView({ cycles, onRefresh }: OperationsViewProps) {
+  const [localCycles, setLocalCycles] = useState<any[]>(cycles)
+  const [loading, setLoading] = useState(false)
+  const [running, setRunning] = useState(false)
+  const [runMemorySteward, setRunMemorySteward] = useState(true)
+  const [runSupervisorReview, setRunSupervisorReview] = useState(true)
+  const [applySafeMemoryActions, setApplySafeMemoryActions] = useState(true)
+  const [requestMemoryApprovals, setRequestMemoryApprovals] = useState(true)
+  const [remediationLimit, setRemediationLimit] = useState(100)
+  const [lastRun, setLastRun] = useState<any | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setLocalCycles(cycles)
+  }, [cycles])
+
+  const latestCycle = useMemo(() => localCycles[0], [localCycles])
+  const latestCounts = cycleCounts(latestCycle)
+  const latestMetadata = cycleMetadata(latestCycle)
+
+  const loadCycles = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const result = await api.listAutonomousCycles(25)
+      setLocalCycles(result)
+    } catch (e: any) {
+      setError(e.message || 'Failed to load autonomous cycles')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const runCycle = async () => {
+    setRunning(true)
+    setError(null)
+    try {
+      const result = await api.runAutonomousCycle({
+        run_memory_steward: runMemorySteward,
+        run_supervisor_review: runSupervisorReview,
+        apply_safe_memory_actions: applySafeMemoryActions,
+        request_memory_action_approvals: requestMemoryApprovals,
+        memory_remediation_limit: remediationLimit,
+      })
+      setLastRun(result)
+      await onRefresh()
+      await loadCycles()
+    } catch (e: any) {
+      setError(e.message || 'Autonomous cycle failed')
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3">
+            <Activity className="h-7 w-7 text-blue-400" />
+            <h2 className="text-2xl font-bold">Operations</h2>
+          </div>
+          <p className="mt-1 text-slate-400">
+            Autonomous cycle control, decisions, and health signals.
+          </p>
+        </div>
+        <button
+          onClick={loadCycles}
+          disabled={loading}
+          className="btn-secondary flex items-center gap-2"
+        >
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
+      </div>
+
+      {error && (
+        <div className="rounded-lg border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+          {error}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(320px,420px)_1fr]">
+        <section className="card space-y-5">
+          <div>
+            <h3 className="text-lg font-semibold">Run Cycle</h3>
+            <p className="mt-1 text-sm text-slate-400">
+              Start a coordinated memory and supervisor pass now.
+            </p>
+          </div>
+
+          <div className="space-y-3 text-sm text-slate-300">
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-700 px-3 py-2">
+              <span className="flex items-center gap-2">
+                <Brain className="h-4 w-4 text-blue-300" />
+                Memory steward
+              </span>
+              <input
+                type="checkbox"
+                checked={runMemorySteward}
+                onChange={(event) => setRunMemorySteward(event.target.checked)}
+                className="h-4 w-4 accent-blue-500"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-700 px-3 py-2">
+              <span className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-amber-300" />
+                Supervisor review
+              </span>
+              <input
+                type="checkbox"
+                checked={runSupervisorReview}
+                onChange={(event) => setRunSupervisorReview(event.target.checked)}
+                className="h-4 w-4 accent-blue-500"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-700 px-3 py-2">
+              <span>Apply safe memory actions</span>
+              <input
+                type="checkbox"
+                checked={applySafeMemoryActions}
+                onChange={(event) => setApplySafeMemoryActions(event.target.checked)}
+                className="h-4 w-4 accent-blue-500"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-700 px-3 py-2">
+              <span>Request approvals for risky actions</span>
+              <input
+                type="checkbox"
+                checked={requestMemoryApprovals}
+                onChange={(event) => setRequestMemoryApprovals(event.target.checked)}
+                className="h-4 w-4 accent-blue-500"
+              />
+            </label>
+          </div>
+
+          <label className="block text-sm text-slate-300" htmlFor="remediation-limit">
+            Remediation limit
+            <input
+              id="remediation-limit"
+              type="number"
+              min={1}
+              max={200}
+              value={remediationLimit}
+              onChange={(event) => setRemediationLimit(Number(event.target.value))}
+              className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-white outline-none focus:border-blue-500"
+            />
+          </label>
+
+          <button
+            onClick={runCycle}
+            disabled={running || (!runMemorySteward && !runSupervisorReview)}
+            className="btn-primary flex w-full items-center justify-center gap-2"
+          >
+            <Play className="h-4 w-4" />
+            {running ? 'Running...' : 'Run Autonomous Cycle'}
+          </button>
+        </section>
+
+        <section className="card">
+          <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-semibold">Latest Cycle</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                {latestCycle ? formatDate(latestCycle.created_at) : 'No autonomous cycles yet'}
+              </p>
+            </div>
+            {latestCycle && (
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-medium ${
+                  statusClass[cycleStatus(latestCycle)] || 'bg-slate-700 text-slate-300'
+                }`}
+              >
+                {cycleStatus(latestCycle)}
+              </span>
+            )}
+          </div>
+
+          {latestCycle ? (
+            <div className="space-y-5">
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <Metric label="Memory findings" value={
+                  (latestCounts.memory_findings_created || 0)
+                  + (latestCounts.memory_findings_updated || 0)
+                } />
+                <Metric label="Actions applied" value={latestCounts.memory_actions_applied || 0} />
+                <Metric label="Role proposals" value={latestCounts.role_gaps_proposed || 0} />
+                <Metric label="Stale approvals" value={latestCounts.stale_approvals || 0} />
+              </div>
+
+              <div>
+                <h4 className="mb-2 text-sm font-medium text-slate-300">Decisions</h4>
+                {latestMetadata.decisions?.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {latestMetadata.decisions.map((decision: any, index: number) => (
+                      <span
+                        key={`${decision.step}-${decision.decision}-${index}`}
+                        className="rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-xs text-blue-200"
+                      >
+                        {decision.step}: {decision.decision}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500">No decisions recorded in the latest cycle.</p>
+                )}
+              </div>
+
+              {latestMetadata.errors?.length > 0 && (
+                <div>
+                  <h4 className="mb-2 text-sm font-medium text-red-200">Errors</h4>
+                  <div className="space-y-2">
+                    {latestMetadata.errors.map((item: any, index: number) => (
+                      <div
+                        key={`${item.step}-${index}`}
+                        className="rounded-lg border border-red-900 bg-red-950/30 px-3 py-2 text-sm text-red-200"
+                      >
+                        {item.step}: {item.message}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="py-10 text-center text-slate-500">
+              <Clock className="mx-auto mb-3 h-10 w-10 opacity-60" />
+              <p>No cycle history has been recorded.</p>
+            </div>
+          )}
+        </section>
+      </div>
+
+      {lastRun && (
+        <section className="card">
+          <div className="mb-4 flex items-center gap-2">
+            {lastRun.status === 'completed' ? (
+              <CheckCircle className="h-5 w-5 text-green-300" />
+            ) : lastRun.status === 'failed' ? (
+              <XCircle className="h-5 w-5 text-red-300" />
+            ) : (
+              <AlertTriangle className="h-5 w-5 text-amber-300" />
+            )}
+            <h3 className="text-lg font-semibold">Last Manual Run</h3>
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-medium ${
+                statusClass[lastRun.status] || 'bg-slate-700 text-slate-300'
+              }`}
+            >
+              {lastRun.status}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+            <Metric label="Findings" value={
+              (lastRun.counts?.memory_findings_created || 0)
+              + (lastRun.counts?.memory_findings_updated || 0)
+            } />
+            <Metric label="Actions" value={lastRun.counts?.memory_actions_applied || 0} />
+            <Metric label="Approvals" value={lastRun.counts?.memory_approvals_requested || 0} />
+            <Metric label="Role gaps" value={lastRun.counts?.role_gaps_proposed || 0} />
+            <Metric label="Failures" value={lastRun.errors?.length || 0} />
+          </div>
+        </section>
+      )}
+
+      <section className="card overflow-hidden">
+        <div className="mb-4 flex items-center gap-2">
+          <GitBranch className="h-5 w-5 text-blue-300" />
+          <h3 className="text-lg font-semibold">Cycle History</h3>
+        </div>
+
+        {localCycles.length === 0 ? (
+          <div className="py-10 text-center text-slate-500">
+            {loading ? 'Loading cycles...' : 'No autonomous operation cycles recorded yet.'}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-700 text-left text-slate-400">
+                  <th className="py-3 pr-4">Time</th>
+                  <th className="py-3 pr-4">Actor</th>
+                  <th className="py-3 pr-4">Outcome</th>
+                  <th className="py-3 pr-4">Findings</th>
+                  <th className="py-3 pr-4">Actions</th>
+                  <th className="py-3 pr-4">Role Gaps</th>
+                  <th className="py-3 pr-4">Errors</th>
+                </tr>
+              </thead>
+              <tbody>
+                {localCycles.map((cycle) => {
+                  const counts = cycleCounts(cycle)
+                  const metadata = cycleMetadata(cycle)
+                  return (
+                    <tr key={cycle.id} className="border-b border-slate-800 text-slate-200">
+                      <td className="whitespace-nowrap py-3 pr-4 text-slate-400">
+                        {formatDate(cycle.created_at)}
+                      </td>
+                      <td className="py-3 pr-4">{cycle.actor}</td>
+                      <td className="py-3 pr-4">
+                        <span
+                          className={`rounded-full px-2 py-1 text-xs ${
+                            statusClass[cycleStatus(cycle)] || 'bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {cycleStatus(cycle)}
+                        </span>
+                      </td>
+                      <td className="py-3 pr-4">
+                        {(counts.memory_findings_created || 0)
+                          + (counts.memory_findings_updated || 0)}
+                      </td>
+                      <td className="py-3 pr-4">{counts.memory_actions_applied || 0}</td>
+                      <td className="py-3 pr-4">{counts.role_gaps_proposed || 0}</td>
+                      <td className="py-3 pr-4">{metadata.errors?.length || 0}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function Metric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-3">
+      <div className="text-xs text-slate-400">{label}</div>
+      <div className="mt-1 text-2xl font-bold text-white">{value}</div>
+    </div>
+  )
+}

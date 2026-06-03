@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     retention_approval_request_days: int = 730
     retention_audit_event_days: int = 2555
     retention_batch_size: int = 500
+    autonomous_operations_enabled: bool = True
+    autonomous_operations_initial_delay_seconds: int = 60
+    autonomous_operations_interval_seconds: int = 900
     supervisor_review_enabled: bool = True
     supervisor_review_initial_delay_seconds: int = 60
     supervisor_review_interval_seconds: int = 900

@@ -368,8 +368,40 @@ class ApiClient {
     });
   }
 
-  async listAuditEvents(limit: number = 100) {
-    return this.request(`/api/audit/events?limit=${limit}`);
+  async listAuditEvents(
+    limit: number = 100,
+    filters: {
+      eventType?: string;
+      actor?: string;
+      resourceType?: string;
+      resourceId?: string;
+    } = {}
+  ) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (filters.eventType) {
+      params.set('event_type', filters.eventType);
+    }
+    if (filters.actor) {
+      params.set('actor', filters.actor);
+    }
+    if (filters.resourceType) {
+      params.set('resource_type', filters.resourceType);
+    }
+    if (filters.resourceId) {
+      params.set('resource_id', filters.resourceId);
+    }
+    return this.request(`/api/audit/events?${params.toString()}`);
+  }
+
+  async listAutonomousCycles(limit: number = 20) {
+    return this.listAuditEvents(limit, { eventType: 'autonomous_operations.cycle' });
+  }
+
+  async runAutonomousCycle(options: Record<string, any> = {}) {
+    return this.request('/api/operations/autonomous-cycle', {
+      method: 'POST',
+      body: JSON.stringify(options),
+    });
   }
 }
 

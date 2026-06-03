@@ -173,6 +173,37 @@ describe('ApiClient', () => {
     })
   })
 
+  it('lists and runs autonomous operation cycles', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ event_type: 'autonomous_operations.cycle' }]))
+      .mockResolvedValueOnce(jsonResponse({ cycle_id: 'auto_cycle_1', status: 'completed' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.listAutonomousCycles(10)
+    await client.runAutonomousCycle({
+      run_memory_steward: true,
+      run_supervisor_review: false,
+      memory_remediation_limit: 25,
+    })
+
+    const auditUrl = new URL(fetchMock.mock.calls[0][0] as string)
+    expect(auditUrl.pathname).toBe('/api/audit/events')
+    expect(auditUrl.searchParams.get('limit')).toBe('10')
+    expect(auditUrl.searchParams.get('event_type')).toBe(
+      'autonomous_operations.cycle',
+    )
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/operations/autonomous-cycle',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({
+      run_memory_steward: true,
+      run_supervisor_review: false,
+      memory_remediation_limit: 25,
+    })
+  })
+
   it('manages role gaps through the authenticated API client', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'gap-1' }]))

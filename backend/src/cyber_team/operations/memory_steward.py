@@ -37,6 +37,9 @@ class MemoryStewardService:
         *,
         now: datetime | None = None,
         actor: str = "memory_steward_loop",
+        apply_safe_actions: bool | None = None,
+        request_approvals: bool | None = None,
+        remediation_limit: int = 100,
     ) -> dict:
         now = now or utc_now()
         traces = await self._load_recent_traces(now)
@@ -64,6 +67,9 @@ class MemoryStewardService:
         if settings.memory_steward_planner_enabled:
             summary["remediation_plan"] = await self.plan_remediations(
                 actor="memory_steward_planner",
+                apply_safe_actions=apply_safe_actions,
+                request_approvals=request_approvals,
+                limit=remediation_limit,
             )
         if self._audit:
             await self._audit.record(

@@ -11,12 +11,14 @@ import ChatView from '@/components/ChatView'
 import ApprovalsView from '@/components/ApprovalsView'
 import AuditView from '@/components/AuditView'
 import IntegrationsView from '@/components/IntegrationsView'
+import OperationsView from '@/components/OperationsView'
 
 export type ViewName =
   | 'dashboard'
   | 'agents'
   | 'memory'
   | 'workflows'
+  | 'operations'
   | 'chat'
   | 'approvals'
   | 'audit'
@@ -27,6 +29,7 @@ export default function Home() {
   const [kpis, setKpis] = useState<any>(null)
   const [agents, setAgents] = useState<any[]>([])
   const [approvals, setApprovals] = useState<any[]>([])
+  const [autonomousCycles, setAutonomousCycles] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [authenticated, setAuthenticated] = useState(false)
@@ -42,6 +45,7 @@ export default function Home() {
     setKpis(null)
     setAgents([])
     setApprovals([])
+    setAutonomousCycles([])
     setActiveView('dashboard')
     setAuthError(null)
     hasLoadedDataRef.current = false
@@ -58,14 +62,16 @@ export default function Home() {
       setLoading(true)
     }
     try {
-      const [k, a, ap] = await Promise.all([
+      const [k, a, ap, cycles] = await Promise.all([
         api.getKpis(),
         api.listAgents(),
         api.getApprovalQueue(),
+        api.listAutonomousCycles(10),
       ])
       setKpis(k)
       setAgents(a)
       setApprovals(ap)
+      setAutonomousCycles(cycles)
       setAuthenticated(true)
       hasLoadedDataRef.current = true
     } catch (e: any) {
@@ -173,13 +179,23 @@ export default function Home() {
   const renderView = () => {
     switch (activeView) {
       case 'dashboard':
-        return <DashboardView kpis={kpis} agents={agents} approvals={approvals} loading={loading} />
+        return (
+          <DashboardView
+            kpis={kpis}
+            agents={agents}
+            approvals={approvals}
+            autonomousCycles={autonomousCycles}
+            loading={loading}
+          />
+        )
       case 'agents':
         return <AgentsView agents={agents} onRefresh={refreshData} />
       case 'memory':
         return <MemoryView />
       case 'workflows':
         return <WorkflowsView />
+      case 'operations':
+        return <OperationsView cycles={autonomousCycles} onRefresh={refreshData} />
       case 'chat':
         return <ChatView agents={agents} />
       case 'approvals':
