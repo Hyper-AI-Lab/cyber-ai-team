@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     autonomous_operations_enabled: bool = True
     autonomous_operations_initial_delay_seconds: int = 60
     autonomous_operations_interval_seconds: int = 900
+    autonomous_planner_enabled: bool = True
+    autonomous_planner_auto_execute_safe_tasks: bool = True
+    autonomous_planner_scan_limit: int = 50
     supervisor_review_enabled: bool = True
     supervisor_review_initial_delay_seconds: int = 60
     supervisor_review_interval_seconds: int = 900

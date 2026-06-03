@@ -19,6 +19,7 @@ def test_run_autonomous_cycle_endpoint(monkeypatch):
         "status": "completed",
         "memory_steward": None,
         "supervisor_review": None,
+        "planner": None,
         "decisions": [],
         "errors": [],
         "counts": {},
@@ -46,9 +47,11 @@ def test_run_autonomous_cycle_endpoint(monkeypatch):
         json={
             "run_memory_steward": True,
             "run_supervisor_review": False,
+            "run_planner": False,
             "apply_safe_memory_actions": False,
             "request_memory_action_approvals": True,
             "memory_remediation_limit": 25,
+            "auto_execute_plans": False,
             "continue_on_error": False,
         },
     )
@@ -59,8 +62,10 @@ def test_run_autonomous_cycle_endpoint(monkeypatch):
         actor="owner@example.com",
         run_memory_steward=True,
         run_supervisor_review=False,
+        run_planner=False,
         apply_safe_memory_actions=False,
         request_memory_action_approvals=True,
         memory_remediation_limit=25,
+        auto_execute_plans=False,
         continue_on_error=False,
     )

@@ -204,6 +204,48 @@ describe('ApiClient', () => {
     })
   })
 
+  it('manages autonomous plans through the operations API', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'plan-1', status: 'planned' }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'plan-1', status: 'planned' }))
+      .mockResolvedValueOnce(jsonResponse({ plans_created: 1 }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'completed' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.listAutonomousPlans({
+      status: 'planned',
+      source_type: 'role_gap',
+      limit: 10,
+    })
+    await client.getAutonomousPlan('plan-1')
+    await client.scanAutonomousPlans({
+      include_role_gaps: true,
+      include_memory_findings: false,
+      auto_execute: true,
+      limit: 10,
+    })
+    await client.executeAutonomousPlan('plan-1')
+
+    const listUrl = new URL(fetchMock.mock.calls[0][0] as string)
+    expect(listUrl.pathname).toBe('/api/operations/plans')
+    expect(listUrl.searchParams.get('status')).toBe('planned')
+    expect(listUrl.searchParams.get('source_type')).toBe('role_gap')
+    expect(listUrl.searchParams.get('limit')).toBe('10')
+    expect(fetchMock.mock.calls[1][0]).toBe('http://api.test/api/operations/plans/plan-1')
+    expect(fetchMock.mock.calls[2][0]).toBe('http://api.test/api/operations/plans/scan')
+    expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toEqual({
+      include_role_gaps: true,
+      include_memory_findings: false,
+      auto_execute: true,
+      limit: 10,
+    })
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      'http://api.test/api/operations/plans/plan-1/execute',
+    )
+  })
+
   it('manages role gaps through the authenticated API client', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'gap-1' }]))

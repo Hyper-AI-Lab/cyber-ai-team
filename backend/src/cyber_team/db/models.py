@@ -207,3 +207,56 @@ class RoleGap(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AutonomousPlan(Base):
+    __tablename__ = "autonomous_plans"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    objective: Mapped[str] = mapped_column(Text)
+    source_type: Mapped[str] = mapped_column(String(80), index=True)
+    source_id: Mapped[str] = mapped_column(String(200), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="planned", index=True)
+    priority: Mapped[str] = mapped_column(String(20), default="medium", index=True)
+    created_by: Mapped[str] = mapped_column(String(200), default="autonomous_planner")
+    context: Mapped[dict] = mapped_column(JSON, default=dict)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    tasks: Mapped[list["AutonomousTask"]] = relationship(
+        back_populates="plan",
+        cascade="all, delete-orphan",
+    )
+
+
+class AutonomousTask(Base):
+    __tablename__ = "autonomous_tasks"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    plan_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("autonomous_plans.id"),
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, default=1)
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    task_type: Mapped[str] = mapped_column(String(80), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="planned", index=True)
+    agent_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    target_type: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    target_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    action_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approval_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    autonomous_allowed: Mapped[bool] = mapped_column(Boolean, default=True)
+    risk_level: Mapped[str] = mapped_column(String(20), default="low", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    plan: Mapped["AutonomousPlan"] = relationship(back_populates="tasks")

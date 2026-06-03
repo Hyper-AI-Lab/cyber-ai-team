@@ -403,6 +403,40 @@ class ApiClient {
       body: JSON.stringify(options),
     });
   }
+
+  async listAutonomousPlans(
+    filters: {
+      status?: string;
+      source_type?: string;
+      limit?: number;
+    } = {}
+  ) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 50) });
+    if (filters.status) {
+      params.set('status', filters.status);
+    }
+    if (filters.source_type) {
+      params.set('source_type', filters.source_type);
+    }
+    return this.request(`/api/operations/plans?${params.toString()}`);
+  }
+
+  async getAutonomousPlan(planId: string) {
+    return this.request(`/api/operations/plans/${planId}`);
+  }
+
+  async scanAutonomousPlans(options: Record<string, any> = {}) {
+    return this.request('/api/operations/plans/scan', {
+      method: 'POST',
+      body: JSON.stringify(options),
+    });
+  }
+
+  async executeAutonomousPlan(planId: string) {
+    return this.request(`/api/operations/plans/${planId}/execute`, {
+      method: 'POST',
+    });
+  }
 }
 
 export const api = new ApiClient();

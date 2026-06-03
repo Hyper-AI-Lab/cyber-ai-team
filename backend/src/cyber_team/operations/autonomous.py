@@ -17,10 +17,12 @@ class AutonomousOperationsService:
         *,
         supervisor_review_service,
         memory_steward_service,
+        planning_service=None,
         audit_service=None,
     ):
         self._supervisor = supervisor_review_service
         self._memory_steward = memory_steward_service
+        self._planning = planning_service
         self._audit = audit_service
 
     async def run_once(
@@ -29,9 +31,11 @@ class AutonomousOperationsService:
         actor: str = "autonomous_operations_loop",
         run_memory_steward: bool | None = None,
         run_supervisor_review: bool | None = None,
+        run_planner: bool | None = None,
         apply_safe_memory_actions: bool | None = None,
         request_memory_action_approvals: bool | None = None,
         memory_remediation_limit: int = 100,
+        auto_execute_plans: bool | None = None,
         continue_on_error: bool = True,
     ) -> dict[str, Any]:
         cycle_id = f"auto_cycle_{uuid.uuid4().hex[:12]}"
@@ -46,6 +50,11 @@ class AutonomousOperationsService:
             if run_supervisor_review is None
             else run_supervisor_review
         )
+        run_planning = (
+            bool(self._planning and settings.autonomous_planner_enabled)
+            if run_planner is None
+            else bool(run_planner and self._planning)
+        )
         summary: dict[str, Any] = {
             "cycle_id": cycle_id,
             "started_at": started_at.isoformat(),
@@ -54,6 +63,7 @@ class AutonomousOperationsService:
             "status": "running",
             "memory_steward": None,
             "supervisor_review": None,
+            "planner": None,
             "decisions": [],
             "errors": [],
             "counts": {
@@ -67,10 +77,16 @@ class AutonomousOperationsService:
                 "role_gaps_proposed": 0,
                 "workflow_failure_gaps": 0,
                 "stale_approvals": 0,
+                "autonomous_plans_created": 0,
+                "autonomous_plans_existing": 0,
+                "autonomous_plans_completed": 0,
+                "autonomous_plans_waiting_approval": 0,
+                "autonomous_plans_blocked": 0,
+                "autonomous_plans_failed": 0,
             },
         }
 
-        if not run_memory and not run_supervisor:
+        if not run_memory and not run_supervisor and not run_planning:
             summary["status"] = "skipped"
             summary["completed_at"] = utc_now().isoformat()
             await self._record_cycle(summary)
@@ -99,6 +115,23 @@ class AutonomousOperationsService:
                         actor=f"{actor}:supervisor_review",
                     ),
                     summarizer=self._summarize_supervisor_review,
+                    continue_on_error=continue_on_error,
+                )
+
+            if run_planning:
+                await self._run_step(
+                    summary,
+                    step_name="planner",
+                    runner=lambda: self._planning.scan_and_plan(
+                        actor=f"{actor}:planner",
+                        auto_execute=(
+                            settings.autonomous_planner_auto_execute_safe_tasks
+                            if auto_execute_plans is None
+                            else auto_execute_plans
+                        ),
+                        limit=settings.autonomous_planner_scan_limit,
+                    ),
+                    summarizer=self._summarize_planner,
                     continue_on_error=continue_on_error,
                 )
         except Exception:
@@ -190,6 +223,29 @@ class AutonomousOperationsService:
                 "step": "supervisor_review",
                 "decision": "stale_approvals_flagged",
                 "approval_count": len(stale_approvals),
+            })
+
+    @staticmethod
+    def _summarize_planner(summary: dict[str, Any], result: dict[str, Any]) -> None:
+        counts = summary["counts"]
+        execution = result.get("execution") or {}
+        counts["autonomous_plans_created"] = int(result.get("plans_created") or 0)
+        counts["autonomous_plans_existing"] = int(result.get("plans_existing") or 0)
+        counts["autonomous_plans_completed"] = int(execution.get("plans_completed") or 0)
+        counts["autonomous_plans_waiting_approval"] = int(
+            execution.get("plans_waiting_approval") or 0
+        )
+        counts["autonomous_plans_blocked"] = int(execution.get("plans_blocked") or 0)
+        counts["autonomous_plans_failed"] = int(execution.get("plans_failed") or 0)
+        if result.get("plans_created") or result.get("plans_existing"):
+            summary["decisions"].append({
+                "step": "planner",
+                "decision": "autonomous_plans_reconciled",
+                "plans_created": counts["autonomous_plans_created"],
+                "plans_existing": counts["autonomous_plans_existing"],
+                "plans_completed": counts["autonomous_plans_completed"],
+                "plans_waiting_approval": counts["autonomous_plans_waiting_approval"],
+                "plans_blocked": counts["autonomous_plans_blocked"],
             })
 
     async def _record_cycle(self, summary: dict[str, Any]) -> None:

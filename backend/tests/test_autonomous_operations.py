@@ -82,6 +82,12 @@ async def test_autonomous_cycle_runs_memory_then_supervisor_and_records_audit():
         "role_gaps_proposed": 1,
         "workflow_failure_gaps": 1,
         "stale_approvals": 1,
+        "autonomous_plans_created": 0,
+        "autonomous_plans_existing": 0,
+        "autonomous_plans_completed": 0,
+        "autonomous_plans_waiting_approval": 0,
+        "autonomous_plans_blocked": 0,
+        "autonomous_plans_failed": 0,
     }
     assert {decision["decision"] for decision in result["decisions"]} == {
         "memory_findings_reviewed",

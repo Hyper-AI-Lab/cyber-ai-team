@@ -69,6 +69,8 @@ def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
         "role_gaps",
         "memory_traces",
         "memory_steward_findings",
+        "autonomous_plans",
+        "autonomous_tasks",
     ]:
         assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
 
@@ -89,6 +91,10 @@ def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
     assert "CREATE INDEX IF NOT EXISTS ix_memory_steward_findings_status" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_memory_steward_findings_finding_type" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_memory_steward_findings_created_at" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_autonomous_plans_status" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_autonomous_plans_source_active" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_autonomous_tasks_status" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_autonomous_tasks_approval_id" in sql
 
 
 def test_initial_migration_preserves_pre_alembic_approval_compatibility():
