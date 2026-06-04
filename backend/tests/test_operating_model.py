@@ -157,6 +157,8 @@ class FakeLLM:
 
     async def invoke(self, **kwargs):
         self.calls.append(kwargs)
+        if isinstance(self.response, Exception):
+            raise self.response
         return self.response
 
 
@@ -350,17 +352,65 @@ async def test_agent_invocation_records_memory_trace():
     assert result == "Launch brief complete."
     assert memory.policy_requests[0].memory_namespace == "company:acme:ops"
     assert memory.policy_requests[0].role_family == "operations"
+    assert "Memory protocol context" in manager._llm.calls[0]["system_prompt"]
     assert "customer interviews" in manager._llm.calls[0]["system_prompt"]
     assert "company context across roles" in manager._llm.calls[0]["system_prompt"]
-    assert memory.entries[0]["metadata"]["type"] == "invocation"
+    assert memory.entries[0]["metadata"]["type"] == "agent_invocation_summary"
+    assert memory.entries[0]["metadata"]["protocol_version"] == "agent-memory-protocol-v1"
     assert memory.entries[0]["metadata"]["traceable"] is True
+    assert memory.entries[0]["metadata"]["recalled_memory_ids"] == [
+        "memory-1",
+        "memory-company",
+    ]
     assert memory.traces[0]["recalled_memory_ids"] == ["memory-1", "memory-company"]
     assert memory.traces[0]["written_memory_ids"] == ["memory-2"]
     assert memory.traces[0]["read_policy"]["strategy"] == "agent-private-plus-company-shared"
     assert memory.traces[0]["read_policy"]["scope_results"][0]["added"] == 1
+    assert memory.traces[0]["write_policy"]["version"] == "memory-write-policy-v1"
     assert memory.traces[0]["write_policy"]["memory_type"] == "episodic"
+    assert (
+        memory.traces[0]["write_policy"]["strategy"]
+        == "durable-episodic-invocation-summary"
+    )
+    assert memory.traces[0]["metadata"]["protocol_version"] == "agent-memory-protocol-v1"
     assert memory.traces[0]["metadata"]["role_name"] == "Operations Manager"
     assert memory.traces[0]["metadata"]["memory_coverage"] == "hit"
+
+
+@pytest.mark.asyncio
+async def test_agent_invocation_records_failure_trace_when_llm_fails():
+    memory = FakeTraceMemoryService()
+    manager = AgentManager(memory_service=memory)
+    manager._llm = FakeLLM(RuntimeError("provider unavailable"))
+    manager.get_agent = AsyncMock(
+        return_value={
+            "id": "ops_agent",
+            "role_family": "operations",
+            "role_name": "Operations Manager",
+            "instructions": "Run company operations.",
+            "tools": [],
+            "memory_namespace": "company:acme:ops",
+            "approval_policy": "auto",
+            "status": "active",
+            "config": {},
+        }
+    )
+    manager._check_approval_policy = AsyncMock(return_value=False)
+    manager._maybe_report_autonomous_role_gap = AsyncMock()
+
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        await manager.invoke_agent("ops_agent", "Prepare the launch brief.")
+
+    assert memory.entries == []
+    assert memory.traces[0]["recalled_memory_ids"] == ["memory-1", "memory-company"]
+    assert memory.traces[0]["written_memory_ids"] == []
+    assert memory.traces[0]["write_count"] == 0
+    assert memory.traces[0]["metadata"]["memory_coverage"] == "hit"
+    assert memory.traces[0]["metadata"]["result_excerpt"] == ""
+    assert memory.traces[0]["errors"] == [
+        "invoke:RuntimeError:provider unavailable",
+    ]
+    manager._maybe_report_autonomous_role_gap.assert_not_awaited()
 
 
 @pytest.mark.asyncio

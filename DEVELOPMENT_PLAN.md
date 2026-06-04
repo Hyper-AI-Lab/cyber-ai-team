@@ -179,9 +179,13 @@ Exit criteria:
 
 ### Phase 3: Memory Protocol and Memory Steward
 
+Status: first invocation protocol slice implemented; remaining work is broader protocol
+coverage across chat/workflows/tools, explicit namespace enforcement beyond recall policy,
+conflict workflows, and deeper UI.
+
 Deliverables:
 
-- Explicit memory write/read protocol for agent invocation.
+- [x] Explicit memory write/read protocol for agent invocation.
 - Memory namespace policy per company, role, workflow, and entity.
 - Memory consolidation job.
 - Conflict detection between memory and canonical records.
@@ -296,6 +300,14 @@ approvals, and repeated workflow failures. It annotates role gaps with review gu
 generates deterministic proposals for open gaps, and creates de-duplicated workflow
 reliability gaps when repeated failures cross the configured threshold.
 
-The next Phase 3 slice should start the explicit memory protocol: agent invocation should
-record what memory was read, what durable memory should be written after completion, and
-which namespace/provenance rules governed those reads and writes.
+The first Phase 3 slice now extracts agent invocation memory behavior into an explicit
+`AgentMemoryProtocol`. Agent execution prepares a read policy, injects provenance-aware
+memory context into the LLM prompt, writes a durable episodic invocation summary after
+completion, and records trace metadata that includes protocol version, read/write policy,
+recalled memory IDs, written memory IDs, memory coverage, and memory operation errors.
+Failed LLM invocations now record a failure trace without writing a successful episodic
+summary.
+
+The next Phase 3 slice should extend this protocol beyond direct agent invocation into
+chat, workflow activities, and tool execution, then surface the resulting memory timeline
+and Memory Steward findings more clearly in the owner console.

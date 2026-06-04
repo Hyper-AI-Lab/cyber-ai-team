@@ -2,7 +2,6 @@
 
 import uuid
 from datetime import timedelta
-from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import desc, select, update
@@ -14,6 +13,7 @@ from cyber_team.config import settings
 from cyber_team.db import async_session
 from cyber_team.db.models import Agent, ApprovalRequest, RoleGap, RoleManifest
 from cyber_team.llm.gateway import LLMGateway
+from cyber_team.memory.protocol import AgentMemoryProtocol
 from cyber_team.memory.service import MemoryService
 
 
@@ -227,81 +227,37 @@ class AgentManager:
             return f"Approval requested: {approval_id}"
 
         invocation_id = str(uuid.uuid4())
-        memory_namespace = agent["memory_namespace"]
-        company_namespace = (
-            self._company_namespace_from_memory_namespace(memory_namespace)
-            or memory_namespace
+        memory_protocol = AgentMemoryProtocol(self._memory)
+        memory_context = await memory_protocol.prepare_invocation(
+            agent=agent,
+            task=task,
+            invocation_id=invocation_id,
         )
-        read_policy = {
-            "version": "legacy-agent-namespace",
-            "scope": "agent_namespace",
-            "agent_id": agent_id,
-            "namespace": memory_namespace,
-            "memory_type": None,
-            "limit": 5,
-        }
-        write_policy = {
-            "memory_type": "episodic",
-            "namespace": memory_namespace,
-            "importance": 0.6,
-            "summary_limit_chars": 200,
-        }
-        mem_results: list[dict] = []
-        recalled_memory_ids: list[str] = []
-        written_memory_ids: list[str] = []
-        memory_errors: list[str] = []
-
-        # Retrieve relevant memories for context
-        memory_context = ""
-        if self._memory:
-            try:
-                recall_with_policy = getattr(self._memory, "recall_with_policy", None)
-                if recall_with_policy:
-                    recall_result = await recall_with_policy(
-                        SimpleNamespace(
-                            query=task,
-                            agent_id=agent_id,
-                            memory_namespace=memory_namespace,
-                            role_family=agent["role_family"],
-                            role_name=agent["role_name"],
-                            limit=8,
-                        )
-                    )
-                    mem_results = recall_result.get("items", [])
-                    read_policy = recall_result.get("policy", read_policy)
-                    memory_errors.extend(recall_result.get("errors", []))
-                else:
-                    mem_results = await self._memory.recall(
-                        SimpleNamespace(
-                            query=task,
-                            agent_id=agent_id,
-                            namespace=memory_namespace,
-                            memory_type=None,
-                            limit=5,
-                        )
-                    )
-                recalled_memory_ids = [
-                    str(memory["id"]) for memory in mem_results if memory.get("id")
-                ]
-                if mem_results:
-                    memory_context = "\n\nRelevant memories:\n" + "\n".join(
-                        f"- [{m.get('scope', 'agent_private')}] {m['content']}"
-                        for m in mem_results[:8]
-                    )
-            except Exception as exc:
-                memory_errors.append(f"recall:{type(exc).__name__}:{self._excerpt(str(exc), 160)}")
 
         # Build prompt and invoke LLM
-        system_prompt = agent["instructions"] + memory_context
-        result = await self._llm.invoke(
-            system_prompt=system_prompt,
-            user_message=task,
-            agent_id=agent_id,
-        )
+        system_prompt = agent["instructions"] + memory_context.prompt_context
+        try:
+            result = await self._llm.invoke(
+                system_prompt=system_prompt,
+                user_message=task,
+                agent_id=agent_id,
+            )
+        except Exception as exc:
+            await memory_protocol.record_failure(
+                memory_context,
+                exc=exc,
+                trace_metadata={
+                    "role_family": agent["role_family"],
+                    "role_name": agent["role_name"],
+                },
+            )
+            raise
+
         await self._maybe_report_autonomous_role_gap(
             trigger="agent_invocation",
             source_agent_id=agent_id,
-            company_namespace=company_namespace,
+            company_namespace=memory_context.company_namespace
+            or memory_context.memory_namespace,
             task=task,
             result=result,
             context={
@@ -311,68 +267,14 @@ class AgentManager:
             },
         )
 
-        # Store invocation in episodic memory
-        if self._memory:
-            try:
-                memory_entry = await self._memory.remember(
-                    type(
-                        "MemW",
-                        (),
-                        {
-                            "agent_id": agent_id,
-                            "memory_type": "episodic",
-                            "namespace": memory_namespace,
-                            "content": f"Task: {task[:200]} | Result: {result[:200]}",
-                            "metadata": {
-                                "type": "invocation",
-                                "invocation_id": invocation_id,
-                                "traceable": True,
-                            },
-                            "importance": 0.6,
-                        },
-                    )()
-                )
-                if memory_entry.get("id"):
-                    written_memory_ids.append(str(memory_entry["id"]))
-            except Exception as exc:
-                memory_errors.append(f"write:{type(exc).__name__}:{self._excerpt(str(exc), 160)}")
-
-            try:
-                record_trace = getattr(self._memory, "record_trace", None)
-                if record_trace:
-                    await record_trace(
-                        type(
-                            "MemoryTraceWrite",
-                            (),
-                            {
-                                "invocation_id": invocation_id,
-                                "agent_id": agent_id,
-                                "conversation_id": None,
-                                "source_type": "agent_invocation",
-                                "task_excerpt": self._excerpt(task, 500),
-                                "memory_namespace": memory_namespace,
-                                "read_policy": read_policy,
-                                "write_policy": write_policy,
-                                "recalled_memory_ids": recalled_memory_ids,
-                                "written_memory_ids": written_memory_ids,
-                                "recall_count": len(recalled_memory_ids),
-                                "write_count": len(written_memory_ids),
-                                "errors": memory_errors,
-                                "metadata": {
-                                    "role_family": agent["role_family"],
-                                    "role_name": agent["role_name"],
-                                    "result_excerpt": self._excerpt(result, 500),
-                                    "memory_scope_results": read_policy.get(
-                                        "scope_results",
-                                        [],
-                                    ),
-                                    "memory_coverage": "hit" if mem_results else "empty",
-                                },
-                            },
-                        )()
-                    )
-            except Exception:
-                pass
+        await memory_protocol.complete_invocation(
+            memory_context,
+            result=result,
+            trace_metadata={
+                "role_family": agent["role_family"],
+                "role_name": agent["role_name"],
+            },
+        )
 
         return result
 
