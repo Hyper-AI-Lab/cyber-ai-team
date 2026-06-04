@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cyber_team.db import Base
-from cyber_team.db.models import RoleGap
+from cyber_team.db.models import MemoryStewardFinding, RoleGap
 from cyber_team.operations.planning import AutonomousPlanningService
 
 
@@ -16,19 +16,25 @@ async def build_session_factory():
     return engine, async_sessionmaker(engine, expire_on_commit=False)
 
 
-def role_gap(gap_id: str = "gap_1", *, status: str = "open") -> RoleGap:
+def role_gap(
+    gap_id: str = "gap_1",
+    *,
+    status: str = "open",
+    severity: str = "high",
+    requested_tools: list[str] | None = None,
+) -> RoleGap:
     now = datetime(2026, 6, 3, 12, 0, 0)
     return RoleGap(
         id=gap_id,
         title="Need outbound calling",
         description="Sales is blocked until a specialist can call customers.",
         status=status,
-        severity="high",
+        severity=severity,
         source_agent_id="sales",
         source_type="agent",
         company_namespace="company:acme",
         capability="outbound_voice",
-        requested_tools=["make_call"],
+        requested_tools=["make_call"] if requested_tools is None else requested_tools,
         context={},
         proposed_role={},
         resolution={},
@@ -37,20 +43,84 @@ def role_gap(gap_id: str = "gap_1", *, status: str = "open") -> RoleGap:
     )
 
 
+def memory_finding(
+    finding_id: str = "finding_1",
+    *,
+    severity: str = "medium",
+) -> MemoryStewardFinding:
+    now = datetime(2026, 6, 3, 12, 0, 0)
+    return MemoryStewardFinding(
+        id=finding_id,
+        finding_type="missing_write",
+        severity=severity,
+        status="open",
+        agent_id="sales",
+        memory_namespace="company:acme:sales",
+        company_namespace="company:acme",
+        title="Missing customer preference memory",
+        description="Customer preference was used but not written to memory.",
+        recommendation="Store a durable customer preference memory.",
+        trace_ids=["trace_1"],
+        evidence={},
+        metadata_={},
+        created_at=now - timedelta(hours=1),
+        updated_at=now - timedelta(hours=1),
+    )
+
+
+class FakeTool:
+    def __init__(
+        self,
+        name: str,
+        *,
+        risk_level: str = "low",
+        requires_approval: bool = False,
+        category: str = "general",
+    ):
+        self.name = name
+        self.risk_level = risk_level
+        self.requires_approval = requires_approval
+        self.category = category
+        self.description = f"{name} tool"
+
+    def contract(self):
+        return {
+            "name": self.name,
+            "description": self.description,
+            "category": self.category,
+            "requires_approval": self.requires_approval,
+            "risk_level": self.risk_level,
+        }
+
+
+class FakeToolRegistry:
+    def __init__(self, tools: list[FakeTool] | None = None):
+        self.tools = {tool.name: tool for tool in tools or []}
+
+    def get_tool(self, name: str):
+        return self.tools.get(name)
+
+    def list_tools(self):
+        return list(self.tools.values())
+
+
 class FakeAgentManager:
-    def __init__(self, apply_result):
+    def __init__(self, apply_result, *, approval_executable: bool = False):
         self.apply_result = apply_result
-        self.propose_role_for_gap = AsyncMock(
-            return_value={
-                "id": "gap_1",
-                "status": "proposed",
-                "proposed_role": {
-                    "manifest_payload": {"name": "Outbound Calling Specialist"}
-                },
-            }
-        )
+        self.propose_role_for_gap = AsyncMock(side_effect=self._propose)
         self.apply_role_gap_proposal = AsyncMock(side_effect=self._apply)
-        self.approval_is_executable = AsyncMock(return_value=False)
+        self.approval_is_executable = AsyncMock(return_value=approval_executable)
+        self.consume_approval = AsyncMock()
+        self._request_approval = AsyncMock(return_value="review_approval_1")
+
+    async def _propose(self, gap_id):
+        return {
+            "id": gap_id,
+            "status": "proposed",
+            "proposed_role": {
+                "manifest_payload": {"name": "Outbound Calling Specialist"}
+            },
+        }
 
     async def _apply(self, gap_id, approval_id=None, requested_by="owner"):
         result = dict(self.apply_result)
@@ -59,15 +129,44 @@ class FakeAgentManager:
 
 
 class FakeMemorySteward:
-    async def get_finding(self, finding_id):
-        return None
+    def __init__(self):
+        self.findings = {}
+        self.plan_remediations = AsyncMock(side_effect=self._plan_remediations)
 
-    async def plan_remediations(self, **kwargs):
-        return {}
+    async def get_finding(self, finding_id):
+        return self.findings.get(finding_id)
+
+    async def _plan_remediations(self, **kwargs):
+        for finding in self.findings.values():
+            finding.setdefault("metadata", {})["remediation_plan"] = {
+                "status": "applied",
+                "action_type": "seed_memory",
+            }
+            finding["status"] = "resolved"
+        return {"actions_applied": len(self.findings)}
+
+
+def tool_registry(*tools: FakeTool) -> FakeToolRegistry:
+    return FakeToolRegistry(list(tools))
+
+
+def high_risk_tool_registry() -> FakeToolRegistry:
+    return tool_registry(
+        FakeTool(
+            "make_call",
+            risk_level="high",
+            requires_approval=True,
+            category="communications",
+        )
+    )
+
+
+def low_risk_tool_registry() -> FakeToolRegistry:
+    return tool_registry(FakeTool("progress_report", risk_level="low"))
 
 
 @pytest.mark.asyncio
-async def test_scan_creates_and_executes_role_gap_plan():
+async def test_scan_creates_role_gap_graph_and_waits_for_owner_review():
     engine, session_factory = await build_session_factory()
     manager = FakeAgentManager(
         {
@@ -86,6 +185,7 @@ async def test_scan_creates_and_executes_role_gap_plan():
         service = AutonomousPlanningService(
             agent_manager=manager,
             memory_steward_service=FakeMemorySteward(),
+            tool_registry=high_risk_tool_registry(),
             session_factory=session_factory,
         )
 
@@ -96,29 +196,41 @@ async def test_scan_creates_and_executes_role_gap_plan():
         )
 
         assert result["plans_created"] == 1
-        assert result["execution"]["plans_completed"] == 1
+        assert result["execution"]["plans_waiting_approval"] == 1
         plan = (await service.list_plans())[0]
-        assert plan["status"] == "completed"
-        assert [task["status"] for task in plan["tasks"]] == ["completed", "completed"]
-        manager.propose_role_for_gap.assert_awaited_once_with("gap_1")
-        manager.apply_role_gap_proposal.assert_awaited_once_with(
-            "gap_1",
-            approval_id=None,
-            requested_by="test",
-        )
+        assert plan["status"] == "waiting_approval"
+        assert plan["context"]["policy"]["max_risk"] == "high"
+        assert [task["task_type"] for task in plan["tasks"]] == [
+            "plan.risk_assess",
+            "tools.readiness_check",
+            "role_gap.propose",
+            "plan.owner_review",
+            "role_gap.apply",
+        ]
+        assert [task["status"] for task in plan["tasks"]] == [
+            "completed",
+            "completed",
+            "completed",
+            "waiting_approval",
+            "planned",
+        ]
+        assert plan["tasks"][3]["approval_id"] == "review_approval_1"
+        manager._request_approval.assert_awaited_once()
+        manager.apply_role_gap_proposal.assert_not_awaited()
     finally:
         await engine.dispose()
 
 
 @pytest.mark.asyncio
-async def test_role_gap_plan_waits_when_apply_requires_approval():
+async def test_owner_approved_role_gap_plan_continues_after_review():
     engine, session_factory = await build_session_factory()
     manager = FakeAgentManager(
         {
-            "status": "proposed",
-            "approval_required": True,
-            "approval_id": "approval_1",
-            "high_risk_tools": ["make_call"],
+            "status": "resolved",
+            "resolution": {
+                "agent_id": "outbound_calling_specialist",
+                "role_name": "Outbound Calling Specialist",
+            },
         }
     )
     try:
@@ -129,6 +241,101 @@ async def test_role_gap_plan_waits_when_apply_requires_approval():
         service = AutonomousPlanningService(
             agent_manager=manager,
             memory_steward_service=FakeMemorySteward(),
+            tool_registry=high_risk_tool_registry(),
+            session_factory=session_factory,
+        )
+
+        first = await service.scan_and_plan(
+            actor="test",
+            include_memory_findings=False,
+            auto_execute=True,
+        )
+        plan_id = first["created_plan_ids"][0]
+        manager.approval_is_executable.return_value = True
+
+        result = await service.execute_plan(plan_id, actor="test")
+
+        assert result["status"] == "completed"
+        plan = await service.get_plan(plan_id)
+        assert plan["status"] == "completed"
+        assert [task["status"] for task in plan["tasks"]] == [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+        ]
+        manager.consume_approval.assert_awaited_once_with(
+            "review_approval_1",
+            consumer="autonomous_planner",
+            target_type="autonomous_task",
+            target_id=plan["tasks"][3]["id"],
+        )
+        manager.apply_role_gap_proposal.assert_awaited_once_with(
+            "gap_1",
+            approval_id=None,
+            requested_by="test",
+        )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_tool_readiness_blocks_missing_requested_tools():
+    engine, session_factory = await build_session_factory()
+    manager = FakeAgentManager({"status": "resolved", "resolution": {}})
+    try:
+        async with session_factory() as session:
+            session.add(role_gap(severity="low", requested_tools=["missing_tool"]))
+            await session.commit()
+
+        service = AutonomousPlanningService(
+            agent_manager=manager,
+            memory_steward_service=FakeMemorySteward(),
+            tool_registry=low_risk_tool_registry(),
+            session_factory=session_factory,
+        )
+
+        result = await service.scan_and_plan(
+            actor="test",
+            include_memory_findings=False,
+            auto_execute=True,
+        )
+
+        assert result["execution"]["plans_blocked"] == 1
+        plan = (await service.list_plans())[0]
+        assert plan["status"] == "blocked"
+        assert plan["tasks"][1]["task_type"] == "tools.readiness_check"
+        assert plan["tasks"][1]["status"] == "blocked"
+        assert plan["tasks"][1]["result"]["tool_readiness"]["missing_tools"] == [
+            "missing_tool"
+        ]
+        manager.propose_role_for_gap.assert_not_awaited()
+        manager.apply_role_gap_proposal.assert_not_awaited()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_low_risk_role_gap_apply_can_wait_on_downstream_approval():
+    engine, session_factory = await build_session_factory()
+    manager = FakeAgentManager(
+        {
+            "status": "proposed",
+            "approval_required": True,
+            "approval_id": "approval_1",
+            "high_risk_tools": ["progress_report"],
+        }
+    )
+    try:
+        async with session_factory() as session:
+            session.add(role_gap(severity="low", requested_tools=["progress_report"]))
+            await session.commit()
+
+        service = AutonomousPlanningService(
+            agent_manager=manager,
+            memory_steward_service=FakeMemorySteward(),
+            tool_registry=low_risk_tool_registry(),
             session_factory=session_factory,
         )
 
@@ -141,8 +348,56 @@ async def test_role_gap_plan_waits_when_apply_requires_approval():
         assert result["execution"]["plans_waiting_approval"] == 1
         plan = (await service.list_plans())[0]
         assert plan["status"] == "waiting_approval"
+        assert [task["task_type"] for task in plan["tasks"]] == [
+            "plan.risk_assess",
+            "tools.readiness_check",
+            "role_gap.propose",
+            "role_gap.apply",
+        ]
+        assert plan["tasks"][3]["status"] == "waiting_approval"
+        assert plan["tasks"][3]["approval_id"] == "approval_1"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_memory_finding_requires_owner_review_for_medium_risk():
+    engine, session_factory = await build_session_factory()
+    manager = FakeAgentManager({"status": "resolved", "resolution": {}})
+    memory = FakeMemorySteward()
+    try:
+        async with session_factory() as session:
+            session.add(memory_finding(severity="medium"))
+            await session.commit()
+        memory.findings["finding_1"] = {
+            "id": "finding_1",
+            "status": "open",
+            "metadata": {},
+        }
+
+        service = AutonomousPlanningService(
+            agent_manager=manager,
+            memory_steward_service=memory,
+            tool_registry=low_risk_tool_registry(),
+            session_factory=session_factory,
+        )
+
+        result = await service.scan_and_plan(
+            actor="test",
+            include_role_gaps=False,
+            auto_execute=True,
+        )
+
+        assert result["execution"]["plans_waiting_approval"] == 1
+        plan = (await service.list_plans())[0]
+        assert plan["status"] == "waiting_approval"
+        assert [task["task_type"] for task in plan["tasks"]] == [
+            "plan.risk_assess",
+            "plan.owner_review",
+            "memory_finding.remediate",
+        ]
         assert plan["tasks"][1]["status"] == "waiting_approval"
-        assert plan["tasks"][1]["approval_id"] == "approval_1"
+        memory.plan_remediations.assert_not_awaited()
     finally:
         await engine.dispose()
 
@@ -153,12 +408,13 @@ async def test_scan_dedupes_active_plans_for_same_role_gap():
     manager = FakeAgentManager({"status": "resolved", "resolution": {}})
     try:
         async with session_factory() as session:
-            session.add(role_gap())
+            session.add(role_gap(severity="low", requested_tools=["progress_report"]))
             await session.commit()
 
         service = AutonomousPlanningService(
             agent_manager=manager,
             memory_steward_service=FakeMemorySteward(),
+            tool_registry=low_risk_tool_registry(),
             session_factory=session_factory,
         )
 

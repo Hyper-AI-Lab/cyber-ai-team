@@ -87,6 +87,7 @@ async def lifespan(app: FastAPI):
     app.state.autonomous_planning_service = AutonomousPlanningService(
         agent_manager=app.state.agent_manager,
         memory_steward_service=app.state.memory_steward_service,
+        tool_registry=app.state.tool_registry,
         audit_service=app.state.audit_service,
     )
     app.state.autonomous_operations_service = AutonomousOperationsService(

@@ -26,17 +26,21 @@ class AutonomousPlanningService:
     EXECUTABLE_TASK_STATUSES = {"planned", "waiting_approval"}
     ROLE_GAP_STATUSES = {"open", "proposed"}
     MEMORY_FINDING_STATUSES = {"open", "acknowledged"}
+    RISK_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    OWNER_REVIEW_MIN_RISK = "medium"
 
     def __init__(
         self,
         *,
         agent_manager,
         memory_steward_service,
+        tool_registry=None,
         audit_service=None,
         session_factory=async_session,
     ):
         self._agent_manager = agent_manager
         self._memory_steward = memory_steward_service
+        self._tool_registry = tool_registry
         self._audit = audit_service
         self._session_factory = session_factory
 
@@ -112,32 +116,56 @@ class AutonomousPlanningService:
         if gap["status"] not in self.ROLE_GAP_STATUSES:
             raise ValueError(f"Role gap {gap_id} is {gap['status']}")
 
+        policy = self._role_gap_policy(gap)
         task_specs = []
-        sequence = 1
+        task_specs.append(
+            self._task_spec(
+                "Assess role gap risk",
+                "Evaluate severity, requested tools, and execution policy before acting.",
+                "plan.risk_assess",
+                "role_gap",
+                gap_id,
+                "low",
+                {"policy": policy, "source_type": "role_gap", "source_id": gap_id},
+            )
+        )
+        if gap.get("requested_tools"):
+            task_specs.append(
+                self._task_spec(
+                    "Check requested tool readiness",
+                    "Verify requested tools exist and identify approval-gated capabilities.",
+                    "tools.readiness_check",
+                    "role_gap",
+                    gap_id,
+                    "low",
+                    {
+                        "requested_tools": gap.get("requested_tools", []),
+                        "policy": policy,
+                    },
+                )
+            )
         if not gap.get("proposed_role"):
-            task_specs.append({
-                "sequence": sequence,
-                "title": "Propose missing role",
-                "description": f"Generate a role proposal for: {gap['title']}",
-                "task_type": "role_gap.propose",
-                "target_type": "role_gap",
-                "target_id": gap_id,
-                "risk_level": "low",
-                "autonomous_allowed": True,
-                "action_payload": {"gap_id": gap_id},
-            })
-            sequence += 1
-        task_specs.append({
-            "sequence": sequence,
-            "title": "Apply role proposal",
-            "description": f"Instantiate the approved role proposal for: {gap['title']}",
-            "task_type": "role_gap.apply",
-            "target_type": "role_gap",
-            "target_id": gap_id,
-            "risk_level": "medium",
-            "autonomous_allowed": True,
-            "action_payload": {"gap_id": gap_id},
-        })
+            task_specs.append(
+                self._task_spec(
+                    "Propose missing role",
+                    f"Generate a role proposal for: {gap['title']}",
+                    "role_gap.propose",
+                    "role_gap",
+                    gap_id,
+                    "low",
+                    {"gap_id": gap_id},
+                )
+            )
+        apply_task = self._task_spec(
+            "Apply role proposal",
+            f"Instantiate the reviewed role proposal for: {gap['title']}",
+            "role_gap.apply",
+            "role_gap",
+            gap_id,
+            policy["max_risk"],
+            {"gap_id": gap_id, "policy": policy},
+        )
+        task_specs.extend(self._with_owner_review(apply_task, policy))
 
         plan = await self._create_plan(
             title=f"Resolve role gap: {gap['title']}",
@@ -150,8 +178,9 @@ class AutonomousPlanningService:
                 "capability": gap.get("capability"),
                 "requested_tools": gap.get("requested_tools", []),
                 "company_namespace": gap.get("company_namespace"),
+                "policy": policy,
             },
-            task_specs=task_specs,
+            task_specs=self._number_task_specs(task_specs),
         )
         await self._record(
             "autonomous_plan.created",
@@ -177,6 +206,17 @@ class AutonomousPlanningService:
         if finding["status"] not in self.MEMORY_FINDING_STATUSES:
             raise ValueError(f"Memory steward finding {finding_id} is {finding['status']}")
 
+        policy = self._memory_finding_policy(finding)
+        remediation_task = self._task_spec(
+            "Plan and apply memory remediation",
+            finding["recommendation"],
+            "memory_finding.remediate",
+            "memory_steward_finding",
+            finding_id,
+            policy["max_risk"],
+            {"finding_id": finding_id, "policy": policy},
+            agent_id=finding.get("agent_id"),
+        )
         plan = await self._create_plan(
             title=f"Remediate memory finding: {finding['title']}",
             objective=finding["recommendation"],
@@ -189,21 +229,24 @@ class AutonomousPlanningService:
                 "agent_id": finding.get("agent_id"),
                 "memory_namespace": finding.get("memory_namespace"),
                 "company_namespace": finding.get("company_namespace"),
+                "policy": policy,
             },
-            task_specs=[
-                {
-                    "sequence": 1,
-                    "title": "Plan and apply memory remediation",
-                    "description": finding["recommendation"],
-                    "task_type": "memory_finding.remediate",
-                    "agent_id": finding.get("agent_id"),
-                    "target_type": "memory_steward_finding",
-                    "target_id": finding_id,
-                    "risk_level": finding["severity"],
-                    "autonomous_allowed": True,
-                    "action_payload": {"finding_id": finding_id},
-                }
-            ],
+            task_specs=self._number_task_specs([
+                self._task_spec(
+                    "Assess memory finding risk",
+                    "Evaluate severity and remediation policy before changing memory.",
+                    "plan.risk_assess",
+                    "memory_steward_finding",
+                    finding_id,
+                    "low",
+                    {
+                        "policy": policy,
+                        "source_type": "memory_steward_finding",
+                        "source_id": finding_id,
+                    },
+                ),
+                *self._with_owner_review(remediation_task, policy),
+            ]),
         )
         await self._record(
             "autonomous_plan.created",
@@ -298,7 +341,13 @@ class AutonomousPlanningService:
 
         await self._update_task(task_id, status="running")
         try:
-            if task["task_type"] == "role_gap.propose":
+            if task["task_type"] == "plan.risk_assess":
+                result = await self._execute_risk_assessment(task)
+            elif task["task_type"] == "tools.readiness_check":
+                result = await self._execute_tool_readiness(task)
+            elif task["task_type"] == "plan.owner_review":
+                result = await self._execute_owner_review(task, actor)
+            elif task["task_type"] == "role_gap.propose":
                 result = await self._execute_role_gap_propose(task, actor)
             elif task["task_type"] == "role_gap.apply":
                 result = await self._execute_role_gap_apply(task, actor)
@@ -372,6 +421,121 @@ class AutonomousPlanningService:
             )
             plan = result.scalar_one_or_none()
             return self._plan_to_dict(plan) if plan else None
+
+    async def _execute_risk_assessment(self, task: dict[str, Any]) -> dict[str, Any]:
+        policy = task["action_payload"].get("policy") or {}
+        return await self._finish_task(
+            task["id"],
+            "completed",
+            result={
+                "policy": policy,
+                "max_risk": policy.get("max_risk", task.get("risk_level", "low")),
+                "owner_review_required": policy.get("owner_review_required", False),
+                "review_reasons": policy.get("review_reasons", []),
+                "blockers": policy.get("blockers", []),
+            },
+        )
+
+    async def _execute_tool_readiness(self, task: dict[str, Any]) -> dict[str, Any]:
+        requested_tools = task["action_payload"].get("requested_tools") or []
+        readiness = self._tool_readiness(requested_tools)
+        if not readiness["registry_available"]:
+            return await self._finish_task(
+                task["id"],
+                "blocked",
+                result={"tool_readiness": readiness},
+                error="Tool registry is not available for readiness checks.",
+            )
+        if readiness["missing_tools"]:
+            return await self._finish_task(
+                task["id"],
+                "blocked",
+                result={"tool_readiness": readiness},
+                error="Requested tools are not registered: "
+                + ", ".join(readiness["missing_tools"]),
+            )
+        return await self._finish_task(
+            task["id"],
+            "completed",
+            result={"tool_readiness": readiness},
+        )
+
+    async def _execute_owner_review(
+        self,
+        task: dict[str, Any],
+        actor: str,
+    ) -> dict[str, Any]:
+        approval_id = task.get("approval_id")
+        if approval_id:
+            executable = await self._agent_manager.approval_is_executable(
+                approval_id,
+                target_type="autonomous_task",
+                target_id=task["id"],
+            )
+            if not executable:
+                return await self._finish_task(
+                    task["id"],
+                    "waiting_approval",
+                    approval_id=approval_id,
+                    result={
+                        "approval_id": approval_id,
+                        "review_status": "pending",
+                        "review_for": task["action_payload"].get("review_for"),
+                    },
+                )
+            await self._agent_manager.consume_approval(
+                approval_id,
+                consumer="autonomous_planner",
+                target_type="autonomous_task",
+                target_id=task["id"],
+            )
+            return await self._finish_task(
+                task["id"],
+                "completed",
+                approval_id=approval_id,
+                result={
+                    "approval_id": approval_id,
+                    "review_status": "approved",
+                    "review_for": task["action_payload"].get("review_for"),
+                },
+            )
+
+        if not hasattr(self._agent_manager, "_request_approval"):
+            return await self._finish_task(
+                task["id"],
+                "blocked",
+                error="Approval service is not available for owner review.",
+            )
+
+        payload = {
+            **task["action_payload"],
+            "plan_id": task["plan_id"],
+            "review_task_id": task["id"],
+            "risk_level": task["risk_level"],
+        }
+        description = self._owner_review_description(task)
+        requested_id = await self._agent_manager._request_approval(
+            None,
+            "autonomous_task.review",
+            description,
+            payload,
+            requester=actor,
+            requester_type="agent",
+            risk_level=task["risk_level"],
+            target_type="autonomous_task",
+            target_id=task["id"],
+            expires_in_minutes=1440,
+        )
+        return await self._finish_task(
+            task["id"],
+            "waiting_approval",
+            approval_id=requested_id,
+            result={
+                "approval_id": requested_id,
+                "review_status": "requested",
+                "review_for": task["action_payload"].get("review_for"),
+            },
+        )
 
     async def _execute_role_gap_propose(
         self,
@@ -670,6 +834,240 @@ class AutonomousPlanningService:
         if not plan:
             raise RuntimeError(f"Failed to create autonomous plan {plan_id}")
         return plan
+
+    def _role_gap_policy(self, gap: dict[str, Any]) -> dict[str, Any]:
+        requested_tools = gap.get("requested_tools") or []
+        readiness = self._tool_readiness(requested_tools)
+        tool_risks = [tool["risk_level"] for tool in readiness["available_tools"]]
+        max_risk = self._max_risk([gap.get("severity", "medium"), *tool_risks])
+        blockers = []
+        if requested_tools and not readiness["registry_available"]:
+            blockers.append("tool_registry_unavailable")
+        if readiness["missing_tools"]:
+            blockers.append("missing_requested_tools")
+        review_reasons = []
+        if self._risk_requires_owner_review(max_risk):
+            review_reasons.append(f"maximum risk is {max_risk}")
+        if readiness["approval_gated_tools"]:
+            review_reasons.append(
+                "requested approval-gated tools: "
+                + ", ".join(readiness["approval_gated_tools"])
+            )
+        if gap.get("severity") in {"high", "critical"}:
+            review_reasons.append(f"role gap severity is {gap['severity']}")
+        return {
+            "policy_version": "planner-risk-v1",
+            "source_type": "role_gap",
+            "source_id": gap["id"],
+            "max_risk": max_risk,
+            "owner_review_required": self._risk_requires_owner_review(max_risk),
+            "review_reasons": self._unique(review_reasons),
+            "blockers": blockers,
+            "tool_readiness": readiness,
+            "autonomous_execution": (
+                "blocked" if blockers else "owner_review" if review_reasons else "auto"
+            ),
+        }
+
+    def _memory_finding_policy(self, finding: dict[str, Any]) -> dict[str, Any]:
+        max_risk = self._normalize_risk(finding.get("severity", "medium"))
+        review_reasons = []
+        if self._risk_requires_owner_review(max_risk):
+            review_reasons.append(f"memory finding severity is {max_risk}")
+        if finding.get("finding_type") in {"missing_write", "memory_conflict"}:
+            review_reasons.append(f"finding type is {finding['finding_type']}")
+        return {
+            "policy_version": "planner-risk-v1",
+            "source_type": "memory_steward_finding",
+            "source_id": finding["id"],
+            "max_risk": max_risk,
+            "owner_review_required": self._risk_requires_owner_review(max_risk),
+            "review_reasons": self._unique(review_reasons),
+            "blockers": [],
+            "autonomous_execution": "owner_review" if review_reasons else "auto",
+        }
+
+    def _tool_readiness(self, requested_tools: list[str]) -> dict[str, Any]:
+        requested = self._unique(requested_tools)
+        registry_available = self._tool_registry is not None
+        available = []
+        missing = []
+        if not registry_available:
+            return {
+                "registry_available": False,
+                "requested_tools": requested,
+                "available_tools": [],
+                "missing_tools": requested,
+                "approval_gated_tools": [],
+                "highest_tool_risk": "low",
+            }
+        for tool_name in requested:
+            tool = self._get_registered_tool(tool_name)
+            if not tool:
+                missing.append(tool_name)
+                continue
+            contract = self._tool_contract(tool, tool_name)
+            available.append(contract)
+        approval_gated = [
+            tool["name"]
+            for tool in available
+            if tool.get("requires_approval") or self._risk_requires_owner_review(
+                tool.get("risk_level", "low")
+            )
+        ]
+        return {
+            "registry_available": True,
+            "requested_tools": requested,
+            "available_tools": available,
+            "missing_tools": missing,
+            "approval_gated_tools": approval_gated,
+            "highest_tool_risk": self._max_risk(
+                [tool.get("risk_level", "low") for tool in available]
+            ),
+        }
+
+    def _get_registered_tool(self, tool_name: str):
+        if hasattr(self._tool_registry, "get_tool"):
+            return self._tool_registry.get_tool(tool_name)
+        if hasattr(self._tool_registry, "list_tools"):
+            for tool in self._tool_registry.list_tools():
+                if getattr(tool, "name", None) == tool_name:
+                    return tool
+        return None
+
+    def _tool_contract(self, tool, fallback_name: str) -> dict[str, Any]:
+        if hasattr(tool, "contract"):
+            contract = tool.contract()
+            return {
+                "name": contract.get("name", fallback_name),
+                "category": contract.get("category", "general"),
+                "risk_level": self._normalize_risk(contract.get("risk_level", "low")),
+                "requires_approval": bool(contract.get("requires_approval", False)),
+                "description": contract.get("description", ""),
+            }
+        return {
+            "name": getattr(tool, "name", fallback_name),
+            "category": getattr(tool, "category", "general"),
+            "risk_level": self._normalize_risk(getattr(tool, "risk_level", "low")),
+            "requires_approval": bool(getattr(tool, "requires_approval", False)),
+            "description": getattr(tool, "description", ""),
+        }
+
+    def _with_owner_review(
+        self,
+        task_spec: dict[str, Any],
+        policy: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        if not policy.get("owner_review_required"):
+            return [task_spec]
+        review_task = self._task_spec(
+            f"Owner review: {task_spec['title']}",
+            self._owner_review_description_from_spec(task_spec, policy),
+            "plan.owner_review",
+            task_spec.get("target_type"),
+            task_spec.get("target_id"),
+            task_spec.get("risk_level", policy.get("max_risk", "medium")),
+            {
+                "review_for": task_spec["task_type"],
+                "review_title": task_spec["title"],
+                "review_description": task_spec["description"],
+                "source_type": policy.get("source_type"),
+                "source_id": policy.get("source_id"),
+                "policy": policy,
+                "review_reasons": policy.get("review_reasons", []),
+                "target_payload": task_spec.get("action_payload") or {},
+            },
+            autonomous_allowed=False,
+        )
+        return [review_task, task_spec]
+
+    @staticmethod
+    def _task_spec(
+        title: str,
+        description: str,
+        task_type: str,
+        target_type: str | None,
+        target_id: str | None,
+        risk_level: str,
+        action_payload: dict[str, Any],
+        *,
+        agent_id: str | None = None,
+        autonomous_allowed: bool = True,
+    ) -> dict[str, Any]:
+        return {
+            "sequence": 0,
+            "title": title,
+            "description": description,
+            "task_type": task_type,
+            "agent_id": agent_id,
+            "target_type": target_type,
+            "target_id": target_id,
+            "risk_level": risk_level,
+            "autonomous_allowed": autonomous_allowed,
+            "action_payload": action_payload,
+        }
+
+    @staticmethod
+    def _number_task_specs(task_specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                **task_spec,
+                "sequence": index,
+            }
+            for index, task_spec in enumerate(task_specs, start=1)
+        ]
+
+    def _owner_review_description(self, task: dict[str, Any]) -> str:
+        return self._owner_review_description_from_spec(
+            {
+                "title": task["action_payload"].get("review_title", task["title"]),
+                "description": task["action_payload"].get(
+                    "review_description",
+                    task["description"],
+                ),
+                "task_type": task["action_payload"].get("review_for", task["task_type"]),
+                "risk_level": task.get("risk_level", "medium"),
+            },
+            task["action_payload"].get("policy") or {},
+        )
+
+    @staticmethod
+    def _owner_review_description_from_spec(
+        task_spec: dict[str, Any],
+        policy: dict[str, Any],
+    ) -> str:
+        reasons = policy.get("review_reasons") or ["planner policy requires owner review"]
+        return (
+            f"Review autonomous planner step '{task_spec['title']}' "
+            f"({task_spec['task_type']}, risk {task_spec.get('risk_level', 'medium')}). "
+            f"Reasons: {', '.join(reasons)}. "
+            "Approving this lets the planner continue to the next task; downstream "
+            "high-risk tool grants may still request dedicated approval."
+        )
+
+    def _risk_requires_owner_review(self, risk_level: str) -> bool:
+        return (
+            self.RISK_RANK[self._normalize_risk(risk_level)]
+            >= self.RISK_RANK[self.OWNER_REVIEW_MIN_RISK]
+        )
+
+    def _max_risk(self, risk_levels: list[str]) -> str:
+        normalized = [self._normalize_risk(level) for level in risk_levels if level]
+        if not normalized:
+            return "low"
+        return max(normalized, key=lambda level: self.RISK_RANK[level])
+
+    def _normalize_risk(self, risk_level: str | None) -> str:
+        risk = str(risk_level or "medium").lower()
+        return risk if risk in self.RISK_RANK else "medium"
+
+    @staticmethod
+    def _unique(values) -> list:
+        result = []
+        for value in values:
+            if value and value not in result:
+                result.append(value)
+        return result
 
     async def _update_task(
         self,

@@ -31,6 +31,13 @@ const statusClass: Record<string, string> = {
   blocked: 'bg-red-600/20 text-red-300',
 }
 
+const riskClass: Record<string, string> = {
+  low: 'bg-blue-600/20 text-blue-300',
+  medium: 'bg-amber-600/20 text-amber-300',
+  high: 'bg-red-600/20 text-red-300',
+  critical: 'bg-red-700/40 text-red-100',
+}
+
 function formatDate(value?: string) {
   if (!value) return '-'
   return new Date(value).toLocaleString()
@@ -62,6 +69,31 @@ function taskSummary(plan: any) {
 
 function canExecutePlan(plan: any) {
   return ['planned', 'running', 'waiting_approval'].includes(plan.status)
+}
+
+function planPolicy(plan: any) {
+  return plan.context?.policy || {}
+}
+
+function planRisk(plan: any) {
+  return planPolicy(plan).max_risk || plan.priority || 'medium'
+}
+
+function planApproval(plan: any) {
+  const waitingTask = (plan.tasks || []).find((task: any) => task.status === 'waiting_approval')
+  return waitingTask?.approval_id || null
+}
+
+function planSignals(plan: any) {
+  const policy = planPolicy(plan)
+  const readiness = policy.tool_readiness || {}
+  const signals = [
+    ...(policy.review_reasons || []),
+    ...(readiness.missing_tools?.length
+      ? [`Missing tools: ${readiness.missing_tools.join(', ')}`]
+      : []),
+  ]
+  return signals.slice(0, 3)
 }
 
 export default function OperationsView({ cycles, onRefresh }: OperationsViewProps) {
@@ -456,8 +488,9 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
                   <th className="py-3 pr-4">Plan</th>
                   <th className="py-3 pr-4">Source</th>
                   <th className="py-3 pr-4">Status</th>
-                  <th className="py-3 pr-4">Priority</th>
+                  <th className="py-3 pr-4">Risk</th>
                   <th className="py-3 pr-4">Tasks</th>
+                  <th className="py-3 pr-4">Approval</th>
                   <th className="py-3 pr-4">Updated</th>
                   <th className="py-3 pr-4">Action</th>
                 </tr>
@@ -470,6 +503,18 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
                       <div className="mt-1 line-clamp-2 text-xs text-slate-500">
                         {plan.objective}
                       </div>
+                      {planSignals(plan).length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {planSignals(plan).map((signal) => (
+                            <span
+                              key={`${plan.id}-${signal}`}
+                              className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-400"
+                            >
+                              {signal}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 pr-4">{sourceLabel(plan)}</td>
                     <td className="py-3 pr-4">
@@ -481,8 +526,40 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
                         {plan.status}
                       </span>
                     </td>
-                    <td className="py-3 pr-4 capitalize">{plan.priority}</td>
-                    <td className="py-3 pr-4">{taskSummary(plan)}</td>
+                    <td className="py-3 pr-4">
+                      <span
+                        className={`rounded-full px-2 py-1 text-xs ${
+                          riskClass[planRisk(plan)] || 'bg-slate-700 text-slate-300'
+                        }`}
+                      >
+                        {planRisk(plan)}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <div>{taskSummary(plan)}</div>
+                      <div className="mt-1 flex max-w-48 flex-wrap gap-1">
+                        {(plan.tasks || []).slice(0, 5).map((task: any) => (
+                          <span
+                            key={task.id}
+                            title={`${task.title} (${task.task_type})`}
+                            className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                              statusClass[task.status] || 'bg-slate-700 text-slate-300'
+                            }`}
+                          >
+                            {task.risk_level}:{task.status}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4">
+                      {planApproval(plan) ? (
+                        <span className="rounded-full bg-amber-600/20 px-2 py-1 text-xs text-amber-300">
+                          {planApproval(plan)}
+                        </span>
+                      ) : (
+                        <span className="text-slate-500">-</span>
+                      )}
+                    </td>
                     <td className="whitespace-nowrap py-3 pr-4 text-slate-400">
                       {formatDate(plan.updated_at)}
                     </td>
