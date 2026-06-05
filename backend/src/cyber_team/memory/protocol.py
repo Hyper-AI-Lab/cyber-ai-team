@@ -38,8 +38,9 @@ class AgentMemoryContext:
 
 
 class AgentMemoryProtocol:
-    def __init__(self, memory_service: Any | None):
+    def __init__(self, memory_service: Any | None, metrics_service: Any | None = None):
         self._memory = memory_service
+        self._metrics = metrics_service
 
     async def prepare_invocation(
         self,
@@ -82,6 +83,7 @@ class AgentMemoryProtocol:
 
         if not self._memory:
             context.errors.append("memory_service:unavailable")
+            self._record_memory_metric("recall", "unavailable", source_type)
             return context
 
         try:
@@ -100,10 +102,12 @@ class AgentMemoryProtocol:
                 str(memory["id"]) for memory in context.items if memory.get("id")
             ]
             context.prompt_context = self.prompt_context(context)
+            self._record_memory_metric("recall", "success", source_type)
         except Exception as exc:
             context.errors.append(
                 f"recall:{type(exc).__name__}:{self.excerpt(str(exc), 160)}"
             )
+            self._record_memory_metric("recall", "failed", source_type)
 
         return context
 
@@ -129,10 +133,12 @@ class AgentMemoryProtocol:
             )
             if memory_entry.get("id"):
                 context.written_memory_ids.append(str(memory_entry["id"]))
+            self._record_memory_metric("write", "success", context.source_type)
         except Exception as exc:
             context.errors.append(
                 f"write:{type(exc).__name__}:{self.excerpt(str(exc), 160)}"
             )
+            self._record_memory_metric("write", "failed", context.source_type)
         await self.record_trace(context, result=result, metadata=trace_metadata)
 
     async def record_failure(
@@ -185,6 +191,7 @@ class AgentMemoryProtocol:
                             "scope_results",
                             [],
                         ),
+                        "coverage": context.coverage,
                         "memory_coverage": context.coverage,
                         **(metadata or {}),
                     },
@@ -286,6 +293,10 @@ class AgentMemoryProtocol:
             f"Task: {self.excerpt(task, 240)} | "
             f"Result: {self.excerpt(result, 360)}"
         )
+
+    def _record_memory_metric(self, operation: str, status: str, source_type: str) -> None:
+        if self._metrics:
+            self._metrics.record_memory_operation(operation, status, source_type)
 
     @staticmethod
     def default_read_policy(

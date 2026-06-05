@@ -158,11 +158,84 @@ async def test_unavailable_tool_service_reports_autonomous_gap():
         {"_agent_id": "finance"},
     )
 
-    assert result.success is True
+    assert result.success is False
     assert result.output == "ERPNext client not available"
+    assert result.error == "ERPNext client not available"
     manager.report_tool_gap.assert_awaited_once()
     tool_name = manager.report_tool_gap.await_args.args[0]
     kwargs = manager.report_tool_gap.await_args.kwargs
     assert tool_name == "erpnext_get_invoices"
     assert kwargs["agent_id"] == "finance"
     assert kwargs["reason"] == "service_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_side_effect_manifest_placeholder_is_blocked_not_prepared():
+    registry = ToolRegistry()
+    contract = next(
+        tool for tool in registry.list_tool_contracts()
+        if tool["name"] == "task_create"
+    )
+
+    assert contract["state"] == "unavailable"
+    assert contract["side_effects"] is True
+    assert contract["requires_configuration"] is True
+
+    result = await registry.execute("task_create", {"topic": "Follow up"})
+
+    assert result.success is False
+    assert result.output["blocked"] is True
+    assert result.output["state"] == "unavailable"
+    assert "No live executor" in result.error
+
+
+@pytest.mark.asyncio
+async def test_advisory_manifest_tool_reports_advisory_status():
+    registry = ToolRegistry()
+
+    result = await registry.execute("candidate_screen", {"query": "market map"})
+
+    assert result.success is True
+    assert result.output["status"] == "advisory"
+    assert result.output["side_effects"] is False
+
+
+@pytest.mark.asyncio
+async def test_tool_execution_records_memory_trace_metadata():
+    registry = ToolRegistry()
+    memory = AsyncMock()
+    memory.recall.return_value = [
+        {
+            "id": "memory-1",
+            "content": "Known fact",
+            "memory_type": "semantic",
+            "namespace": "company:acme",
+            "agent_id": None,
+            "importance": 0.8,
+        }
+    ]
+    registry.set_services(memory=memory)
+
+    result = await registry.execute(
+        "memory_recall",
+        {
+            "query": "Known",
+            "namespace": "company:acme",
+            "_agent_id": "agent-1",
+            "_conversation_id": "conversation-1",
+            "_workflow_run_id": "workflow-1",
+            "_source_type": "workflow_tool_activity",
+        },
+    )
+
+    assert result.success is True
+    memory.record_trace.assert_awaited_once()
+    trace_data = memory.record_trace.await_args.args[0]
+    assert trace_data.source_type == "workflow_tool_activity"
+    assert trace_data.agent_id == "agent-1"
+    assert trace_data.conversation_id == "conversation-1"
+    assert trace_data.memory_namespace == "company:acme"
+    assert trace_data.recalled_memory_ids == ["memory-1"]
+    assert trace_data.metadata["tool_name"] == "memory_recall"
+    assert trace_data.metadata["workflow_run_id"] == "workflow-1"
+    assert trace_data.metadata["coverage"] == "read"

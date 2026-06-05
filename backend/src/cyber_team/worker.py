@@ -4,6 +4,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from types import SimpleNamespace
 
 from temporalio import activity, workflow
 from temporalio.client import Client
@@ -23,11 +24,13 @@ async def activity_services():
     from cyber_team.audit.service import AuditService
     from cyber_team.comms.gateway import CommsGateway
     from cyber_team.integrations.erpnext import ERPNextClient
+    from cyber_team.observability.metrics import MetricsService
     from cyber_team.tools.registry import ToolRegistry
 
-    audit = AuditService()
+    metrics = MetricsService()
+    audit = AuditService(metrics_service=metrics)
     memory = MemoryService()
-    comms = CommsGateway()
+    comms = CommsGateway(metrics_service=metrics)
     erpnext = ERPNextClient()
     registry = ToolRegistry()
     manager = AgentManager(
@@ -41,6 +44,7 @@ async def activity_services():
         agent_manager=manager,
         erpnext=erpnext,
         audit=audit,
+        metrics=metrics,
     )
     await memory.startup()
     try:
@@ -51,6 +55,7 @@ async def activity_services():
             "erpnext": erpnext,
             "registry": registry,
             "manager": manager,
+            "metrics": metrics,
         }
     finally:
         await memory.shutdown()
@@ -58,13 +63,33 @@ async def activity_services():
 
 
 @activity.defn
-async def invoke_agent_activity(agent_id: str, task: str) -> str:
+async def invoke_agent_activity(
+    agent_id: str,
+    task: str,
+    workflow_run_id: str | None = None,
+    workflow_node_id: str | None = None,
+) -> str:
     async with activity_services() as services:
-        return await services["manager"].invoke_agent(agent_id, task)
+        return await services["manager"].invoke_agent(
+            agent_id,
+            task,
+            source_type="workflow_agent_activity",
+            trace_metadata={
+                "workflow_run_id": workflow_run_id,
+                "workflow_node_id": workflow_node_id,
+            },
+        )
 
 
 @activity.defn
-async def remember_activity(agent_id: str, memory_type: str, namespace: str, content: str) -> str:
+async def remember_activity(
+    agent_id: str,
+    memory_type: str,
+    namespace: str,
+    content: str,
+    workflow_run_id: str | None = None,
+    workflow_node_id: str | None = None,
+) -> str:
     async with activity_services() as services:
         data = type("MemoryWrite", (), {
             "agent_id": agent_id,
@@ -75,6 +100,32 @@ async def remember_activity(agent_id: str, memory_type: str, namespace: str, con
             "importance": 0.5,
         })()
         result = await services["memory"].remember(data)
+        trace_invocation_id = (
+            f"workflow-memory:{workflow_run_id or 'unknown'}:"
+            f"{workflow_node_id or 'manual'}"
+        )
+        await services["memory"].record_trace(
+            SimpleNamespace(
+                invocation_id=trace_invocation_id,
+                agent_id=agent_id,
+                conversation_id=None,
+                source_type="workflow_memory_write",
+                task_excerpt=f"Workflow memory write: {namespace}",
+                memory_namespace=namespace,
+                read_policy={},
+                write_policy={"memory_type": memory_type, "namespace": namespace},
+                recalled_memory_ids=[],
+                written_memory_ids=[result["id"]],
+                recall_count=0,
+                write_count=1,
+                errors=[],
+                metadata={
+                    "workflow_run_id": workflow_run_id,
+                    "workflow_node_id": workflow_node_id,
+                    "coverage": "write",
+                },
+            )
+        )
         return result["id"]
 
 
@@ -103,8 +154,21 @@ async def request_approval_activity(
 
 
 @activity.defn
-async def execute_tool_activity(tool_name: str, tool_args: dict) -> dict:
+async def execute_tool_activity(
+    tool_name: str,
+    tool_args: dict,
+    workflow_run_id: str | None = None,
+    workflow_node_id: str | None = None,
+) -> dict:
     async with activity_services() as services:
+        tool_args = dict(tool_args or {})
+        tool_args.update({
+            "_actor": "workflow",
+            "_actor_type": "system",
+            "_workflow_run_id": workflow_run_id,
+            "_workflow_node_id": workflow_node_id,
+            "_source_type": "workflow_tool_activity",
+        })
         result = await services["registry"].execute(tool_name, tool_args)
         return result.model_dump()
 
@@ -290,7 +354,7 @@ class DynamicGraphWorkflow:
                 task = node.get("task_template", "").format(**state)
                 result = await workflow.execute_activity(
                     invoke_agent_activity,
-                    args=[agent_id, task],
+                    args=[agent_id, task, run_id, current],
                     start_to_close_timeout=timedelta(minutes=5),
                 )
                 state[f"{current}_output"] = result
@@ -312,7 +376,7 @@ class DynamicGraphWorkflow:
 
                 result_data = await workflow.execute_activity(
                     execute_tool_activity,
-                    args=[tool_name, tool_args],
+                    args=[tool_name, tool_args, run_id, current],
                     start_to_close_timeout=timedelta(minutes=3),
                 )
                 state[f"{current}_output"] = result_data
@@ -360,7 +424,7 @@ class DynamicGraphWorkflow:
                     tool_args["_approval_id"] = approval_id
                     result_data = await workflow.execute_activity(
                         execute_tool_activity,
-                        args=[tool_name, tool_args],
+                        args=[tool_name, tool_args, run_id, current],
                         start_to_close_timeout=timedelta(minutes=3),
                     )
                     state[f"{current}_output"] = result_data

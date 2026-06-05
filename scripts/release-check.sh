@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${RELEASE_VERSION:-$(git -C "$ROOT_DIR" rev-parse --short HEAD)}"
+GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+BUILD_SHA="${BUILD_SHA:-$GIT_COMMIT}"
+APP_VERSION="${APP_VERSION:-$VERSION}"
 ALLOW_DIRTY="${RELEASE_ALLOW_DIRTY:-0}"
 RUN_QUALITY_GATE="${RUN_QUALITY_GATE:-1}"
 RUN_MIGRATION_REHEARSAL="${RUN_MIGRATION_REHEARSAL:-1}"
@@ -36,6 +39,8 @@ if [ "$BUILD_IMAGES" = "1" ]; then
   docker build \
     --build-arg NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-http://localhost:8000}" \
     --build-arg NEXT_PUBLIC_WS_URL="${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}" \
+    --build-arg NEXT_PUBLIC_APP_VERSION="$APP_VERSION" \
+    --build-arg NEXT_PUBLIC_BUILD_SHA="$BUILD_SHA" \
     -t "cyber-team-ui:$VERSION" \
     "$ROOT_DIR/frontend"
 fi
@@ -50,7 +55,7 @@ mkdir -p "$MANIFEST_DIR"
 cat >"$MANIFEST_DIR/$VERSION.json" <<JSON
 {
   "version": "$VERSION",
-  "git_commit": "$(git -C "$ROOT_DIR" rev-parse HEAD)",
+  "git_commit": "$GIT_COMMIT",
   "git_branch": "$(git -C "$ROOT_DIR" branch --show-current)",
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "checks": {

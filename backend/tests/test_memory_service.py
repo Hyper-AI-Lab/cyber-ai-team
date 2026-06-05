@@ -49,18 +49,47 @@ async def test_memory_trace_record_and_list_filters_by_agent(monkeypatch):
                 recalled_memory_ids=["memory-1", "memory-2"],
                 written_memory_ids=["memory-3"],
                 errors=[],
-                metadata={"role_name": "Operations Manager"},
+                metadata={"role_name": "Operations Manager", "coverage": "read_write"},
+            )
+        )
+        tool_trace = await service.record_trace(
+            SimpleNamespace(
+                invocation_id="tool-1",
+                agent_id="agent-1",
+                conversation_id="conversation-1",
+                source_type="tool_execution",
+                task_excerpt="Execute memory recall.",
+                memory_namespace="company:acme:ops",
+                read_policy={"tool_name": "memory_recall"},
+                write_policy={"tool_name": "memory_recall"},
+                recalled_memory_ids=["memory-1"],
+                written_memory_ids=[],
+                errors=[],
+                metadata={
+                    "tool_name": "memory_recall",
+                    "workflow_run_id": "workflow-1",
+                    "coverage": "read",
+                },
             )
         )
 
-        traces = await service.list_memory_traces(agent_id="agent-1")
+        traces = await service.list_memory_traces(agent_id="agent-1", limit=10)
         unrelated = await service.list_memory_traces(agent_id="agent-2")
+        tool_traces = await service.list_memory_traces(
+            source_type="tool_execution",
+            conversation_id="conversation-1",
+            workflow_run_id="workflow-1",
+            tool_name="memory_recall",
+            memory_namespace="company:acme:ops",
+            coverage="read",
+        )
 
         assert trace["invocation_id"] == "invoke-1"
         assert trace["recall_count"] == 2
         assert trace["write_count"] == 1
-        assert traces == [trace]
+        assert {item["id"] for item in traces} == {trace["id"], tool_trace["id"]}
         assert unrelated == []
+        assert tool_traces == [tool_trace]
     finally:
         await engine.dispose()
 

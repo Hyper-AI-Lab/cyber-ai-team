@@ -43,6 +43,7 @@ from cyber_team.observability.metrics import MetricsService
 from cyber_team.operations.autonomous import AutonomousOperationsService
 from cyber_team.operations.memory_steward import MemoryStewardService
 from cyber_team.operations.planning import AutonomousPlanningService
+from cyber_team.operations.retention import RetentionService
 from cyber_team.operations.supervisor_review import SupervisorReviewService
 from cyber_team.roles.loader import load_default_roles
 from cyber_team.tools.registry import ToolRegistry
@@ -57,11 +58,24 @@ async def lifespan(app: FastAPI):
     await init_db()
     app.state.metrics_service = MetricsService()
     app.state.audit_service = AuditService(metrics_service=app.state.metrics_service)
+    await app.state.audit_service.record_control_evidence(
+        control_id="runtime.config_validation",
+        control_area="soc2_change_management",
+        actor="system",
+        outcome="success",
+        evidence={
+            "environment": settings.environment,
+            "autonomy_side_effect_mode": settings.autonomy_side_effect_mode,
+            "require_live_tool_executors": settings.require_live_tool_executors,
+            "communications_allow_simulation": settings.communications_allow_simulation,
+        },
+    )
     app.state.authorization_service = AuthorizationService(
         audit_service=app.state.audit_service,
         metrics_service=app.state.metrics_service,
     )
     app.state.memory_service = MemoryService()
+    app.state.retention_service = RetentionService(memory_service=app.state.memory_service)
     app.state.comms_gateway = CommsGateway(metrics_service=app.state.metrics_service)
     app.state.erpnext = ERPNextClient()
     app.state.tool_registry = ToolRegistry()
@@ -102,6 +116,7 @@ async def lifespan(app: FastAPI):
         agent_manager=app.state.agent_manager,
         erpnext=app.state.erpnext,
         audit=app.state.audit_service,
+        metrics=app.state.metrics_service,
     )
     await app.state.memory_service.startup()
     await load_default_roles()
@@ -189,7 +204,7 @@ async def _memory_steward_loop(app: FastAPI) -> None:
 app = FastAPI(
     title=settings.app_name,
     description="AI-powered digital company operating system",
-    version="0.1.0",
+    version=settings.app_version,
     lifespan=lifespan,
 )
 
@@ -293,12 +308,22 @@ app.include_router(
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "0.1.0"}
+    return {
+        "status": "ok",
+        "version": settings.app_version,
+        "build_sha": settings.build_sha,
+        "environment": settings.environment,
+    }
 
 
 @app.get("/live")
 async def live():
-    return {"status": "ok", "version": "0.1.0"}
+    return {
+        "status": "ok",
+        "version": settings.app_version,
+        "build_sha": settings.build_sha,
+        "environment": settings.environment,
+    }
 
 
 @app.get("/ready")
@@ -315,7 +340,9 @@ async def ready():
         status_code=200 if ready_status else 503,
         content={
             "status": "ready" if ready_status else "degraded",
-            "version": "0.1.0",
+            "version": settings.app_version,
+            "build_sha": settings.build_sha,
+            "environment": settings.environment,
             "checks": checks,
         },
     )

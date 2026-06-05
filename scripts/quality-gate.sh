@@ -15,6 +15,24 @@ RUN_FRONTEND_BUILD="${RUN_FRONTEND_BUILD:-1}"
 RUN_MIGRATION_REHEARSAL="${RUN_MIGRATION_REHEARSAL:-0}"
 RUN_COMPOSE_SMOKE="${RUN_COMPOSE_SMOKE:-0}"
 
+if [ -n "${FRONTEND_NODE_BIN:-}" ]; then
+  FRONTEND_NODE_CMD=("$FRONTEND_NODE_BIN")
+else
+  node_major="$(node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)"
+  if [ "$node_major" -ge 20 ]; then
+    FRONTEND_NODE_CMD=(node)
+  else
+    FRONTEND_NODE_CMD=(npx -y node@20)
+  fi
+fi
+
+run_frontend_node() {
+  (
+    cd "$FRONTEND_DIR"
+    "${FRONTEND_NODE_CMD[@]}" "$@"
+  )
+}
+
 if [ ! -x "$BACKEND_VENV/bin/python" ]; then
   "$PYTHON_BIN" -m venv "$BACKEND_VENV"
 fi
@@ -71,19 +89,19 @@ if [ "$SKIP_FRONTEND_INSTALL" != "1" ]; then
   (cd "$FRONTEND_DIR" && npm ci)
 fi
 
+if [ "$RUN_FRONTEND_BUILD" = "1" ]; then
+  echo "== Frontend: build =="
+  run_frontend_node ./node_modules/next/dist/bin/next build
+fi
+
 echo "== Frontend: typecheck =="
-(cd "$FRONTEND_DIR" && npx tsc --noEmit --incremental false)
+run_frontend_node ./node_modules/typescript/bin/tsc --noEmit --incremental false
 
 echo "== Frontend: tests =="
-(cd "$FRONTEND_DIR" && npm test)
+run_frontend_node ./node_modules/vitest/vitest.mjs run
 
 echo "== Frontend: dependency audit =="
 (cd "$FRONTEND_DIR" && npm audit --audit-level=moderate)
-
-if [ "$RUN_FRONTEND_BUILD" = "1" ]; then
-  echo "== Frontend: build =="
-  (cd "$FRONTEND_DIR" && npm run build)
-fi
 
 echo "== Compose: config =="
 (cd "$ROOT_DIR" && docker compose config --quiet)

@@ -108,18 +108,33 @@ describe('ApiClient', () => {
     expect(fetchMock.mock.calls[0][1]?.headers.Authorization).toBe('Bearer access-1')
   })
 
-  it('lists memory traces with optional agent filtering', async () => {
+  it('lists memory traces with optional filters', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'trace-1' }]))
     vi.stubGlobal('fetch', fetchMock)
     const client = new ApiClient('http://api.test')
 
     client.setTokens('access-1')
-    await client.listMemoryTraces('agent 1', 25)
+    await client.listMemoryTraces({
+      agentId: 'agent 1',
+      sourceType: 'tool_execution',
+      conversationId: 'conversation-1',
+      workflowRunId: 'workflow-1',
+      toolName: 'memory_recall',
+      memoryNamespace: 'company:acme:ops',
+      coverage: 'read',
+      limit: 25,
+    })
 
     const url = new URL(fetchMock.mock.calls[0][0] as string)
     expect(url.pathname).toBe('/api/memory/traces')
     expect(url.searchParams.get('agent_id')).toBe('agent 1')
+    expect(url.searchParams.get('source_type')).toBe('tool_execution')
+    expect(url.searchParams.get('conversation_id')).toBe('conversation-1')
+    expect(url.searchParams.get('workflow_run_id')).toBe('workflow-1')
+    expect(url.searchParams.get('tool_name')).toBe('memory_recall')
+    expect(url.searchParams.get('memory_namespace')).toBe('company:acme:ops')
+    expect(url.searchParams.get('coverage')).toBe('read')
     expect(url.searchParams.get('limit')).toBe('25')
     expect(fetchMock.mock.calls[0][1]?.headers.Authorization).toBe('Bearer access-1')
   })
@@ -244,6 +259,45 @@ describe('ApiClient', () => {
     expect(fetchMock.mock.calls[3][0]).toBe(
       'http://api.test/api/operations/plans/plan-1/execute',
     )
+  })
+
+  it('fetches operations readiness, decision timeline, and GDPR workflows', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ status: 'ready' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'timeline-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ dry_run: true }))
+      .mockResolvedValueOnce(jsonResponse({ subject: 'person@example.com' }))
+      .mockResolvedValueOnce(jsonResponse({ audit_events_retained: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.getOperationsReadiness()
+    await client.getDecisionTimeline(25)
+    await client.runRetentionCleanup(true)
+    await client.exportSubjectData('person@example.com')
+    await client.deleteSubjectData('person@example.com', true)
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/operations/readiness')
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/operations/decision-timeline?limit=25',
+    )
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/operations/retention/cleanup',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toEqual({
+      dry_run: true,
+    })
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      'http://api.test/api/operations/gdpr/subjects/person%40example.com/export',
+    )
+    expect(fetchMock.mock.calls[4][0]).toBe(
+      'http://api.test/api/operations/gdpr/subjects/person%40example.com/delete',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[4][1]?.body as string)).toEqual({
+      dry_run: true,
+      audit_preserving: true,
+    })
   })
 
   it('manages role gaps through the authenticated API client', async () => {

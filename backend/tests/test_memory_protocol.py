@@ -121,6 +121,8 @@ async def test_memory_protocol_prepares_policy_prompt_context_and_write_trace():
         agent=agent(),
         task="Prepare the launch brief.",
         invocation_id="invoke-1",
+        conversation_id="conversation-1",
+        source_type="chat",
     )
     await protocol.complete_invocation(context, result="Launch brief complete.")
 
@@ -137,6 +139,8 @@ async def test_memory_protocol_prepares_policy_prompt_context_and_write_trace():
     assert memory.traces[0]["read_policy"]["strategy"] == (
         "agent-private-plus-company-shared"
     )
+    assert memory.traces[0]["source_type"] == "chat"
+    assert memory.traces[0]["metadata"]["coverage"] == "hit"
     assert memory.traces[0]["write_policy"]["version"] == "memory-write-policy-v1"
     assert memory.traces[0]["metadata"]["memory_coverage"] == "hit"
     assert memory.traces[0]["metadata"]["protocol_version"] == "agent-memory-protocol-v1"

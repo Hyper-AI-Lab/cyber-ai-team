@@ -198,6 +198,12 @@ async def list_memory_traces(
     request: Request,
     agent_id: str | None = None,
     invocation_id: str | None = None,
+    source_type: str | None = None,
+    conversation_id: str | None = None,
+    workflow_run_id: str | None = None,
+    tool_name: str | None = None,
+    memory_namespace: str | None = None,
+    coverage: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     principal: Principal = Depends(get_current_principal),
 ):
@@ -207,12 +213,27 @@ async def list_memory_traces(
         "read",
         "memory_trace",
         invocation_id,
-        context={"agent_id": agent_id, "limit": limit},
+        context={
+            "agent_id": agent_id,
+            "source_type": source_type,
+            "conversation_id": conversation_id,
+            "workflow_run_id": workflow_run_id,
+            "tool_name": tool_name,
+            "memory_namespace": memory_namespace,
+            "coverage": coverage,
+            "limit": limit,
+        },
     )
     svc: MemoryService = request.app.state.memory_service
     return await svc.list_memory_traces(
         agent_id=agent_id,
         invocation_id=invocation_id,
+        source_type=source_type,
+        conversation_id=conversation_id,
+        workflow_run_id=workflow_run_id,
+        tool_name=tool_name,
+        memory_namespace=memory_namespace,
+        coverage=coverage,
         limit=limit,
     )
 

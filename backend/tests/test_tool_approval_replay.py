@@ -67,11 +67,12 @@ async def test_tool_execution_requests_approval_before_sensitive_side_effect():
     )
 
     assert result.success is False
-    assert result.output == {
-        "approval_required": True,
-        "approval_id": "approval-2",
-        "tool_name": "send_email",
-    }
+    assert result.output["approval_required"] is True
+    assert result.output["approval_id"] == "approval-2"
+    assert result.output["tool_name"] == "send_email"
+    assert result.output["risk_level"] == "high"
+    assert result.output["target"] == {"type": "tool", "id": "send_email"}
+    assert result.output["replay_instructions"]["path"] == "/api/tools/execute"
     assert comms.sent == []
     manager._request_approval.assert_awaited_once()
 

@@ -36,6 +36,9 @@ const navItems: { view: ViewName; label: string; icon: React.ElementType }[] = [
   { view: 'audit', label: 'Audit Trail', icon: ScrollText },
 ]
 
+const appVersion = process.env.NEXT_PUBLIC_APP_VERSION || '0.1.0'
+const buildSha = process.env.NEXT_PUBLIC_BUILD_SHA || ''
+
 export default function Sidebar({
   activeView,
   onViewChange,
@@ -83,7 +86,9 @@ export default function Sidebar({
         <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
           <div className="flex items-center gap-2">
             <Settings className="w-4 h-4" />
-            <span>v0.1.0</span>
+            <span>
+              v{appVersion}{buildSha ? ` ${buildSha.slice(0, 7)}` : ''}
+            </span>
           </div>
           <button
             onClick={onLogout}

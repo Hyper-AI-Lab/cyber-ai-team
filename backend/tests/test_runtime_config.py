@@ -13,6 +13,8 @@ def production_settings(**overrides):
         "redis_password": "prod-redis-password",
         "cors_allowed_origins": "https://console.example.com",
         "communications_allow_simulation": False,
+        "autonomy_side_effect_mode": "manual_only",
+        "require_live_tool_executors": True,
     }
     values.update(overrides)
     return Settings(**values)
@@ -36,6 +38,20 @@ def test_production_runtime_config_rejects_simulated_communications():
     settings = production_settings(communications_allow_simulation=True)
 
     with pytest.raises(RuntimeError, match="COMMUNICATIONS_ALLOW_SIMULATION"):
+        settings.validate_runtime_config()
+
+
+def test_production_runtime_config_requires_manual_only_autonomy():
+    settings = production_settings(autonomy_side_effect_mode="approval_required")
+
+    with pytest.raises(RuntimeError, match="AUTONOMY_SIDE_EFFECT_MODE"):
+        settings.validate_runtime_config()
+
+
+def test_production_runtime_config_requires_live_tool_executors():
+    settings = production_settings(require_live_tool_executors=False)
+
+    with pytest.raises(RuntimeError, match="REQUIRE_LIVE_TOOL_EXECUTORS"):
         settings.validate_runtime_config()
 
 

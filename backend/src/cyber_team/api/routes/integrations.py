@@ -16,8 +16,28 @@ async def integration_status(
 ):
     await require_authorization(request, principal, "read", "integration_status")
     comms = request.app.state.comms_gateway
+    communications = comms.integration_status()
+    blocking_reasons = []
+    if settings.require_live_tool_executors:
+        blocking_reasons = [
+            {
+                "channel": item.get("channel"),
+                "provider": item.get("provider"),
+                "mode": item.get("mode"),
+                "reason": item.get("detail"),
+            }
+            for item in communications
+            if item.get("mode") != "live"
+        ]
     return {
         "environment": settings.environment,
-        "communications": comms.integration_status(),
+        "communications": communications,
         "simulation_enabled": settings.communications_allow_simulation,
+        "require_live_tool_executors": settings.require_live_tool_executors,
+        "production_blocking_readiness": bool(blocking_reasons),
+        "blocking_reasons": blocking_reasons,
+        "last_validation_result": {
+            "status": "blocked" if blocking_reasons else "ready",
+            "checked_at": None,
+        },
     }

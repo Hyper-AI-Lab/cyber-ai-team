@@ -79,6 +79,65 @@ class MetricsService:
             {"provider": provider, "state": state},
         )
 
+    def record_tool_execution(
+        self,
+        tool_name: str,
+        status: str,
+        risk_level: str,
+        state: str,
+    ) -> None:
+        self.increment(
+            "cyberteam_tool_executions_total",
+            {
+                "tool_name": tool_name,
+                "status": status,
+                "risk_level": risk_level,
+                "state": state,
+            },
+        )
+
+    def record_approval_event(self, action: str, status: str, risk_level: str) -> None:
+        self.increment(
+            "cyberteam_approval_events_total",
+            {"action": action, "status": status, "risk_level": risk_level},
+        )
+
+    def record_memory_operation(
+        self,
+        operation: str,
+        status: str,
+        source_type: str,
+    ) -> None:
+        self.increment(
+            "cyberteam_memory_operations_total",
+            {"operation": operation, "status": status, "source_type": source_type},
+        )
+
+    def record_llm_invocation(self, agent_id: str, status: str, source_type: str) -> None:
+        self.increment(
+            "cyberteam_llm_invocations_total",
+            {
+                "agent_id": agent_id,
+                "status": status,
+                "source_type": source_type,
+            },
+        )
+
+    def record_workflow_state(self, status: str) -> None:
+        self.increment("cyberteam_workflow_state_changes_total", {"status": status})
+
+    def record_planner_block(self, reason: str, risk_level: str) -> None:
+        self.increment(
+            "cyberteam_planner_blocks_total",
+            {"reason": reason, "risk_level": risk_level},
+        )
+
+    def record_auth_failure(self, action: str, reason: str) -> None:
+        self.increment(
+            "cyberteam_auth_failures_total",
+            {"action": action, "reason": reason},
+        )
+
     def increment(
         self,
         name: str,

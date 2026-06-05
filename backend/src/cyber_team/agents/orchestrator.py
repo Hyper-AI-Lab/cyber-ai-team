@@ -24,6 +24,7 @@ class Orchestrator:
         self.memory_service = memory_service
         self._tool_registry = tool_registry
         self._audit = getattr(agent_manager, "_audit", None)
+        self._metrics = getattr(agent_manager, "_metrics", None)
 
     async def list_workflows(self) -> list[dict]:
         async with async_session() as session:
@@ -98,6 +99,8 @@ class Orchestrator:
                 action="run",
                 metadata={"workflow_id": workflow_id},
             )
+        if self._metrics:
+            self._metrics.record_workflow_state("running")
 
         # Dispatch the dynamic durable execution to Temporal
         try:
@@ -137,6 +140,8 @@ class Orchestrator:
                     outcome="failed",
                     metadata={"workflow_id": workflow_id, "error": str(e)},
                 )
+            if self._metrics:
+                self._metrics.record_workflow_state("failed")
             raise
 
     async def resume_workflow_run(self, run_id: str) -> dict:
@@ -202,6 +207,8 @@ class Orchestrator:
                     outcome="blocked",
                     metadata={"approval_id": approval_id},
                 )
+            if self._metrics:
+                self._metrics.record_workflow_state("rejected")
             return run_dict
 
         # Signal "approved" to the running Temporal Workflow condition
@@ -225,6 +232,8 @@ class Orchestrator:
                 action="resume",
                 metadata={"approval_id": approval_id},
             )
+        if self._metrics:
+            self._metrics.record_workflow_state("resumed")
         return run_dict
 
     async def list_workflow_runs(self, workflow_id: str) -> list[dict]:

@@ -17,6 +17,8 @@ services:
       - OPA_API_URL=http://opa:8181
       - ERPNEXT_URL=http://erpnext:8000
       - OPENFGA_API_URL=http://openfga:8080
+      - APP_VERSION=${APP_VERSION:-0.1.0}
+      - BUILD_SHA=${BUILD_SHA:-local}
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,6 +60,8 @@ services:
       - QDRANT_HOST=qdrant
       - TEMPORAL_HOST=temporal
       - OPA_API_URL=http://opa:8181
+      - APP_VERSION=${APP_VERSION:-0.1.0}
+      - BUILD_SHA=${BUILD_SHA:-local}
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,12 +85,16 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
         NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
+        NEXT_PUBLIC_APP_VERSION: ${APP_VERSION:-0.1.0}
+        NEXT_PUBLIC_BUILD_SHA: ${BUILD_SHA:-local}
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-ui
     ports:
       - "${UI_PUBLISHED_PORT:-3001}:3000"
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
       - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
+      - NEXT_PUBLIC_APP_VERSION=${APP_VERSION:-0.1.0}
+      - NEXT_PUBLIC_BUILD_SHA=${BUILD_SHA:-local}
     depends_on:
       core:
         condition: service_healthy

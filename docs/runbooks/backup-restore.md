@@ -57,6 +57,20 @@ Then verify:
 Do not restore over production until the restore has been rehearsed and the outage
 plan is approved.
 
+For staging, run the automated drill against the latest staging backup artifact:
+
+```bash
+BACKEND_VENV=/tmp/cyberteam-verify-venv ./scripts/staging-restore-drill.sh
+```
+
+The script starts an isolated PostgreSQL 16 container, restores the custom-format
+backup, verifies Alembic state and key table row counts, removes the container, and
+writes JSON evidence to:
+
+```text
+dist/restore-drills/staging/staging-restore-drill-YYYYMMDDTHHMMSSZ.json
+```
+
 ## Qdrant Backup
 
 Create a collection snapshot:

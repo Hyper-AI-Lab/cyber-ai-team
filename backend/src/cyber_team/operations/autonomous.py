@@ -92,6 +92,20 @@ class AutonomousOperationsService:
             await self._record_cycle(summary)
             return summary
 
+        manual_only_side_effects = settings.autonomy_side_effect_mode == "manual_only"
+        planner_auto_execute = (
+            settings.autonomous_planner_auto_execute_safe_tasks
+            if auto_execute_plans is None
+            else auto_execute_plans
+        )
+        if manual_only_side_effects and planner_auto_execute:
+            planner_auto_execute = False
+            summary["decisions"].append({
+                "step": "planner",
+                "decision": "auto_execute_disabled",
+                "reason": "Production side-effect autonomy is manual-only.",
+            })
+
         try:
             if run_memory:
                 await self._run_step(
@@ -124,11 +138,7 @@ class AutonomousOperationsService:
                     step_name="planner",
                     runner=lambda: self._planning.scan_and_plan(
                         actor=f"{actor}:planner",
-                        auto_execute=(
-                            settings.autonomous_planner_auto_execute_safe_tasks
-                            if auto_execute_plans is None
-                            else auto_execute_plans
-                        ),
+                        auto_execute=planner_auto_execute,
                         limit=settings.autonomous_planner_scan_limit,
                     ),
                     summarizer=self._summarize_planner,

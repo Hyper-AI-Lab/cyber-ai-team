@@ -257,10 +257,39 @@ class ApiClient {
     return this.request(`/api/memory/agent/${agentId}`);
   }
 
-  async listMemoryTraces(agentId?: string, limit: number = 50) {
-    const params = new URLSearchParams({ limit: String(limit) });
-    if (agentId) {
-      params.set('agent_id', agentId);
+  async listMemoryTraces(
+    filters: {
+      agentId?: string;
+      sourceType?: string;
+      conversationId?: string;
+      workflowRunId?: string;
+      toolName?: string;
+      memoryNamespace?: string;
+      coverage?: string;
+      limit?: number;
+    } = {}
+  ) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 50) });
+    if (filters.agentId) {
+      params.set('agent_id', filters.agentId);
+    }
+    if (filters.sourceType) {
+      params.set('source_type', filters.sourceType);
+    }
+    if (filters.conversationId) {
+      params.set('conversation_id', filters.conversationId);
+    }
+    if (filters.workflowRunId) {
+      params.set('workflow_run_id', filters.workflowRunId);
+    }
+    if (filters.toolName) {
+      params.set('tool_name', filters.toolName);
+    }
+    if (filters.memoryNamespace) {
+      params.set('memory_namespace', filters.memoryNamespace);
+    }
+    if (filters.coverage) {
+      params.set('coverage', filters.coverage);
     }
     return this.request(`/api/memory/traces?${params.toString()}`);
   }
@@ -401,6 +430,32 @@ class ApiClient {
     return this.request('/api/operations/autonomous-cycle', {
       method: 'POST',
       body: JSON.stringify(options),
+    });
+  }
+
+  async getOperationsReadiness() {
+    return this.request('/api/operations/readiness');
+  }
+
+  async getDecisionTimeline(limit: number = 50) {
+    return this.request(`/api/operations/decision-timeline?limit=${limit}`);
+  }
+
+  async runRetentionCleanup(dryRun: boolean = true) {
+    return this.request('/api/operations/retention/cleanup', {
+      method: 'POST',
+      body: JSON.stringify({ dry_run: dryRun }),
+    });
+  }
+
+  async exportSubjectData(subject: string) {
+    return this.request(`/api/operations/gdpr/subjects/${encodeURIComponent(subject)}/export`);
+  }
+
+  async deleteSubjectData(subject: string, dryRun: boolean = true) {
+    return this.request(`/api/operations/gdpr/subjects/${encodeURIComponent(subject)}/delete`, {
+      method: 'POST',
+      body: JSON.stringify({ dry_run: dryRun, audit_preserving: true }),
     });
   }
 

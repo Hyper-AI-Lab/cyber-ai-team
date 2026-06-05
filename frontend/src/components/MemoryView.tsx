@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import {
   Activity,
@@ -22,16 +22,18 @@ export default function MemoryView() {
   const [searching, setSearching] = useState(false)
   const [traces, setTraces] = useState<any[]>([])
   const [loadingTraces, setLoadingTraces] = useState(false)
+  const [traceSourceType, setTraceSourceType] = useState('')
+  const [traceCoverage, setTraceCoverage] = useState('')
+  const [traceAgentId, setTraceAgentId] = useState('')
+  const [traceConversationId, setTraceConversationId] = useState('')
+  const [traceWorkflowRunId, setTraceWorkflowRunId] = useState('')
+  const [traceToolName, setTraceToolName] = useState('')
+  const [traceNamespace, setTraceNamespace] = useState('')
   const [findings, setFindings] = useState<any[]>([])
   const [loadingFindings, setLoadingFindings] = useState(false)
   const [runningSteward, setRunningSteward] = useState(false)
   const [planningRemediations, setPlanningRemediations] = useState(false)
   const [runningAction, setRunningAction] = useState<string | null>(null)
-
-  useEffect(() => {
-    void loadTraces()
-    void loadFindings()
-  }, [])
 
   const handleSearch = async () => {
     if (!query) return
@@ -46,19 +48,36 @@ export default function MemoryView() {
     }
   }
 
-  const loadTraces = async () => {
+  const loadTraces = useCallback(async () => {
     setLoadingTraces(true)
     try {
-      const res = await api.listMemoryTraces(undefined, 25)
+      const res = await api.listMemoryTraces({
+        agentId: traceAgentId || undefined,
+        sourceType: traceSourceType || undefined,
+        conversationId: traceConversationId || undefined,
+        workflowRunId: traceWorkflowRunId || undefined,
+        toolName: traceToolName || undefined,
+        memoryNamespace: traceNamespace || undefined,
+        coverage: traceCoverage || undefined,
+        limit: 25,
+      })
       setTraces(res)
     } catch (e: any) {
       console.error('Memory trace fetch failed:', e)
     } finally {
       setLoadingTraces(false)
     }
-  }
+  }, [
+    traceAgentId,
+    traceConversationId,
+    traceCoverage,
+    traceNamespace,
+    traceSourceType,
+    traceToolName,
+    traceWorkflowRunId,
+  ])
 
-  const loadFindings = async () => {
+  const loadFindings = useCallback(async () => {
     setLoadingFindings(true)
     try {
       const res = await api.listMemoryStewardFindings('open', 25)
@@ -68,7 +87,12 @@ export default function MemoryView() {
     } finally {
       setLoadingFindings(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    void loadTraces()
+    void loadFindings()
+  }, [loadFindings, loadTraces])
 
   const runSteward = async () => {
     setRunningSteward(true)
@@ -326,6 +350,65 @@ export default function MemoryView() {
           </button>
         </div>
 
+        <div className="grid gap-3 rounded-lg border border-slate-800 bg-slate-900/30 p-3 text-sm md:grid-cols-3 xl:grid-cols-7">
+          <select
+            value={traceSourceType}
+            onChange={(event) => setTraceSourceType(event.target.value)}
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200"
+          >
+            <option value="">All sources</option>
+            <option value="agent_invocation">Agent</option>
+            <option value="chat">Chat</option>
+            <option value="tool_execution">Tool</option>
+            <option value="workflow_agent_activity">Workflow agent</option>
+            <option value="workflow_tool_activity">Workflow tool</option>
+            <option value="workflow_memory_write">Workflow memory</option>
+          </select>
+          <select
+            value={traceCoverage}
+            onChange={(event) => setTraceCoverage(event.target.value)}
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200"
+          >
+            <option value="">All coverage</option>
+            <option value="empty">Empty</option>
+            <option value="read">Read</option>
+            <option value="write">Write</option>
+            <option value="read_write">Read/write</option>
+            <option value="metadata_only">Metadata only</option>
+            <option value="error">Error</option>
+          </select>
+          <input
+            value={traceAgentId}
+            onChange={(event) => setTraceAgentId(event.target.value)}
+            placeholder="Agent"
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200"
+          />
+          <input
+            value={traceNamespace}
+            onChange={(event) => setTraceNamespace(event.target.value)}
+            placeholder="Namespace"
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200"
+          />
+          <input
+            value={traceConversationId}
+            onChange={(event) => setTraceConversationId(event.target.value)}
+            placeholder="Conversation"
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200"
+          />
+          <input
+            value={traceWorkflowRunId}
+            onChange={(event) => setTraceWorkflowRunId(event.target.value)}
+            placeholder="Workflow run"
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200"
+          />
+          <input
+            value={traceToolName}
+            onChange={(event) => setTraceToolName(event.target.value)}
+            placeholder="Tool"
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200"
+          />
+        </div>
+
         {traces.length > 0 ? (
           <div className="space-y-3">
             {traces.map((trace: any) => (
@@ -338,6 +421,21 @@ export default function MemoryView() {
                   )}
                   {trace.memory_namespace && (
                     <span className="text-xs text-slate-500">{trace.memory_namespace}</span>
+                  )}
+                  {(trace.metadata?.coverage || trace.metadata?.memory_coverage) && (
+                    <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-200">
+                      {trace.metadata.coverage || trace.metadata.memory_coverage}
+                    </span>
+                  )}
+                  {trace.metadata?.tool_name && (
+                    <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-300">
+                      {trace.metadata.tool_name}
+                    </span>
+                  )}
+                  {trace.metadata?.workflow_run_id && (
+                    <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-300">
+                      {trace.metadata.workflow_run_id}
+                    </span>
                   )}
                   <span className="ml-auto flex items-center gap-1 text-xs text-slate-500">
                     <Clock className="w-3.5 h-3.5" />

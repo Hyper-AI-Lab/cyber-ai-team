@@ -6,9 +6,11 @@ Agents reference tools by name; the registry resolves and executes them.
 
 import logging
 import subprocess
+import uuid
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -59,6 +61,11 @@ class ToolDefinition(BaseModel):
     category: str = "general"
     requires_approval: bool = False
     risk_level: str = "low"
+    side_effects: bool = False
+    executor_kind: str = "live"
+    requires_configuration: bool = False
+    configuration_keys: list[str] = Field(default_factory=list)
+    readiness_reason: str | None = None
     output_schema: dict[str, Any] = Field(default_factory=lambda: {"type": "object"})
 
     def input_schema(self) -> dict[str, Any]:
@@ -78,6 +85,11 @@ class ToolDefinition(BaseModel):
             "category": self.category,
             "requires_approval": self.requires_approval,
             "risk_level": self.risk_level,
+            "state": self.executor_kind,
+            "readiness_reason": self.readiness_reason,
+            "side_effects": self.side_effects,
+            "executor_kind": self.executor_kind,
+            "requires_configuration": self.requires_configuration,
             "parameters": [parameter.model_dump() for parameter in self.parameters],
             "input_schema": self.input_schema(),
             "output_schema": self.output_schema,
@@ -120,10 +132,90 @@ class ToolRegistry:
     ) -> list[dict[str, Any]]:
         allowed = set(allowed_tools) if allowed_tools is not None else None
         return [
-            tool.contract()
+            self._contract_for(tool)
             for tool in self.list_tools(category)
             if allowed is None or tool.name in allowed
         ]
+
+    def _contract_for(self, tool: ToolDefinition) -> dict[str, Any]:
+        contract = tool.contract()
+        readiness = self.get_tool_readiness(tool.name)
+        contract.update(
+            {
+                "state": readiness["state"],
+                "readiness_reason": readiness["readiness_reason"],
+                "side_effects": readiness["side_effects"],
+                "executor_kind": readiness["executor_kind"],
+                "requires_configuration": readiness["requires_configuration"],
+            }
+        )
+        return contract
+
+    def get_tool_readiness(
+        self,
+        tool_name: str,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        tool = self._tools.get(tool_name)
+        if not tool:
+            return {
+                "state": "unavailable",
+                "readiness_reason": f"Tool not found: {tool_name}",
+                "side_effects": False,
+                "executor_kind": "unavailable",
+                "requires_configuration": False,
+                "executable": False,
+            }
+
+        state = tool.executor_kind
+        reason = tool.readiness_reason
+        requires_configuration = tool.requires_configuration
+        if tool.executor_kind == "live":
+            state = "live"
+            reason = reason or "Live executor is registered."
+        elif tool.executor_kind == "advisory":
+            state = "advisory"
+            reason = (
+                reason
+                or "Advisory executor can draft or inspect, but cannot mutate external systems."
+            )
+        elif tool.executor_kind == "configuration_required":
+            state = "configuration_required"
+            reason = reason or "This tool requires configuration before it can run."
+            requires_configuration = True
+        elif tool.executor_kind == "unavailable":
+            state = "unavailable"
+            reason = reason or "No live executor is registered for this tool."
+
+        dynamic = self._dynamic_readiness(tool, params or {})
+        if dynamic:
+            state = dynamic["state"]
+            reason = dynamic["readiness_reason"]
+            requires_configuration = dynamic["requires_configuration"]
+
+        proof_block = (
+            settings.require_live_tool_executors
+            and tool.side_effects
+            and state != "live"
+        )
+        executable = state in {"live", "advisory"} and not proof_block
+        if proof_block:
+            executable = False
+            reason = (
+                reason
+                or "A live executor is required for side-effectful tools in this environment."
+            )
+            if state == "advisory":
+                state = "unavailable"
+
+        return {
+            "state": state,
+            "readiness_reason": reason,
+            "side_effects": tool.side_effects,
+            "executor_kind": tool.executor_kind,
+            "requires_configuration": requires_configuration,
+            "executable": executable,
+        }
 
     def validate_params(
         self,
@@ -170,116 +262,265 @@ class ToolRegistry:
         approval_id = params.pop("_approval_id", None)
         actor = params.pop("_actor", agent_id or "owner")
         actor_type = params.pop("_actor_type", "agent" if agent_id else "user")
+        conversation_id = params.pop("_conversation_id", None)
+        workflow_run_id = params.pop("_workflow_run_id", None)
+        workflow_node_id = params.pop("_workflow_node_id", None)
+        source_type = params.pop("_source_type", "tool_execution")
+        trace_metadata = {
+            "tool_name": tool_name,
+            "conversation_id": conversation_id,
+            "workflow_run_id": workflow_run_id,
+            "workflow_node_id": workflow_node_id,
+            "actor": actor,
+            "actor_type": actor_type,
+            "approval_id": approval_id,
+        }
         if tool_name == "role_gap_report" and agent_id:
             params.setdefault("source_agent_id", agent_id)
             params.setdefault("source_type", "agent")
 
         if tool_name not in self._tools:
-            if self._audit:
-                await self._audit.record(
-                    event_type="tool.execute",
-                    actor=actor,
-                    actor_type=actor_type,
-                    resource_type="tool",
-                    resource_id=tool_name,
-                    action="execute",
-                    outcome="failed",
-                    metadata={"error": "tool_not_found"},
-                )
+            error = f"Tool not found: {tool_name}"
+            readiness = self.get_tool_readiness(tool_name)
+            await self._audit_tool_event(
+                tool_name,
+                actor=actor,
+                actor_type=actor_type,
+                outcome="failed",
+                metadata={"error": "tool_not_found", **readiness},
+            )
+            self._record_tool_metric(tool_name, "failed", "unknown", readiness["state"])
+            await self._record_tool_trace(
+                tool_name,
+                agent_id=agent_id,
+                source_type=source_type,
+                conversation_id=conversation_id,
+                workflow_run_id=workflow_run_id,
+                task_excerpt=f"Execute tool {tool_name}",
+                metadata={**trace_metadata, **readiness},
+                errors=[error],
+            )
             await self._report_tool_gap(
                 tool_name,
                 agent_id=agent_id,
                 actor=actor,
                 actor_type=actor_type,
                 reason="tool_not_found",
-                error=f"Tool not found: {tool_name}",
+                error=error,
             )
-            return ToolResult(success=False, error=f"Tool not found: {tool_name}")
+            return ToolResult(success=False, error=error)
 
         tool = self._tools[tool_name]
         executor = self._executors[tool_name]
         valid, params, validation_error = self.validate_params(tool_name, params)
         if not valid:
-            if self._audit:
-                await self._audit.record(
-                    event_type="tool.execute",
-                    actor=actor,
-                    actor_type=actor_type,
-                    resource_type="tool",
-                    resource_id=tool_name,
-                    action="execute",
-                    outcome="failed",
-                    metadata={"error": validation_error},
-                )
+            readiness = self.get_tool_readiness(tool_name)
+            await self._audit_tool_event(
+                tool_name,
+                actor=actor,
+                actor_type=actor_type,
+                outcome="failed",
+                metadata={"error": validation_error, **readiness},
+            )
+            self._record_tool_metric(
+                tool_name,
+                "failed",
+                tool.risk_level,
+                readiness["state"],
+            )
+            await self._record_tool_trace(
+                tool_name,
+                agent_id=agent_id,
+                source_type=source_type,
+                conversation_id=conversation_id,
+                workflow_run_id=workflow_run_id,
+                task_excerpt=f"Execute tool {tool_name}",
+                metadata={**trace_metadata, **readiness},
+                errors=[validation_error or "validation_failed"],
+            )
             return ToolResult(success=False, error=validation_error)
 
-        if tool.requires_approval and not await self._approval_granted(approval_id, tool_name):
+        readiness = self.get_tool_readiness(tool_name, params)
+        trace_metadata.update(readiness)
+        if params.get("namespace"):
+            trace_metadata["memory_namespace"] = params.get("namespace")
+        if not readiness["executable"]:
+            output = self._blocked_tool_output(tool_name, params, readiness)
+            await self._audit_tool_event(
+                tool_name,
+                actor=actor,
+                actor_type=actor_type,
+                outcome="blocked",
+                metadata={"reason": readiness["readiness_reason"], **readiness},
+            )
+            self._record_tool_metric(
+                tool_name,
+                "blocked",
+                tool.risk_level,
+                readiness["state"],
+            )
+            await self._record_tool_trace(
+                tool_name,
+                agent_id=agent_id,
+                source_type=source_type,
+                conversation_id=conversation_id,
+                workflow_run_id=workflow_run_id,
+                task_excerpt=f"Execute tool {tool_name}",
+                metadata=trace_metadata,
+                errors=[readiness["readiness_reason"] or "tool_not_executable"],
+            )
+            await self._report_tool_gap(
+                tool_name,
+                agent_id=agent_id,
+                actor=actor,
+                actor_type=actor_type,
+                reason=readiness["state"],
+                error=readiness["readiness_reason"],
+            )
+            return ToolResult(
+                success=False,
+                output=output,
+                error=readiness["readiness_reason"] or "Tool is not executable",
+            )
+
+        approval_required = self._approval_required_for(tool)
+        if approval_required and not await self._approval_granted(approval_id, tool_name):
             requested_id = None
             if self._agent_manager:
                 requested_id = await self._agent_manager._request_approval(
                     agent_id,
                     f"tool:{tool_name}",
                     f"Execute tool {tool_name}",
-                    params,
+                    {
+                        "tool_name": tool_name,
+                        "params": params,
+                        "payload_summary": self._payload_summary(params),
+                        "replay_instructions": self._replay_instructions(tool_name, params),
+                    },
                     requester=agent_id or actor,
                     requester_type="agent" if agent_id else actor_type,
-                    risk_level="high",
+                    risk_level=tool.risk_level,
                     target_type="tool",
                     target_id=tool_name,
                 )
-            if self._audit:
-                await self._audit.record(
-                    event_type="tool.approval_required",
-                    actor=actor,
-                    actor_type=actor_type,
-                    resource_type="tool",
-                    resource_id=tool_name,
-                    action="execute",
-                    outcome="blocked",
-                    metadata={"approval_id": requested_id},
-                )
+            await self._audit_tool_event(
+                tool_name,
+                actor=actor,
+                actor_type=actor_type,
+                outcome="blocked",
+                event_type="tool.approval_required",
+                metadata={"approval_id": requested_id, **readiness},
+            )
+            self._record_approval_metric("requested", "blocked", tool.risk_level)
+            self._record_tool_metric(
+                tool_name,
+                "blocked",
+                tool.risk_level,
+                readiness["state"],
+            )
+            output = {
+                "approval_required": True,
+                "approval_id": requested_id,
+                "tool_name": tool_name,
+                "risk_level": tool.risk_level,
+                "reason": "Owner approval is required before executing this tool.",
+                "target": {"type": "tool", "id": tool_name},
+                "payload_summary": self._payload_summary(params),
+                "replay_instructions": self._replay_instructions(tool_name, params),
+            }
+            await self._record_tool_trace(
+                tool_name,
+                agent_id=agent_id,
+                source_type=source_type,
+                conversation_id=conversation_id,
+                workflow_run_id=workflow_run_id,
+                task_excerpt=f"Execute tool {tool_name}",
+                metadata={**trace_metadata, "approval_id": requested_id},
+                errors=["approval_required"],
+            )
             return ToolResult(
                 success=False,
-                output={
-                    "approval_required": True,
-                    "approval_id": requested_id,
-                    "tool_name": tool_name,
-                },
+                output=output,
                 error="Approval required before executing this tool",
             )
 
         try:
-            if approval_id and tool.requires_approval and self._agent_manager:
+            if approval_id and approval_required and self._agent_manager:
                 await self._agent_manager.consume_approval(
                     approval_id,
                     consumer=f"tool:{tool_name}",
                     target_type="tool",
                     target_id=tool_name,
                 )
+                self._record_approval_metric("consumed", "success", tool.risk_level)
             result = await executor(**params)
             if self._tool_output_signals_unavailable(result):
+                error = self._stringify_tool_output(result)
                 await self._report_tool_gap(
                     tool_name,
                     agent_id=agent_id,
                     actor=actor,
                     actor_type=actor_type,
                     reason="service_unavailable",
-                    error=self._stringify_tool_output(result),
+                    error=error,
                 )
-            if self._audit:
-                await self._audit.record(
-                    event_type="tool.execute",
+                await self._audit_tool_event(
+                    tool_name,
                     actor=actor,
                     actor_type=actor_type,
-                    resource_type="tool",
-                    resource_id=tool_name,
-                    action="execute",
-                    outcome="success",
+                    outcome="failed",
                     metadata={
                         "approval_id": approval_id,
-                        "requires_approval": tool.requires_approval,
+                        "requires_approval": approval_required,
+                        "error": error,
+                        **readiness,
                     },
                 )
+                self._record_tool_metric(
+                    tool_name,
+                    "failed",
+                    tool.risk_level,
+                    readiness["state"],
+                )
+                await self._record_tool_trace(
+                    tool_name,
+                    agent_id=agent_id,
+                    source_type=source_type,
+                    conversation_id=conversation_id,
+                    workflow_run_id=workflow_run_id,
+                    task_excerpt=f"Execute tool {tool_name}",
+                    metadata=trace_metadata,
+                    output=result,
+                    errors=[error],
+                )
+                return ToolResult(success=False, output=result, error=error)
+            await self._audit_tool_event(
+                tool_name,
+                actor=actor,
+                actor_type=actor_type,
+                outcome="success",
+                metadata={
+                    "approval_id": approval_id,
+                    "requires_approval": approval_required,
+                    **readiness,
+                },
+            )
+            self._record_tool_metric(
+                tool_name,
+                "success",
+                tool.risk_level,
+                readiness["state"],
+            )
+            await self._record_tool_trace(
+                tool_name,
+                agent_id=agent_id,
+                source_type=source_type,
+                conversation_id=conversation_id,
+                workflow_run_id=workflow_run_id,
+                task_excerpt=f"Execute tool {tool_name}",
+                metadata=trace_metadata,
+                output=result,
+            )
             return ToolResult(success=True, output=result)
         except Exception as e:
             logger.error(f"Tool execution failed [{tool_name}]: {e}")
@@ -292,18 +533,286 @@ class ToolRegistry:
                     reason="service_unavailable",
                     error=str(e),
                 )
-            if self._audit:
-                await self._audit.record(
-                    event_type="tool.execute",
-                    actor=actor,
-                    actor_type=actor_type,
-                    resource_type="tool",
-                    resource_id=tool_name,
-                    action="execute",
-                    outcome="failed",
-                    metadata={"approval_id": approval_id, "error": str(e)},
-                )
+            await self._audit_tool_event(
+                tool_name,
+                actor=actor,
+                actor_type=actor_type,
+                outcome="failed",
+                metadata={"approval_id": approval_id, "error": str(e), **readiness},
+            )
+            self._record_tool_metric(
+                tool_name,
+                "failed",
+                tool.risk_level,
+                readiness["state"],
+            )
+            await self._record_tool_trace(
+                tool_name,
+                agent_id=agent_id,
+                source_type=source_type,
+                conversation_id=conversation_id,
+                workflow_run_id=workflow_run_id,
+                task_excerpt=f"Execute tool {tool_name}",
+                metadata=trace_metadata,
+                errors=[str(e)],
+            )
             return ToolResult(success=False, error=str(e))
+
+    def _dynamic_readiness(
+        self,
+        tool: ToolDefinition,
+        params: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if tool.name in {"send_email", "send_sms", "make_call", "send_message"}:
+            return self._communications_readiness(tool, params)
+        if tool.category == "erpnext" and (
+            tool.side_effects or settings.require_live_tool_executors
+        ):
+            configured = bool(settings.erpnext_api_key and settings.erpnext_api_secret)
+            if configured:
+                return {
+                    "state": "live",
+                    "readiness_reason": "ERPNext credentials are configured.",
+                    "requires_configuration": False,
+                }
+            return {
+                "state": "configuration_required",
+                "readiness_reason": "ERPNext API credentials are required for this tool.",
+                "requires_configuration": True,
+            }
+        return None
+
+    def _communications_readiness(
+        self,
+        tool: ToolDefinition,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not self._comms_gateway:
+            return {
+                "state": "configuration_required",
+                "readiness_reason": "Communications gateway is not available.",
+                "requires_configuration": True,
+            }
+        integration_status = getattr(self._comms_gateway, "integration_status", None)
+        if not integration_status:
+            return {
+                "state": "live",
+                "readiness_reason": "Communications executor is injected.",
+                "requires_configuration": False,
+            }
+        statuses = integration_status()
+        channel = {
+            "send_email": "email",
+            "send_sms": "sms",
+            "make_call": "voice",
+            "send_message": params.get("platform"),
+        }.get(tool.name)
+        candidates = [
+            item for item in statuses
+            if not channel or item.get("channel") == channel
+        ]
+        if any(item.get("mode") == "live" for item in candidates):
+            return {
+                "state": "live",
+                "readiness_reason": f"Live {channel or 'communications'} provider is configured.",
+                "requires_configuration": False,
+            }
+        if any(item.get("mode") == "simulated" for item in candidates):
+            return {
+                "state": "configuration_required"
+                if settings.require_live_tool_executors
+                else "advisory",
+                "readiness_reason": (
+                    f"{channel or 'Communications'} provider is simulation-only; "
+                    "configure a live provider for production side effects."
+                ),
+                "requires_configuration": True,
+            }
+        return {
+            "state": "configuration_required",
+            "readiness_reason": f"No configured {channel or 'communications'} provider.",
+            "requires_configuration": True,
+        }
+
+    def _approval_required_for(self, tool: ToolDefinition) -> bool:
+        if tool.requires_approval:
+            return True
+        if tool.side_effects and tool.risk_level in {"medium", "high", "critical"}:
+            return True
+        return (
+            settings.autonomy_side_effect_mode == "manual_only"
+            and tool.side_effects
+        )
+
+    @staticmethod
+    def _payload_summary(params: dict[str, Any]) -> dict[str, Any]:
+        summary: dict[str, Any] = {}
+        for key, value in params.items():
+            if isinstance(value, str):
+                summary[key] = value if len(value) <= 180 else value[:177] + "..."
+            elif isinstance(value, (int, float, bool)) or value is None:
+                summary[key] = value
+            elif isinstance(value, list):
+                summary[key] = {"type": "list", "count": len(value)}
+            elif isinstance(value, dict):
+                summary[key] = {
+                    "type": "object",
+                    "keys": sorted(str(item) for item in value.keys())[:20],
+                }
+            else:
+                summary[key] = {"type": type(value).__name__}
+        return summary
+
+    @staticmethod
+    def _replay_instructions(tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "method": "POST",
+            "path": "/api/tools/execute",
+            "body": {
+                "tool_name": tool_name,
+                "params": params,
+            },
+        }
+
+    def _blocked_tool_output(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        readiness: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "tool_name": tool_name,
+            "blocked": True,
+            "state": readiness["state"],
+            "readiness_reason": readiness["readiness_reason"],
+            "requires_configuration": readiness["requires_configuration"],
+            "side_effects": readiness["side_effects"],
+            "executor_kind": readiness["executor_kind"],
+            "payload_summary": self._payload_summary(params),
+            "replay_instructions": self._replay_instructions(tool_name, params),
+        }
+
+    async def _audit_tool_event(
+        self,
+        tool_name: str,
+        *,
+        actor: str,
+        actor_type: str,
+        outcome: str,
+        metadata: dict[str, Any],
+        event_type: str = "tool.execute",
+    ) -> None:
+        if not self._audit:
+            return
+        await self._audit.record(
+            event_type=event_type,
+            actor=actor,
+            actor_type=actor_type,
+            resource_type="tool",
+            resource_id=tool_name,
+            action="execute",
+            outcome=outcome,
+            metadata=metadata,
+        )
+
+    def _record_tool_metric(
+        self,
+        tool_name: str,
+        status: str,
+        risk_level: str,
+        state: str,
+    ) -> None:
+        if self._metrics:
+            self._metrics.record_tool_execution(tool_name, status, risk_level, state)
+
+    def _record_approval_metric(
+        self,
+        action: str,
+        status: str,
+        risk_level: str,
+    ) -> None:
+        if self._metrics:
+            self._metrics.record_approval_event(action, status, risk_level)
+
+    async def _record_tool_trace(
+        self,
+        tool_name: str,
+        *,
+        agent_id: str | None,
+        source_type: str,
+        conversation_id: str | None,
+        workflow_run_id: str | None,
+        task_excerpt: str,
+        metadata: dict[str, Any],
+        output: Any = None,
+        errors: list[str] | None = None,
+    ) -> None:
+        if not self._memory_service:
+            return
+        recalled_ids, written_ids = self._memory_ids_from_tool_output(tool_name, output)
+        trace_metadata = dict(metadata)
+        trace_metadata["coverage"] = self._trace_coverage(
+            recalled_ids=recalled_ids,
+            written_ids=written_ids,
+            errors=errors or [],
+        )
+        try:
+            await self._memory_service.record_trace(
+                SimpleNamespace(
+                    id=str(uuid.uuid4()),
+                    invocation_id=f"tool:{uuid.uuid4()}",
+                    agent_id=agent_id,
+                    conversation_id=conversation_id,
+                    source_type=source_type,
+                    task_excerpt=task_excerpt,
+                    memory_namespace=trace_metadata.get("memory_namespace"),
+                    read_policy={"tool_name": tool_name},
+                    write_policy={"tool_name": tool_name},
+                    recalled_memory_ids=recalled_ids,
+                    written_memory_ids=written_ids,
+                    recall_count=len(recalled_ids),
+                    write_count=len(written_ids),
+                    errors=errors or [],
+                    metadata=trace_metadata,
+                )
+            )
+        except Exception:
+            logger.debug("Failed to record tool memory trace for %s", tool_name, exc_info=True)
+
+    @staticmethod
+    def _memory_ids_from_tool_output(
+        tool_name: str,
+        output: Any,
+    ) -> tuple[list[str], list[str]]:
+        if not output:
+            return [], []
+        if tool_name in {"memory_recall", "knowledge_query"} and isinstance(output, list):
+            return [
+                str(item["id"])
+                for item in output
+                if isinstance(item, dict) and item.get("id")
+            ], []
+        if tool_name in {"memory_remember", "document_index"} and isinstance(output, dict):
+            memory_id = output.get("id") or output.get("memory_id")
+            return [], [str(memory_id)] if memory_id else []
+        return [], []
+
+    @staticmethod
+    def _trace_coverage(
+        *,
+        recalled_ids: list[str],
+        written_ids: list[str],
+        errors: list[str],
+    ) -> str:
+        if errors:
+            return "error"
+        if recalled_ids and written_ids:
+            return "read_write"
+        if recalled_ids:
+            return "read"
+        if written_ids:
+            return "write"
+        return "metadata_only"
 
     def get_tools_for_agent(self, tool_names: list[str]) -> list[ToolDefinition]:
         """Get tool definitions available to an agent based on its tool list."""
@@ -414,6 +923,7 @@ class ToolRegistry:
                 category="communications",
                 requires_approval=True,
                 risk_level="high",
+                side_effects=True,
             ),
             self._tool_send_email,
         )
@@ -434,6 +944,7 @@ class ToolRegistry:
                 category="communications",
                 requires_approval=True,
                 risk_level="high",
+                side_effects=True,
             ),
             self._tool_send_sms,
         )
@@ -454,6 +965,7 @@ class ToolRegistry:
                 category="communications",
                 requires_approval=True,
                 risk_level="high",
+                side_effects=True,
             ),
             self._tool_make_call,
         )
@@ -479,6 +991,7 @@ class ToolRegistry:
                 category="communications",
                 requires_approval=True,
                 risk_level="high",
+                side_effects=True,
             ),
             self._tool_send_message,
         )
@@ -562,6 +1075,8 @@ class ToolRegistry:
                 category="erpnext",
                 requires_approval=True,
                 risk_level="high",
+                side_effects=True,
+                requires_configuration=True,
             ),
             self._tool_erpnext_create_lead,
         )
@@ -612,6 +1127,7 @@ class ToolRegistry:
                 category="roles",
                 requires_approval=True,
                 risk_level="high",
+                side_effects=True,
             ),
             self._tool_role_instantiate,
         )
@@ -726,6 +1242,7 @@ class ToolRegistry:
                 category="governance",
                 requires_approval=True,
                 risk_level="high",
+                side_effects=True,
             ),
             self._tool_approval_resolve,
         )
@@ -849,6 +1366,8 @@ class ToolRegistry:
             [ToolParameter(name="invoice_data", type="dict", description="Invoice data")],
             requires_approval=True,
             risk_level="high",
+            side_effects=True,
+            requires_configuration=True,
         )
         self._register_manifest_tool(
             "erpnext_expense_track",
@@ -961,16 +1480,36 @@ class ToolRegistry:
             "vendor_search": ("operations", "Summarize vendor research", "low"),
             "web_search": ("knowledge", "Summarize a web research request", "low"),
         }
+        external_mutation_tools = {
+            "ci_trigger",
+            "crm_contact_update",
+            "crm_deal_update",
+            "procurement_request",
+            "task_create",
+            "task_update",
+            "ticket_create",
+            "ticket_update",
+        }
         for name, (category, description, risk_level) in generic_tools.items():
             requires_approval = risk_level == "high"
+            side_effects = name in external_mutation_tools
+            executor_kind = "unavailable" if side_effects else "advisory"
             self._register_manifest_tool(
                 name,
                 description,
                 category,
-                self._make_manifest_stub(name, description),
+                self._make_manifest_advisory_executor(name, description),
                 [topic_param, query_param, context_param, content_param],
                 requires_approval=requires_approval,
                 risk_level=risk_level,
+                side_effects=side_effects,
+                executor_kind=executor_kind,
+                requires_configuration=side_effects,
+                readiness_reason=(
+                    "No live executor is registered for this side-effectful business tool."
+                    if side_effects
+                    else "Advisory drafting/inspection tool; it cannot mutate external systems."
+                ),
             )
 
         # Real legal tool registrations
@@ -1190,6 +1729,10 @@ class ToolRegistry:
         parameters: list[ToolParameter] | None = None,
         requires_approval: bool = False,
         risk_level: str = "low",
+        side_effects: bool = False,
+        executor_kind: str = "live",
+        requires_configuration: bool = False,
+        readiness_reason: str | None = None,
     ) -> None:
         self.register(
             ToolDefinition(
@@ -1199,12 +1742,16 @@ class ToolRegistry:
                 category=category,
                 requires_approval=requires_approval,
                 risk_level=risk_level,
+                side_effects=side_effects,
+                executor_kind=executor_kind,
+                requires_configuration=requires_configuration,
+                readiness_reason=readiness_reason,
             ),
             executor,
         )
 
     # ─── Tool Executor Implementations ───────────────────────────────
-    # These are stub implementations that delegate to the actual services.
+    # These executors delegate to injected services or advisory local planners.
     # The services are injected at startup via set_services().
 
     _comms_gateway = None
@@ -1212,14 +1759,24 @@ class ToolRegistry:
     _agent_manager = None
     _erpnext_client = None
     _audit = None
+    _metrics = None
 
-    def set_services(self, comms=None, memory=None, agent_manager=None, erpnext=None, audit=None):
+    def set_services(
+        self,
+        comms=None,
+        memory=None,
+        agent_manager=None,
+        erpnext=None,
+        audit=None,
+        metrics=None,
+    ):
         """Inject service instances for tool execution."""
         self._comms_gateway = comms
         self._memory_service = memory
         self._agent_manager = agent_manager
         self._erpnext_client = erpnext
         self._audit = audit
+        self._metrics = metrics or getattr(audit, "_metrics", None)
 
     async def _approval_granted(self, approval_id: str | None, tool_name: str) -> bool:
         if not approval_id or not self._agent_manager:
@@ -2203,17 +2760,21 @@ class ToolRegistry:
             "created_at": event.get("created_at"),
         }
 
-    def _make_manifest_stub(self, tool_name: str, description: str) -> Callable:
-        async def execute_stub(**params):
+    def _make_manifest_advisory_executor(self, tool_name: str, description: str) -> Callable:
+        async def execute_advisory(**params):
             return {
                 "tool": tool_name,
-                "status": "prepared",
+                "status": "advisory",
                 "description": description,
                 "inputs": params,
+                "executor_kind": "advisory",
+                "readiness_reason": (
+                    "This tool can draft or inspect only; it has no external executor."
+                ),
                 "side_effects": False,
             }
 
-        return execute_stub
+        return execute_advisory
 
     async def _tool_contract_draft(
         self,

@@ -9,6 +9,8 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # App
     app_name: str = "Cyber-Team"
+    app_version: str = "0.1.0"
+    build_sha: str = "local"
     environment: str = "development"
     log_level: str = "INFO"
     secret_key: str = "changeme-app-secret-key"
@@ -46,6 +48,8 @@ class Settings(BaseSettings):
     autonomous_planner_enabled: bool = True
     autonomous_planner_auto_execute_safe_tasks: bool = True
     autonomous_planner_scan_limit: int = 50
+    autonomy_side_effect_mode: str = "approval_required"
+    require_live_tool_executors: bool = False
     supervisor_review_enabled: bool = True
     supervisor_review_initial_delay_seconds: int = 60
     supervisor_review_interval_seconds: int = 900
@@ -58,6 +62,7 @@ class Settings(BaseSettings):
     memory_steward_trace_lookback_hours: int = 24
     memory_steward_trace_limit: int = 200
     memory_steward_empty_recall_threshold: int = 3
+    memory_steward_stale_procedural_days: int = 30
     memory_steward_planner_enabled: bool = True
     memory_steward_auto_apply_safe_actions: bool = True
     memory_steward_request_action_approvals: bool = True
@@ -189,6 +194,8 @@ class Settings(BaseSettings):
             "POSTGRES_PASSWORD": self.postgres_password == "changeme-postgres-password",
             "REDIS_PASSWORD": self.redis_password == "changeme-redis-password",
             "COMMUNICATIONS_ALLOW_SIMULATION": self.communications_allow_simulation,
+            "AUTONOMY_SIDE_EFFECT_MODE": self.autonomy_side_effect_mode != "manual_only",
+            "REQUIRE_LIVE_TOOL_EXECUTORS": not self.require_live_tool_executors,
         }
         invalid = [name for name, is_invalid in insecure_values.items() if is_invalid]
         if invalid:

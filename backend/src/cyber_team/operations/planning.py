@@ -42,6 +42,7 @@ class AutonomousPlanningService:
         self._memory_steward = memory_steward_service
         self._tool_registry = tool_registry
         self._audit = audit_service
+        self._metrics = getattr(audit_service, "_metrics", None)
         self._session_factory = session_factory
 
     async def scan_and_plan(
@@ -454,6 +455,16 @@ class AutonomousPlanningService:
                 error="Requested tools are not registered: "
                 + ", ".join(readiness["missing_tools"]),
             )
+        if readiness["unavailable_tools"]:
+            return await self._finish_task(
+                task["id"],
+                "blocked",
+                result={"tool_readiness": readiness},
+                error="Requested tools are not ready: "
+                + ", ".join(
+                    tool["name"] for tool in readiness["unavailable_tools"]
+                ),
+            )
         return await self._finish_task(
             task["id"],
             "completed",
@@ -709,6 +720,11 @@ class AutonomousPlanningService:
             approval_id=approval_id,
             completed=status in {"completed", "blocked", "failed"},
         )
+        if status == "blocked" and self._metrics:
+            self._metrics.record_planner_block(
+                error or "blocked",
+                (result or {}).get("risk_level", "unknown"),
+            )
         return {
             "status": status,
             "result": result or {},
@@ -892,12 +908,14 @@ class AutonomousPlanningService:
         registry_available = self._tool_registry is not None
         available = []
         missing = []
+        unavailable = []
         if not registry_available:
             return {
                 "registry_available": False,
                 "requested_tools": requested,
                 "available_tools": [],
                 "missing_tools": requested,
+                "unavailable_tools": [],
                 "approval_gated_tools": [],
                 "highest_tool_risk": "low",
             }
@@ -908,6 +926,8 @@ class AutonomousPlanningService:
                 continue
             contract = self._tool_contract(tool, tool_name)
             available.append(contract)
+            if contract.get("state") not in {None, "live", "advisory"}:
+                unavailable.append(contract)
         approval_gated = [
             tool["name"]
             for tool in available
@@ -920,6 +940,7 @@ class AutonomousPlanningService:
             "requested_tools": requested,
             "available_tools": available,
             "missing_tools": missing,
+            "unavailable_tools": unavailable,
             "approval_gated_tools": approval_gated,
             "highest_tool_risk": self._max_risk(
                 [tool.get("risk_level", "low") for tool in available]
@@ -936,6 +957,10 @@ class AutonomousPlanningService:
         return None
 
     def _tool_contract(self, tool, fallback_name: str) -> dict[str, Any]:
+        if self._tool_registry and hasattr(self._tool_registry, "get_tool_readiness"):
+            readiness = self._tool_registry.get_tool_readiness(fallback_name)
+        else:
+            readiness = {}
         if hasattr(tool, "contract"):
             contract = tool.contract()
             return {
@@ -944,6 +969,19 @@ class AutonomousPlanningService:
                 "risk_level": self._normalize_risk(contract.get("risk_level", "low")),
                 "requires_approval": bool(contract.get("requires_approval", False)),
                 "description": contract.get("description", ""),
+                "state": readiness.get("state", contract.get("state")),
+                "readiness_reason": readiness.get(
+                    "readiness_reason",
+                    contract.get("readiness_reason"),
+                ),
+                "side_effects": readiness.get(
+                    "side_effects",
+                    contract.get("side_effects", False),
+                ),
+                "requires_configuration": readiness.get(
+                    "requires_configuration",
+                    contract.get("requires_configuration", False),
+                ),
             }
         return {
             "name": getattr(tool, "name", fallback_name),
@@ -951,6 +989,10 @@ class AutonomousPlanningService:
             "risk_level": self._normalize_risk(getattr(tool, "risk_level", "low")),
             "requires_approval": bool(getattr(tool, "requires_approval", False)),
             "description": getattr(tool, "description", ""),
+            "state": readiness.get("state"),
+            "readiness_reason": readiness.get("readiness_reason"),
+            "side_effects": readiness.get("side_effects", False),
+            "requires_configuration": readiness.get("requires_configuration", False),
         }
 
     def _with_owner_review(

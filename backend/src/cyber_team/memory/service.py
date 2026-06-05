@@ -392,6 +392,12 @@ class MemoryService:
         self,
         agent_id: str | None = None,
         invocation_id: str | None = None,
+        source_type: str | None = None,
+        conversation_id: str | None = None,
+        workflow_run_id: str | None = None,
+        tool_name: str | None = None,
+        memory_namespace: str | None = None,
+        coverage: str | None = None,
         limit: int = 50,
     ) -> list[dict]:
         safe_limit = max(1, min(limit, 200))
@@ -401,9 +407,33 @@ class MemoryService:
                 query = query.where(MemoryTrace.agent_id == agent_id)
             if invocation_id:
                 query = query.where(MemoryTrace.invocation_id == invocation_id)
-            query = query.order_by(desc(MemoryTrace.created_at)).limit(safe_limit)
+            if source_type:
+                query = query.where(MemoryTrace.source_type == source_type)
+            if conversation_id:
+                query = query.where(MemoryTrace.conversation_id == conversation_id)
+            if memory_namespace:
+                query = query.where(MemoryTrace.memory_namespace == memory_namespace)
+            needs_metadata_filter = bool(workflow_run_id or tool_name or coverage)
+            fetch_limit = 500 if needs_metadata_filter else safe_limit
+            query = query.order_by(desc(MemoryTrace.created_at)).limit(fetch_limit)
             traces = (await session.execute(query)).scalars().all()
-            return [self._trace_to_dict(trace) for trace in traces]
+            results = [self._trace_to_dict(trace) for trace in traces]
+            if workflow_run_id:
+                results = [
+                    trace for trace in results
+                    if trace["metadata"].get("workflow_run_id") == workflow_run_id
+                ]
+            if tool_name:
+                results = [
+                    trace for trace in results
+                    if trace["metadata"].get("tool_name") == tool_name
+                ]
+            if coverage:
+                results = [
+                    trace for trace in results
+                    if trace["metadata"].get("coverage") == coverage
+                ]
+            return results[:safe_limit]
 
     async def get_entity_profile(self, entity_id: str) -> dict:
         async with async_session() as session:

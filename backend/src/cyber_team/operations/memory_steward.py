@@ -12,7 +12,7 @@ from sqlalchemy import desc, select
 from cyber_team.clock import utc_now
 from cyber_team.config import settings
 from cyber_team.db import async_session
-from cyber_team.db.models import Agent, MemoryStewardFinding, MemoryTrace
+from cyber_team.db.models import Agent, MemoryEntry, MemoryStewardFinding, MemoryTrace
 
 
 class MemoryStewardService:
@@ -44,6 +44,7 @@ class MemoryStewardService:
         now = now or utc_now()
         traces = await self._load_recent_traces(now)
         proposals = self._propose_findings(traces)
+        proposals.extend(await self._stale_procedural_memory_findings(now))
         findings = []
         created = 0
         updated = 0
@@ -331,6 +332,8 @@ class MemoryStewardService:
         proposals.extend(self._empty_recall_findings(traces))
         proposals.extend(self._memory_error_findings(traces))
         proposals.extend(self._missing_company_memory_findings(traces))
+        proposals.extend(self._missing_trace_coverage_findings(traces))
+        proposals.extend(self._namespace_mismatch_findings(traces))
         return proposals
 
     def _empty_recall_findings(self, traces: list[dict]) -> list[dict]:
@@ -466,6 +469,157 @@ class MemoryStewardService:
                         {trace["agent_id"] for trace in grouped if trace["agent_id"]}
                     )[:5],
                     "sample_tasks": [trace["task_excerpt"] for trace in grouped[:3]],
+                },
+                "metadata": {"source": "memory_steward"},
+            })
+        return findings
+
+    def _missing_trace_coverage_findings(self, traces: list[dict]) -> list[dict]:
+        groups: dict[str, list[dict]] = defaultdict(list)
+        traced_sources = {
+            "agent_invocation",
+            "chat",
+            "workflow_agent_activity",
+            "workflow_tool_activity",
+            "workflow_memory_write",
+            "tool_execution",
+        }
+        for trace in traces:
+            if trace["source_type"] not in traced_sources:
+                continue
+            metadata = trace["metadata"] or {}
+            if metadata.get("coverage") or metadata.get("memory_coverage"):
+                continue
+            groups[trace["source_type"]].append(trace)
+
+        findings = []
+        for source_type, grouped in groups.items():
+            findings.append({
+                "finding_type": "missing_trace_coverage",
+                "severity": "medium",
+                "agent_id": None,
+                "memory_namespace": None,
+                "company_namespace": None,
+                "title": f"Missing trace coverage metadata for {source_type}",
+                "description": (
+                    f"{len(grouped)} recent {source_type} traces are missing normalized "
+                    "coverage metadata."
+                ),
+                "recommendation": (
+                    "Ensure every agent, chat, workflow, and tool trace writes a coverage "
+                    "field so owners can filter complete, empty, write-only, and failed paths."
+                ),
+                "trace_ids": [trace["id"] for trace in grouped],
+                "evidence": {
+                    "dedupe_key": f"missing_trace_coverage:{source_type}",
+                    "source_type": source_type,
+                    "sample_tasks": [trace["task_excerpt"] for trace in grouped[:3]],
+                },
+                "metadata": {"source": "memory_steward"},
+            })
+        return findings
+
+    def _namespace_mismatch_findings(self, traces: list[dict]) -> list[dict]:
+        grouped: dict[tuple[str | None, str, str], list[dict]] = defaultdict(list)
+        for trace in traces:
+            memory_namespace = trace.get("memory_namespace")
+            if not memory_namespace:
+                continue
+            read_policy = trace["read_policy"] or {}
+            metadata = trace["metadata"] or {}
+            company_namespace = (
+                read_policy.get("company_namespace")
+                or metadata.get("company_namespace")
+            )
+            if not company_namespace:
+                continue
+            if memory_namespace == company_namespace or memory_namespace.startswith(
+                f"{company_namespace}:"
+            ):
+                continue
+            grouped[(trace["agent_id"], memory_namespace, company_namespace)].append(trace)
+
+        findings = []
+        for (
+            agent_id,
+            memory_namespace,
+            company_namespace,
+        ), traces_for_namespace in grouped.items():
+            findings.append({
+                "finding_type": "namespace_mismatch",
+                "severity": "high",
+                "agent_id": agent_id,
+                "memory_namespace": memory_namespace,
+                "company_namespace": company_namespace,
+                "title": f"Memory namespace mismatch for {agent_id or 'unknown agent'}",
+                "description": (
+                    f"{len(traces_for_namespace)} recent traces used namespace "
+                    f"{memory_namespace}, but policy resolved company scope "
+                    f"{company_namespace}."
+                ),
+                "recommendation": (
+                    "Align the agent memory namespace with its company namespace before "
+                    "running more autonomous work."
+                ),
+                "trace_ids": [trace["id"] for trace in traces_for_namespace],
+                "evidence": {
+                    "dedupe_key": (
+                        f"namespace_mismatch:{agent_id}:{memory_namespace}:{company_namespace}"
+                    ),
+                    "memory_namespace": memory_namespace,
+                    "company_namespace": company_namespace,
+                    "sample_tasks": [
+                        trace["task_excerpt"] for trace in traces_for_namespace[:3]
+                    ],
+                },
+                "metadata": {"source": "memory_steward"},
+            })
+        return findings
+
+    async def _stale_procedural_memory_findings(self, now: datetime) -> list[dict]:
+        stale_days = max(1, settings.memory_steward_stale_procedural_days)
+        cutoff = now - timedelta(days=stale_days)
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(MemoryEntry)
+                .where(MemoryEntry.memory_type == "procedural")
+                .where(MemoryEntry.created_at < cutoff)
+                .order_by(MemoryEntry.created_at)
+                .limit(100)
+            )
+            entries = result.scalars().all()
+
+        grouped: dict[str, list[MemoryEntry]] = defaultdict(list)
+        for entry in entries:
+            grouped[entry.namespace].append(entry)
+
+        findings = []
+        for namespace, entries_for_namespace in grouped.items():
+            company_namespace = self._company_namespace_for(namespace)
+            oldest = entries_for_namespace[0]
+            findings.append({
+                "finding_type": "stale_procedural_memory",
+                "severity": "medium",
+                "agent_id": None,
+                "memory_namespace": namespace,
+                "company_namespace": company_namespace,
+                "title": f"Stale procedural memory in {namespace}",
+                "description": (
+                    f"{len(entries_for_namespace)} procedural memories in {namespace} "
+                    f"are older than {stale_days} days."
+                ),
+                "recommendation": (
+                    "Review and refresh procedural memories that guide recurring "
+                    "operations before relying on them for autonomous planning."
+                ),
+                "trace_ids": [],
+                "evidence": {
+                    "dedupe_key": f"stale_procedural_memory:{namespace}",
+                    "namespace": namespace,
+                    "threshold_days": stale_days,
+                    "oldest_memory_id": oldest.id,
+                    "oldest_created_at": oldest.created_at.isoformat(),
+                    "memory_count": len(entries_for_namespace),
                 },
                 "metadata": {"source": "memory_steward"},
             })

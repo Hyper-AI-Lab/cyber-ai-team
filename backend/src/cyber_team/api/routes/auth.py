@@ -59,6 +59,13 @@ async def login(req: LoginRequest, request: Request):
                 action="login",
                 outcome="success",
             )
+            await audit.record_control_evidence(
+                control_id="auth.login",
+                control_area="soc2_access_control",
+                actor=req.email,
+                outcome="success",
+                evidence={"event": "owner_login"},
+            )
         return TokenResponse(
             access_token=create_owner_access_token(),
             refresh_token=create_owner_refresh_token(),
@@ -72,6 +79,16 @@ async def login(req: LoginRequest, request: Request):
             action="login",
             outcome="failed",
         )
+        await audit.record_control_evidence(
+            control_id="auth.login",
+            control_area="soc2_access_control",
+            actor=req.email,
+            outcome="failed",
+            evidence={"event": "owner_login"},
+        )
+    metrics = getattr(request.app.state, "metrics_service", None)
+    if metrics:
+        metrics.record_auth_failure("login", "invalid_credentials")
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
@@ -92,6 +109,13 @@ async def refresh_token(req: RefreshRequest, request: Request):
             resource_type="session",
             action="refresh",
             outcome="success",
+        )
+        await audit.record_control_evidence(
+            control_id="auth.refresh",
+            control_area="soc2_access_control",
+            actor=principal.email,
+            outcome="success",
+            evidence={"event": "token_refresh"},
         )
     return TokenResponse(
         access_token=create_owner_access_token(),
@@ -120,5 +144,12 @@ async def create_ws_ticket(
             resource_type="session",
             action="create_websocket_ticket",
             outcome="success",
+        )
+        await audit.record_control_evidence(
+            control_id="auth.websocket_ticket",
+            control_area="soc2_access_control",
+            actor=principal.email,
+            outcome="success",
+            evidence={"event": "websocket_ticket"},
         )
     return WebSocketTicketResponse(ticket=ticket, expires_at=expires_at)

@@ -45,3 +45,60 @@ groups:
         annotations:
           summary: Authorization denial rate is elevated
           description: Authorization denials are above the expected steady-state threshold.
+
+      - alert: CyberTeamToolExecutionFailures
+        expr: sum(rate(cyberteam_tool_executions_total{status=~"failed|blocked"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Tool executions are failing or blocked
+          description: One or more tools are failing, blocked by readiness, or blocked by approval policy.
+
+      - alert: CyberTeamRepeatedMemoryFailures
+        expr: sum(rate(cyberteam_memory_operations_total{status=~"failed|unavailable"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Memory recall/write failures detected
+          description: Agent memory operations are failing or the memory service is unavailable.
+
+      - alert: CyberTeamApprovalBacklogGrowth
+        expr: |
+          sum(increase(cyberteam_approval_events_total{action="requested"}[1h]))
+          -
+          sum(increase(cyberteam_approval_events_total{action=~"approved|rejected|consumed"}[1h])) > 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Approval backlog is growing
+          description: Approval requests are arriving faster than decisions or consumption events.
+
+      - alert: CyberTeamLlmErrorRate
+        expr: sum(rate(cyberteam_llm_invocations_total{status="failed"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: LLM invocation failures detected
+          description: Agent LLM calls are failing and may affect chat, planning, or workflow execution.
+
+      - alert: CyberTeamPlannerBlocks
+        expr: sum(rate(cyberteam_planner_blocks_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Autonomous planner is blocking work
+          description: Planner policy gates or readiness checks are blocking autonomous actions.
+
+      - alert: CyberTeamWorkflowInactivity
+        expr: absent_over_time(cyberteam_workflow_state_changes_total[6h])
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: No workflow state changes observed
+          description: No workflow state-change metrics were observed for 6 hours.

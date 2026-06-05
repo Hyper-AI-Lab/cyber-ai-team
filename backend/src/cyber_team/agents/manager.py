@@ -138,6 +138,7 @@ class AgentManager:
         self._llm = LLMGateway()
         self._memory = memory_service
         self._audit = audit_service
+        self._metrics = getattr(audit_service, "_metrics", None)
         self._tool_registry = tool_registry
         self._agents_cache: dict[str, dict] = {}
 
@@ -210,7 +211,16 @@ class AgentManager:
             )
             await session.commit()
 
-    async def invoke_agent(self, agent_id: str, task: str) -> str:
+    async def invoke_agent(
+        self,
+        agent_id: str,
+        task: str,
+        *,
+        conversation_id: str | None = None,
+        source_type: str = "agent_invocation",
+        trace_metadata: dict[str, Any] | None = None,
+        report_role_gap: bool = True,
+    ) -> str:
         agent = await self.get_agent(agent_id)
         if not agent:
             await self._report_missing_agent_gap(agent_id, task)
@@ -227,11 +237,14 @@ class AgentManager:
             return f"Approval requested: {approval_id}"
 
         invocation_id = str(uuid.uuid4())
-        memory_protocol = AgentMemoryProtocol(self._memory)
+        metadata = dict(trace_metadata or {})
+        memory_protocol = AgentMemoryProtocol(self._memory, metrics_service=self._metrics)
         memory_context = await memory_protocol.prepare_invocation(
             agent=agent,
             task=task,
             invocation_id=invocation_id,
+            conversation_id=conversation_id,
+            source_type=source_type,
         )
 
         # Build prompt and invoke LLM
@@ -241,31 +254,39 @@ class AgentManager:
                 system_prompt=system_prompt,
                 user_message=task,
                 agent_id=agent_id,
+                conversation_id=conversation_id,
             )
+            if self._metrics:
+                self._metrics.record_llm_invocation(agent_id, "success", source_type)
         except Exception as exc:
+            if self._metrics:
+                self._metrics.record_llm_invocation(agent_id, "failed", source_type)
             await memory_protocol.record_failure(
                 memory_context,
                 exc=exc,
                 trace_metadata={
                     "role_family": agent["role_family"],
                     "role_name": agent["role_name"],
+                    **metadata,
                 },
             )
             raise
 
-        await self._maybe_report_autonomous_role_gap(
-            trigger="agent_invocation",
-            source_agent_id=agent_id,
-            company_namespace=memory_context.company_namespace
-            or memory_context.memory_namespace,
-            task=task,
-            result=result,
-            context={
-                "role_family": agent["role_family"],
-                "role_name": agent["role_name"],
-                "invocation_id": invocation_id,
-            },
-        )
+        if report_role_gap:
+            await self._maybe_report_autonomous_role_gap(
+                trigger="agent_invocation",
+                source_agent_id=agent_id,
+                company_namespace=memory_context.company_namespace
+                or memory_context.memory_namespace,
+                task=task,
+                result=result,
+                context={
+                    "role_family": agent["role_family"],
+                    "role_name": agent["role_name"],
+                    "invocation_id": invocation_id,
+                    **metadata,
+                },
+            )
 
         await memory_protocol.complete_invocation(
             memory_context,
@@ -273,6 +294,7 @@ class AgentManager:
             trace_metadata={
                 "role_family": agent["role_family"],
                 "role_name": agent["role_name"],
+                **metadata,
             },
         )
 
@@ -291,27 +313,44 @@ class AgentManager:
             agent = await self.get_agent(agent_id)
             if not agent:
                 raise ValueError(f"Agent {agent_id} not found")
-            system_prompt = agent["instructions"]
             agent_name = agent["role_name"]
+            response = await self.invoke_agent(
+                agent_id,
+                message,
+                conversation_id=conversation_id,
+                source_type="chat",
+                trace_metadata={"conversation_id": conversation_id},
+                report_role_gap=False,
+            )
         else:
             # Route to supervisor/orchestrator
-            system_prompt = (
-                "You are the Cyber-Team supervisor. Coordinate between "
-                "specialist agents and help the owner."
-            )
             agent_id = "supervisor"
             agent_name = "Supervisor"
-
-        response = await self._llm.invoke(
-            system_prompt=system_prompt,
-            user_message=message,
-            agent_id=agent_id,
-            conversation_id=conversation_id,
-        )
+            agent = {
+                "id": agent_id,
+                "role_family": "supervisor",
+                "role_name": agent_name,
+                "instructions": (
+                    "You are the Cyber-Team supervisor. Coordinate between "
+                    "specialist agents and help the owner."
+                ),
+                "memory_namespace": "company:default:supervisor",
+                "approval_policy": "auto",
+                "tools": [],
+                "status": "active",
+                "config": {},
+            }
+            response = await self._invoke_ephemeral_agent(
+                agent,
+                message,
+                conversation_id=conversation_id,
+                source_type="chat",
+                trace_metadata={"conversation_id": conversation_id},
+            )
         await self._maybe_report_autonomous_role_gap(
             trigger="chat",
             source_agent_id=agent_id,
-            company_namespace=agent.get("memory_namespace") if agent_id != "supervisor" else None,
+            company_namespace=agent.get("memory_namespace"),
             task=message,
             result=response,
             context={"conversation_id": conversation_id},
@@ -323,6 +362,58 @@ class AgentManager:
             "message": response,
             "conversation_id": conversation_id,
         }
+
+    async def _invoke_ephemeral_agent(
+        self,
+        agent: dict[str, Any],
+        task: str,
+        *,
+        conversation_id: str | None,
+        source_type: str,
+        trace_metadata: dict[str, Any] | None = None,
+    ) -> str:
+        invocation_id = str(uuid.uuid4())
+        metadata = dict(trace_metadata or {})
+        memory_protocol = AgentMemoryProtocol(self._memory, metrics_service=self._metrics)
+        memory_context = await memory_protocol.prepare_invocation(
+            agent=agent,
+            task=task,
+            invocation_id=invocation_id,
+            conversation_id=conversation_id,
+            source_type=source_type,
+        )
+        try:
+            result = await self._llm.invoke(
+                system_prompt=agent["instructions"] + memory_context.prompt_context,
+                user_message=task,
+                agent_id=agent["id"],
+                conversation_id=conversation_id,
+            )
+            if self._metrics:
+                self._metrics.record_llm_invocation(agent["id"], "success", source_type)
+        except Exception as exc:
+            if self._metrics:
+                self._metrics.record_llm_invocation(agent["id"], "failed", source_type)
+            await memory_protocol.record_failure(
+                memory_context,
+                exc=exc,
+                trace_metadata={
+                    "role_family": agent["role_family"],
+                    "role_name": agent["role_name"],
+                    **metadata,
+                },
+            )
+            raise
+        await memory_protocol.complete_invocation(
+            memory_context,
+            result=result,
+            trace_metadata={
+                "role_family": agent["role_family"],
+                "role_name": agent["role_name"],
+                **metadata,
+            },
+        )
+        return result
 
     # ─── Role Manifests ───────────────────────────────────────────────
 
@@ -371,15 +462,27 @@ class AgentManager:
             return await self._sync_manifest_tools(existing, manifest["default_tools"])
 
         instructions = self._render_template(manifest["instructions_template"], overrides)
+        resolved_tools, unsupported_tools = self._resolve_tool_names(manifest["default_tools"])
+        tool_readiness = self._tool_readiness_report(resolved_tools)
+        config = {**manifest["config"], **overrides}
+        if unsupported_tools:
+            config["requested_tools"] = list(manifest["default_tools"])
+            config["unsupported_tools"] = unsupported_tools
+        if tool_readiness:
+            config["tool_readiness"] = tool_readiness
+            config["unavailable_tools"] = [
+                item for item in tool_readiness
+                if item["state"] not in {"live", "advisory"}
+            ]
 
         create_data = type("AgentCreate", (), {
             "role_family": manifest["family"],
             "role_name": manifest["name"],
             "instructions": instructions,
-            "tools": manifest["default_tools"],
+            "tools": resolved_tools,
             "memory_namespace": manifest["memory_namespace"],
             "approval_policy": manifest["approval_policy"],
-            "config": {**manifest["config"], **overrides},
+            "config": config,
         })()
         return await self.create_agent(create_data)
 
@@ -898,6 +1001,8 @@ Propose a new role to fill this gap. Return JSON with:
                     "expires_at": expires_at.isoformat(),
                 },
             )
+        if self._metrics:
+            self._metrics.record_approval_event("requested", "pending", risk_level)
         return approval_id
 
     async def get_approval_queue(self, status: str | None = None) -> list[dict]:
@@ -992,6 +1097,8 @@ Propose a new role to fill this gap. Return JSON with:
                     "risk_level": req.risk_level,
                 },
             )
+        if self._metrics:
+            self._metrics.record_approval_event(decision, "success", req.risk_level)
         return response
 
     async def approval_is_executable(
@@ -1065,6 +1172,8 @@ Propose a new role to fill this gap. Return JSON with:
                 action="consume",
                 metadata={"target_type": target_type, "target_id": target_id},
             )
+        if self._metrics:
+            self._metrics.record_approval_event("consumed", "success", req.risk_level)
 
     # ─── Agent Status ─────────────────────────────────────────────────
 
@@ -1136,12 +1245,22 @@ Propose a new role to fill this gap. Return JSON with:
                 next_tools.append(tool_name)
 
         config = dict(agent.get("config") or {})
+        tool_readiness = self._tool_readiness_report(next_tools)
         if unsupported_tools:
             config["requested_tools"] = list(requested_tools)
             config["unsupported_tools"] = unsupported_tools
         else:
             config.pop("requested_tools", None)
             config.pop("unsupported_tools", None)
+        if tool_readiness:
+            config["tool_readiness"] = tool_readiness
+            config["unavailable_tools"] = [
+                item for item in tool_readiness
+                if item["state"] not in {"live", "advisory"}
+            ]
+        else:
+            config.pop("tool_readiness", None)
+            config.pop("unavailable_tools", None)
 
         if next_tools == current_tools and config == (agent.get("config") or {}):
             return agent
@@ -1166,6 +1285,24 @@ Propose a new role to fill this gap. Return JSON with:
             return {tool.name for tool in self._tool_registry.list_tools()}
         except Exception:
             return set()
+
+    def _tool_readiness_report(self, tool_names: list[str]) -> list[dict]:
+        if not self._tool_registry:
+            return []
+        report = []
+        for tool_name in tool_names:
+            get_readiness = getattr(self._tool_registry, "get_tool_readiness", None)
+            if not get_readiness:
+                continue
+            readiness = get_readiness(tool_name)
+            report.append({
+                "tool_name": tool_name,
+                "state": readiness["state"],
+                "reason": readiness["readiness_reason"],
+                "side_effects": readiness["side_effects"],
+                "requires_configuration": readiness["requires_configuration"],
+            })
+        return report
 
     def _find_manifest_for_role_spec(
         self,

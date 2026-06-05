@@ -41,6 +41,31 @@ class AuditService:
                 self._metrics.record_audit_event(event_type, outcome)
             return self._event_to_dict(event)
 
+    async def record_control_evidence(
+        self,
+        *,
+        control_id: str,
+        control_area: str,
+        actor: str = "system",
+        outcome: str = "success",
+        evidence: dict | None = None,
+    ) -> dict:
+        """Append SOC2/GDPR readiness evidence to the immutable audit stream."""
+        return await self.record(
+            event_type="control.evidence",
+            actor=actor,
+            actor_type="system",
+            resource_type="control",
+            resource_id=control_id,
+            action=control_area,
+            outcome=outcome,
+            metadata={
+                "control_id": control_id,
+                "control_area": control_area,
+                "evidence": evidence or {},
+            },
+        )
+
     async def list_events(
         self,
         limit: int = 100,

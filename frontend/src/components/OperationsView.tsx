@@ -21,6 +21,7 @@ interface OperationsViewProps {
 }
 
 const statusClass: Record<string, string> = {
+  ready: 'bg-green-600/20 text-green-300',
   planned: 'bg-blue-600/20 text-blue-300',
   completed: 'bg-green-600/20 text-green-300',
   degraded: 'bg-amber-600/20 text-amber-300',
@@ -99,8 +100,12 @@ function planSignals(plan: any) {
 export default function OperationsView({ cycles, onRefresh }: OperationsViewProps) {
   const [localCycles, setLocalCycles] = useState<any[]>(cycles)
   const [plans, setPlans] = useState<any[]>([])
+  const [readiness, setReadiness] = useState<any | null>(null)
+  const [timeline, setTimeline] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [plansLoading, setPlansLoading] = useState(false)
+  const [readinessLoading, setReadinessLoading] = useState(false)
+  const [timelineLoading, setTimelineLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [planAction, setPlanAction] = useState<string | null>(null)
   const [runMemorySteward, setRunMemorySteward] = useState(true)
@@ -134,6 +139,32 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
     }
   }
 
+  const loadReadiness = async () => {
+    setReadinessLoading(true)
+    setError(null)
+    try {
+      const result = await api.getOperationsReadiness()
+      setReadiness(result)
+    } catch (e: any) {
+      setError(e.message || 'Failed to load production readiness')
+    } finally {
+      setReadinessLoading(false)
+    }
+  }
+
+  const loadTimeline = async () => {
+    setTimelineLoading(true)
+    setError(null)
+    try {
+      const result = await api.getDecisionTimeline(50)
+      setTimeline(result)
+    } catch (e: any) {
+      setError(e.message || 'Failed to load decision timeline')
+    } finally {
+      setTimelineLoading(false)
+    }
+  }
+
   const loadCycles = async () => {
     setLoading(true)
     setError(null)
@@ -149,6 +180,8 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
 
   useEffect(() => {
     loadPlans()
+    loadReadiness()
+    loadTimeline()
   }, [])
 
   const runCycle = async () => {
@@ -168,6 +201,8 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
       await onRefresh()
       await loadCycles()
       await loadPlans()
+      await loadReadiness()
+      await loadTimeline()
     } catch (e: any) {
       setError(e.message || 'Autonomous cycle failed')
     } finally {
@@ -188,6 +223,8 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
       await onRefresh()
       await loadCycles()
       await loadPlans()
+      await loadReadiness()
+      await loadTimeline()
     } catch (e: any) {
       setError(e.message || 'Autonomous plan scan failed')
     } finally {
@@ -203,6 +240,8 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
       await onRefresh()
       await loadCycles()
       await loadPlans()
+      await loadReadiness()
+      await loadTimeline()
     } catch (e: any) {
       setError(e.message || 'Autonomous plan execution failed')
     } finally {
@@ -237,6 +276,99 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
           {error}
         </div>
       )}
+
+      <section className="card">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-emerald-300" />
+              <h3 className="text-lg font-semibold">Production Readiness</h3>
+            </div>
+            <p className="mt-1 text-sm text-slate-400">
+              Tool readiness, autonomy policy, evidence, and integration blockers.
+            </p>
+          </div>
+          <button
+            onClick={loadReadiness}
+            disabled={readinessLoading}
+            className="btn-secondary flex items-center gap-2 text-sm"
+          >
+            <RefreshCw className={`h-4 w-4 ${readinessLoading ? 'animate-spin' : ''}`} />
+            Refresh Readiness
+          </button>
+        </div>
+
+        {readiness ? (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+              <Metric label="Status" value={readiness.status === 'ready' ? 1 : 0} />
+              <Metric label="Live tools" value={readiness.tools?.counts_by_state?.live || 0} />
+              <Metric
+                label="Blocked tools"
+                value={
+                  (readiness.tools?.counts_by_state?.unavailable || 0)
+                  + (readiness.tools?.counts_by_state?.configuration_required || 0)
+                }
+              />
+              <Metric
+                label="Trace errors"
+                value={readiness.memory?.recent_trace_errors || 0}
+              />
+              <Metric
+                label="Evidence"
+                value={readiness.controls?.recent_evidence_count || 0}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span
+                className={`rounded-full px-3 py-1 font-medium ${
+                  statusClass[readiness.status] || 'bg-slate-700 text-slate-300'
+                }`}
+              >
+                {readiness.status}
+              </span>
+              <span className="rounded-full border border-slate-700 px-3 py-1 text-slate-300">
+                {readiness.environment}
+              </span>
+              <span className="rounded-full border border-slate-700 px-3 py-1 text-slate-300">
+                autonomy: {readiness.autonomy?.side_effect_mode}
+              </span>
+              <span className="rounded-full border border-slate-700 px-3 py-1 text-slate-300">
+                build: {readiness.version?.build_sha}
+              </span>
+            </div>
+            {readiness.blockers?.length > 0 ? (
+              <div className="space-y-2">
+                <h4 className="text-sm font-medium text-amber-200">Readiness Blockers</h4>
+                {readiness.blockers.slice(0, 8).map((blocker: any, index: number) => (
+                  <div
+                    key={`${blocker.tool_name || blocker.provider || blocker.channel}-${index}`}
+                    className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100"
+                  >
+                    <span className="font-medium">
+                      {blocker.tool_name || `${blocker.channel}:${blocker.provider}`}
+                    </span>
+                    <span className="ml-2 text-amber-200/80">
+                      {blocker.state || blocker.mode}
+                    </span>
+                    {blocker.reason && (
+                      <div className="mt-1 text-xs text-amber-100/70">{blocker.reason}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">
+                No production readiness blockers reported by configured checks.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="py-8 text-center text-slate-500">
+            {readinessLoading ? 'Loading readiness...' : 'Readiness data unavailable.'}
+          </div>
+        )}
+      </section>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(320px,420px)_1fr]">
         <section className="card space-y-5">
@@ -577,6 +709,68 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </section>
+
+      <section className="card overflow-hidden">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-blue-300" />
+            <div>
+              <h3 className="text-lg font-semibold">Decision Timeline</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Memory traces, tool calls, approvals, workflow steps, and audit events.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={loadTimeline}
+            disabled={timelineLoading}
+            className="btn-secondary flex items-center gap-2 text-sm"
+          >
+            <RefreshCw className={`h-4 w-4 ${timelineLoading ? 'animate-spin' : ''}`} />
+            Refresh Timeline
+          </button>
+        </div>
+        {timeline.length === 0 ? (
+          <div className="py-10 text-center text-slate-500">
+            {timelineLoading ? 'Loading timeline...' : 'No decision timeline events recorded.'}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {timeline.slice(0, 20).map((item) => (
+              <div key={`${item.kind}-${item.id}`} className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="rounded-full border border-slate-700 px-2 py-0.5 text-slate-300">
+                    {item.kind}
+                  </span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 ${
+                      item.status === 'success' || item.status === 'recorded'
+                        ? 'bg-green-600/20 text-green-300'
+                        : item.status === 'blocked' || item.status === 'error'
+                          ? 'bg-red-600/20 text-red-300'
+                          : 'bg-slate-700 text-slate-300'
+                    }`}
+                  >
+                    {item.status || 'unknown'}
+                  </span>
+                  {item.agent_id && <span className="text-slate-400">{item.agent_id}</span>}
+                  {item.tool_name && <span className="text-slate-400">{item.tool_name}</span>}
+                  {item.workflow_run_id && (
+                    <span className="break-all text-slate-500">{item.workflow_run_id}</span>
+                  )}
+                  {item.coverage && (
+                    <span className="rounded-full border border-blue-500/30 px-2 py-0.5 text-blue-200">
+                      {item.coverage}
+                    </span>
+                  )}
+                  <span className="ml-auto text-slate-500">{formatDate(item.created_at)}</span>
+                </div>
+                <div className="mt-2 text-sm text-slate-200">{item.title}</div>
+              </div>
+            ))}
           </div>
         )}
       </section>
