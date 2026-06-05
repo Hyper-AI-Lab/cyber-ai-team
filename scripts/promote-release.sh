@@ -53,6 +53,7 @@ PY
 }
 
 VERSION="$(read_manifest version)"
+GIT_COMMIT="$(read_manifest git_commit)"
 CORE_IMAGE="$(read_manifest images.core)"
 UI_IMAGE="$(read_manifest images.ui)"
 BACKUP_FILE=""
@@ -92,6 +93,7 @@ echo "Environment file: $PROMOTE_ENV_FILE"
 echo "Compose project: $COMPOSE_PROJECT_NAME"
 echo "Core image: $CORE_IMAGE"
 echo "UI image: $UI_IMAGE"
+echo "Build SHA: $GIT_COMMIT"
 
 configured_compose_project_name="$COMPOSE_PROJECT_NAME"
 configured_backup_dir="$BACKUP_DIR"
@@ -144,6 +146,7 @@ run_step docker image inspect "$CORE_IMAGE"
 run_step docker image inspect "$UI_IMAGE"
 run_step env COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" \
   CORE_IMAGE="$CORE_IMAGE" UI_IMAGE="$UI_IMAGE" \
+  APP_VERSION="$VERSION" BUILD_SHA="$GIT_COMMIT" \
   CYBERTEAM_ENV_FILE="$PROMOTE_ENV_FILE" \
   docker compose --env-file "$PROMOTE_ENV_FILE" up -d --no-build \
   $PROMOTE_SERVICES
