@@ -16,6 +16,10 @@ UI_BASE = os.environ.get("UI_BASE", "http://localhost:3001").rstrip("/")
 OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "owner@example.com")
 OWNER_PASSWORD = os.environ.get("OWNER_PASSWORD", "changeme-owner-password")
 TIMEOUT_SECONDS = int(os.environ.get("COMPOSE_SMOKE_TIMEOUT_SECONDS", "240"))
+REQUIRE_LIVE_TOOL_EXECUTORS = os.environ.get(
+    "REQUIRE_LIVE_TOOL_EXECUTORS",
+    "false",
+).lower() in {"1", "true", "yes", "on"}
 
 
 def request_json(
@@ -132,6 +136,16 @@ def main() -> int:
     assert_true(status == 200, f"WebSocket ticket failed: {status} {ticket_response}")
     assert_true(bool(ticket_response.get("ticket")), "Ticket response did not include ticket")
 
+    print("Reading tool readiness")
+    status, tools = request_json("GET", f"{API_BASE}/api/tools", token=access_token)
+    assert_true(status == 200, f"Tool readiness failed: {status} {tools}")
+    email_tool = next((tool for tool in tools if tool.get("name") == "send_email"), None)
+    assert_true(email_tool is not None, f"send_email tool missing from readiness payload: {tools}")
+    email_requires_configuration = email_tool.get("state") in {
+        "configuration_required",
+        "unavailable",
+    }
+
     tool_params = {
         "to_address": "smoke-test@example.com",
         "subject": "Cyber-Team smoke test",
@@ -146,6 +160,18 @@ def main() -> int:
     )
     assert_true(status == 200, f"Initial tool request failed: {status} {first_tool}")
     assert_true(first_tool.get("success") is False, f"Expected approval block: {first_tool}")
+
+    if REQUIRE_LIVE_TOOL_EXECUTORS and email_requires_configuration:
+        output = first_tool.get("output") or {}
+        assert_true(output.get("blocked") is True, f"Expected readiness block: {first_tool}")
+        assert_true(
+            output.get("state") in {"configuration_required", "unavailable"},
+            f"Unexpected readiness block state: {first_tool}",
+        )
+        print("Side-effect email tool is readiness-blocked as expected in proof mode")
+        print("Compose smoke test passed.")
+        return 0
+
     approval_id = (first_tool.get("output") or {}).get("approval_id")
     assert_true(bool(approval_id), f"Approval id missing from tool response: {first_tool}")
 
