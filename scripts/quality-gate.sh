@@ -26,10 +26,25 @@ else
   fi
 fi
 
+if [ -n "${FRONTEND_NPM_BIN:-}" ]; then
+  FRONTEND_NPM_CMD=("$FRONTEND_NPM_BIN")
+elif [ "$(printf '%s\n' "${FRONTEND_NODE_CMD[@]}" | head -n 1)" = "node" ]; then
+  FRONTEND_NPM_CMD=(npm)
+else
+  FRONTEND_NPM_CMD=("${FRONTEND_NODE_CMD[@]}" "$(command -v npm)")
+fi
+
 run_frontend_node() {
   (
     cd "$FRONTEND_DIR"
     "${FRONTEND_NODE_CMD[@]}" "$@"
+  )
+}
+
+run_frontend_npm() {
+  (
+    cd "$FRONTEND_DIR"
+    "${FRONTEND_NPM_CMD[@]}" "$@"
   )
 }
 
@@ -86,7 +101,7 @@ echo "== Backend: dependency audit =="
 
 if [ "$SKIP_FRONTEND_INSTALL" != "1" ]; then
   echo "== Frontend: install =="
-  (cd "$FRONTEND_DIR" && npm ci)
+  run_frontend_npm ci
 fi
 
 if [ "$RUN_FRONTEND_BUILD" = "1" ]; then
@@ -101,7 +116,7 @@ echo "== Frontend: tests =="
 run_frontend_node ./node_modules/vitest/vitest.mjs run
 
 echo "== Frontend: dependency audit =="
-(cd "$FRONTEND_DIR" && npm audit --audit-level=moderate)
+run_frontend_npm audit --audit-level=moderate
 
 echo "== Compose: config =="
 (cd "$ROOT_DIR" && docker compose config --quiet)
