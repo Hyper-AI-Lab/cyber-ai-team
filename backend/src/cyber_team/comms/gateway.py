@@ -7,6 +7,7 @@ import ssl
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from email.message import EmailMessage
 from threading import Lock
 
@@ -31,6 +32,7 @@ class CommsGateway:
         self._metrics = metrics_service
         self._circuit_lock = Lock()
         self._circuit_breakers: dict[str, dict[str, float | int]] = {}
+        self._last_validation_result: dict | None = None
 
     def _get_twilio(self):
         if not self._twilio_client and self._twilio_configured():
@@ -109,6 +111,52 @@ class CommsGateway:
                 ),
             ),
         ]
+
+    def last_validation_result(self) -> dict | None:
+        return self._last_validation_result
+
+    async def validate_integrations(self, provider: str = "smtp") -> dict:
+        normalized_provider = (provider or "smtp").strip().lower()
+        if normalized_provider not in {"smtp", "all"}:
+            result = self._validation_result(
+                status="failed",
+                checked_at=self._checked_at(),
+                provider=normalized_provider,
+                results=[
+                    {
+                        "channel": "unknown",
+                        "provider": normalized_provider,
+                        "status": "failed",
+                        "configured": False,
+                        "mode": "unavailable",
+                        "missing": [],
+                        "detail": "No validation check is registered for this provider.",
+                    }
+                ],
+            )
+            self._last_validation_result = result
+            return result
+
+        checked_at = self._checked_at()
+        status_items = self.integration_status()
+        if normalized_provider == "all":
+            results = []
+            for item in status_items:
+                if item["provider"] == "smtp":
+                    results.append(await self._validate_smtp(checked_at))
+                else:
+                    results.append(self._configuration_validation(item, checked_at))
+        else:
+            results = [await self._validate_smtp(checked_at)]
+
+        result = self._validation_result(
+            status=self._overall_validation_status(results),
+            checked_at=checked_at,
+            provider=normalized_provider,
+            results=results,
+        )
+        self._last_validation_result = result
+        return result
 
     async def make_call(self, data) -> dict:
         call_id = str(uuid.uuid4())
@@ -581,7 +629,12 @@ class CommsGateway:
 
     @staticmethod
     def _smtp_configured() -> bool:
-        return bool(settings.smtp_host and settings.smtp_from_email)
+        has_incomplete_auth_pair = bool(settings.smtp_username) ^ bool(settings.smtp_password)
+        return bool(
+            settings.smtp_host
+            and settings.smtp_from_email
+            and not has_incomplete_auth_pair
+        )
 
     @staticmethod
     def _jasmin_configured() -> bool:
@@ -624,6 +677,158 @@ class CommsGateway:
             "detail": detail,
             "circuit": self._circuit_snapshot(provider),
         }
+
+    @staticmethod
+    def _checked_at() -> str:
+        return datetime.now(UTC).isoformat()
+
+    @staticmethod
+    def _validation_result(
+        *,
+        status: str,
+        checked_at: str,
+        provider: str,
+        results: list[dict],
+    ) -> dict:
+        return {
+            "status": status,
+            "checked_at": checked_at,
+            "provider": provider,
+            "results": results,
+        }
+
+    @staticmethod
+    def _overall_validation_status(results: list[dict]) -> str:
+        statuses = {item["status"] for item in results}
+        if "failed" in statuses:
+            return "failed"
+        if "configuration_required" in statuses:
+            return "blocked"
+        return "ready"
+
+    def _configuration_validation(self, item: dict, checked_at: str) -> dict:
+        if item.get("configured"):
+            status = "ready"
+            detail = item.get("detail") or "Provider configuration is present."
+        else:
+            status = "configuration_required"
+            detail = item.get("detail") or "Provider configuration is missing."
+        return {
+            "channel": item.get("channel"),
+            "provider": item.get("provider"),
+            "status": status,
+            "checked_at": checked_at,
+            "configured": bool(item.get("configured")),
+            "mode": item.get("mode"),
+            "missing": self._missing_fields_for_provider(str(item.get("provider") or "")),
+            "detail": detail,
+            "network_check": "not_supported",
+        }
+
+    async def _validate_smtp(self, checked_at: str) -> dict:
+        missing = self._smtp_missing_fields()
+        if missing:
+            return {
+                "channel": "email",
+                "provider": "smtp",
+                "status": "configuration_required",
+                "checked_at": checked_at,
+                "configured": False,
+                "mode": "simulated" if settings.communications_allow_simulation else "disabled",
+                "missing": missing,
+                "detail": "SMTP validation requires host, sender, and complete auth settings.",
+                "network_check": "skipped",
+            }
+
+        try:
+            await self._with_retries(self._validate_smtp_sync, provider="smtp")
+        except Exception as exc:
+            logger.warning("SMTP validation failed: %s", exc)
+            return {
+                "channel": "email",
+                "provider": "smtp",
+                "status": "failed",
+                "checked_at": checked_at,
+                "configured": True,
+                "mode": "live",
+                "missing": [],
+                "detail": str(exc),
+                "network_check": "failed",
+            }
+
+        return {
+            "channel": "email",
+            "provider": "smtp",
+            "status": "ready",
+            "checked_at": checked_at,
+            "configured": True,
+            "mode": "live",
+            "missing": [],
+            "detail": "SMTP connection, TLS/auth handshake, and NOOP check succeeded.",
+            "network_check": "passed",
+        }
+
+    @staticmethod
+    def _missing_fields_for_provider(provider: str) -> list[str]:
+        if provider == "smtp":
+            return CommsGateway._smtp_missing_fields()
+        if provider == "twilio":
+            return [
+                name
+                for name, value in {
+                    "TWILIO_ACCOUNT_SID": settings.twilio_account_sid,
+                    "TWILIO_AUTH_TOKEN": settings.twilio_auth_token,
+                    "TWILIO_PHONE_NUMBER": settings.twilio_phone_number,
+                }.items()
+                if not value
+            ]
+        if provider == "jasmin":
+            return [
+                name
+                for name, value in {
+                    "JASMIN_HOST": settings.jasmin_host,
+                    "JASMIN_USERNAME": settings.jasmin_username,
+                    "JASMIN_PASSWORD": settings.jasmin_password,
+                    "JASMIN_FROM_NUMBER": settings.jasmin_from_number,
+                }.items()
+                if not value
+            ]
+        if provider == "slack_webhook" and not settings.slack_webhook_url:
+            return ["SLACK_WEBHOOK_URL"]
+        if provider == "telegram_bot" and not settings.telegram_bot_token:
+            return ["TELEGRAM_BOT_TOKEN"]
+        if provider == "twilio_whatsapp" and not settings.twilio_whatsapp_from_number:
+            return ["TWILIO_WHATSAPP_FROM_NUMBER"]
+        if provider == "asterisk_ari":
+            return [
+                name
+                for name, value in {
+                    "ASTERISK_ARI_ENABLED": settings.asterisk_ari_enabled,
+                    "ASTERISK_HOST": settings.asterisk_host,
+                    "ASTERISK_ARI_USER": settings.asterisk_ari_user,
+                    "ASTERISK_ARI_PASSWORD": settings.asterisk_ari_password,
+                    "ASTERISK_ARI_ENDPOINT_TEMPLATE": settings.asterisk_ari_endpoint_template,
+                }.items()
+                if not value
+            ]
+        return []
+
+    @staticmethod
+    def _smtp_missing_fields() -> list[str]:
+        missing = [
+            name
+            for name, value in {
+                "SMTP_HOST": settings.smtp_host,
+                "SMTP_FROM_EMAIL": settings.smtp_from_email,
+            }.items()
+            if not value
+        ]
+        if bool(settings.smtp_username) ^ bool(settings.smtp_password):
+            if not settings.smtp_username:
+                missing.append("SMTP_USERNAME")
+            if not settings.smtp_password:
+                missing.append("SMTP_PASSWORD")
+        return missing
 
     def _circuit_snapshot(self, provider: str) -> dict:
         now = time.time()
@@ -775,6 +980,30 @@ class CommsGateway:
                 server.starttls(context=ssl.create_default_context())
             CommsGateway._smtp_login_if_configured(server)
             server.send_message(message, to_addrs=recipients)
+
+    @staticmethod
+    def _validate_smtp_sync() -> None:
+        timeout = settings.communications_provider_timeout_seconds
+        if settings.smtp_use_tls:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(
+                settings.smtp_host,
+                settings.smtp_port,
+                timeout=timeout,
+                context=context,
+            ) as server:
+                server.ehlo()
+                CommsGateway._smtp_login_if_configured(server)
+                server.noop()
+            return
+
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=timeout) as server:
+            server.ehlo()
+            if settings.smtp_starttls:
+                server.starttls(context=ssl.create_default_context())
+                server.ehlo()
+            CommsGateway._smtp_login_if_configured(server)
+            server.noop()
 
     @staticmethod
     def _smtp_login_if_configured(server) -> None:

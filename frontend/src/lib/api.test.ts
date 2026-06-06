@@ -108,6 +108,21 @@ describe('ApiClient', () => {
     expect(fetchMock.mock.calls[0][1]?.headers.Authorization).toBe('Bearer access-1')
   })
 
+  it('validates an integration provider through the authenticated API client', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ status: 'blocked' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.validateIntegration('smtp')
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/integrations/validate')
+    expect(fetchMock.mock.calls[0][1]?.method).toBe('POST')
+    expect(fetchMock.mock.calls[0][1]?.headers.Authorization).toBe('Bearer access-1')
+    expect(fetchMock.mock.calls[0][1]?.body).toBe(JSON.stringify({ provider: 'smtp' }))
+  })
+
   it('lists memory traces with optional filters', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'trace-1' }]))

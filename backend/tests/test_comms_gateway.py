@@ -22,6 +22,8 @@ def test_integration_status_reports_simulated_email_when_smtp_missing(monkeypatc
 def test_integration_status_reports_live_email_when_smtp_configured(monkeypatch):
     monkeypatch.setattr(settings, "smtp_host", "smtp.example.com")
     monkeypatch.setattr(settings, "smtp_from_email", "ops@example.com")
+    monkeypatch.setattr(settings, "smtp_username", "")
+    monkeypatch.setattr(settings, "smtp_password", "")
     monkeypatch.setattr(settings, "communications_allow_simulation", True)
 
     status = CommsGateway().integration_status()
@@ -29,6 +31,89 @@ def test_integration_status_reports_live_email_when_smtp_configured(monkeypatch)
 
     assert email["configured"] is True
     assert email["mode"] == "live"
+
+
+def test_integration_status_requires_complete_smtp_auth_pair(monkeypatch):
+    monkeypatch.setattr(settings, "smtp_host", "smtp.example.com")
+    monkeypatch.setattr(settings, "smtp_from_email", "ops@example.com")
+    monkeypatch.setattr(settings, "smtp_username", "smtp-user")
+    monkeypatch.setattr(settings, "smtp_password", "")
+    monkeypatch.setattr(settings, "communications_allow_simulation", False)
+
+    status = CommsGateway().integration_status()
+    email = next(item for item in status if item["channel"] == "email")
+
+    assert email["configured"] is False
+    assert email["mode"] == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_validate_smtp_reports_configuration_required(monkeypatch):
+    monkeypatch.setattr(settings, "smtp_host", "")
+    monkeypatch.setattr(settings, "smtp_from_email", "")
+    monkeypatch.setattr(settings, "smtp_username", "")
+    monkeypatch.setattr(settings, "smtp_password", "")
+    monkeypatch.setattr(settings, "communications_allow_simulation", True)
+
+    result = await CommsGateway().validate_integrations("smtp")
+
+    assert result["status"] == "blocked"
+    assert result["provider"] == "smtp"
+    assert result["results"][0]["status"] == "configuration_required"
+    assert result["results"][0]["missing"] == ["SMTP_HOST", "SMTP_FROM_EMAIL"]
+    assert result["results"][0]["network_check"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_validate_smtp_performs_handshake_without_sending(monkeypatch):
+    monkeypatch.setattr(settings, "smtp_host", "smtp.example.com")
+    monkeypatch.setattr(settings, "smtp_port", 587)
+    monkeypatch.setattr(settings, "smtp_from_email", "ops@example.com")
+    monkeypatch.setattr(settings, "smtp_username", "smtp-user")
+    monkeypatch.setattr(settings, "smtp_password", "smtp-password")
+    monkeypatch.setattr(settings, "smtp_use_tls", False)
+    monkeypatch.setattr(settings, "smtp_starttls", True)
+    calls = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout):
+            calls.append(("connect", host, port, timeout))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            calls.append(("close",))
+
+        def ehlo(self):
+            calls.append(("ehlo",))
+
+        def starttls(self, context):
+            calls.append(("starttls", bool(context)))
+
+        def login(self, username, password):
+            calls.append(("login", username, password))
+
+        def noop(self):
+            calls.append(("noop",))
+
+        def send_message(self, message, to_addrs=None):
+            calls.append(("send_message", message, to_addrs))
+
+    monkeypatch.setattr("cyber_team.comms.gateway.smtplib.SMTP", FakeSMTP)
+    gateway = CommsGateway()
+
+    async def immediate_retry(operation, provider):
+        operation()
+
+    monkeypatch.setattr(gateway, "_with_retries", immediate_retry)
+
+    result = await gateway.validate_integrations("smtp")
+
+    assert result["status"] == "ready"
+    assert result["results"][0]["network_check"] == "passed"
+    assert ("noop",) in calls
+    assert not [call for call in calls if call[0] == "send_message"]
 
 
 def test_build_email_message_includes_sender_recipients_and_body(monkeypatch):

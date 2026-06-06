@@ -1,12 +1,17 @@
 """Integration status routes."""
 
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, Field
 
 from cyber_team.api.authorization import require_authorization
 from cyber_team.api.security import Principal, get_current_principal
 from cyber_team.config import settings
 
 router = APIRouter()
+
+
+class IntegrationValidationRequest(BaseModel):
+    provider: str = Field(default="smtp", min_length=1, max_length=64)
 
 
 @router.get("/status")
@@ -36,8 +41,43 @@ async def integration_status(
         "require_live_tool_executors": settings.require_live_tool_executors,
         "production_blocking_readiness": bool(blocking_reasons),
         "blocking_reasons": blocking_reasons,
-        "last_validation_result": {
+        "last_validation_result": comms.last_validation_result() or {
             "status": "blocked" if blocking_reasons else "ready",
             "checked_at": None,
+            "provider": "all",
+            "results": [],
         },
     }
+
+
+@router.post("/validate")
+async def validate_integration(
+    data: IntegrationValidationRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "validate",
+        "integration",
+        data.provider,
+        context=data.model_dump(),
+    )
+    result = await request.app.state.comms_gateway.validate_integrations(data.provider)
+    audit = getattr(request.app.state, "audit_service", None)
+    if audit:
+        await audit.record_control_evidence(
+            control_id="integration.validation",
+            control_area="soc2_availability",
+            actor=principal.email,
+            outcome=result["status"],
+            evidence={
+                "environment": settings.environment,
+                "provider": result["provider"],
+                "status": result["status"],
+                "checked_at": result["checked_at"],
+                "results": result["results"],
+            },
+        )
+    return result

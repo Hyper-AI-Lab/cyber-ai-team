@@ -23,6 +23,21 @@ type IntegrationStatus = {
   environment: string
   communications: IntegrationItem[]
   simulation_enabled: boolean
+  last_validation_result?: IntegrationValidationResult
+}
+
+type IntegrationValidationResult = {
+  status: 'ready' | 'blocked' | 'failed' | string
+  checked_at: string | null
+  provider: string
+  results?: Array<{
+    channel: string
+    provider: string
+    status: string
+    detail?: string
+    missing?: string[]
+    network_check?: string
+  }>
 }
 
 const modeStyles: Record<string, string> = {
@@ -43,6 +58,8 @@ export default function IntegrationsView() {
   const [status, setStatus] = useState<IntegrationStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [validatingProvider, setValidatingProvider] = useState<string | null>(null)
+  const [validationResult, setValidationResult] = useState<IntegrationValidationResult | null>(null)
 
   const loadStatus = async () => {
     setLoading(true)
@@ -59,6 +76,22 @@ export default function IntegrationsView() {
   useEffect(() => {
     loadStatus()
   }, [])
+
+  const validateProvider = async (provider: string) => {
+    setValidatingProvider(provider)
+    setError(null)
+    try {
+      const result = await api.validateIntegration(provider)
+      setValidationResult(result)
+      await loadStatus()
+    } catch (e: any) {
+      setError(e.message || 'Failed to validate integration')
+    } finally {
+      setValidatingProvider(null)
+    }
+  }
+
+  const latestValidation = validationResult || status?.last_validation_result
 
   return (
     <div className="space-y-6">
@@ -81,6 +114,19 @@ export default function IntegrationsView() {
       {error && (
         <div className="rounded-lg border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-300">
           {error}
+        </div>
+      )}
+
+      {latestValidation?.checked_at && (
+        <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3 text-sm text-slate-300">
+          <span className="font-medium text-slate-100">
+            {latestValidation.provider}
+          </span>{' '}
+          validation is{' '}
+          <span className={latestValidation.status === 'ready' ? 'text-green-300' : 'text-yellow-300'}>
+            {latestValidation.status}
+          </span>
+          {latestValidation.results?.[0]?.detail ? `: ${latestValidation.results[0].detail}` : ''}
         </div>
       )}
 
@@ -144,6 +190,20 @@ export default function IntegrationsView() {
                         : ''}
                     </p>
                   </div>
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => validateProvider(item.provider)}
+                    disabled={validatingProvider === item.provider}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 transition-colors hover:border-blue-500 hover:text-blue-200 disabled:cursor-wait disabled:opacity-60"
+                    title={`Validate ${item.provider}`}
+                  >
+                    <RefreshCw
+                      className={`h-4 w-4 ${validatingProvider === item.provider ? 'animate-spin' : ''}`}
+                    />
+                    Validate
+                  </button>
                 </div>
               </div>
             ))}

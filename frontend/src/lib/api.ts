@@ -157,6 +157,13 @@ class ApiClient {
     return this.request('/api/integrations/status');
   }
 
+  async validateIntegration(provider: string = 'smtp') {
+    return this.request('/api/integrations/validate', {
+      method: 'POST',
+      body: JSON.stringify({ provider }),
+    });
+  }
+
   // Agents
   async listAgents() {
     return this.request('/api/agents/');
