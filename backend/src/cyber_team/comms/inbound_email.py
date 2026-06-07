@@ -272,6 +272,31 @@ class InboundEmailService:
             await session.refresh(message)
             return self._serialize_message(message, include_body=True)
 
+    async def update_metadata(
+        self,
+        message_id: str,
+        metadata_patch: dict[str, Any],
+        status: str | None = None,
+    ) -> dict[str, Any] | None:
+        async with async_session() as session:
+            message = (
+                await session.execute(
+                    select(InboundEmailMessage).where(InboundEmailMessage.id == message_id)
+                )
+            ).scalar_one_or_none()
+            if not message:
+                return None
+            message.metadata_ = {
+                **(message.metadata_ or {}),
+                **metadata_patch,
+            }
+            if status:
+                message.status = status
+            message.last_seen_at = utc_now()
+            await session.commit()
+            await session.refresh(message)
+            return self._serialize_message(message, include_body=True)
+
     def _validate_sync(self) -> None:
         with self._connect() as mail:
             status, _ = mail.select(settings.imap_mailbox, readonly=True)

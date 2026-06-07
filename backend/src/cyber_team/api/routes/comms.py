@@ -193,6 +193,29 @@ async def update_inbound_email_status(
     return message
 
 
+@router.post("/inbound-email/{message_id}/triage-reply")
+async def triage_inbound_email_and_prepare_reply(
+    message_id: str,
+    request: Request,
+    _body: dict | None = Body(default=None),
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "update",
+        "communication",
+        context={"channel": "inbound_email", "message_id": message_id},
+    )
+    result = await request.app.state.email_triage_service.triage_and_prepare_reply(
+        message_id,
+        requester=principal.email or principal.subject,
+    )
+    if not result:
+        raise HTTPException(404, "Inbound email message not found")
+    return result
+
+
 @router.post("/inbound-email/poll")
 async def poll_inbound_email(
     request: Request,

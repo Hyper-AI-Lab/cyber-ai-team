@@ -417,6 +417,13 @@ class ApiClient {
     });
   }
 
+  async triageInboundEmailAndPrepareReply(messageId: string) {
+    return this.request(`/api/comms/inbound-email/${messageId}/triage-reply`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  }
+
   // Tools
   async listTools(category?: string) {
     const params = category ? `?category=${category}` : '';

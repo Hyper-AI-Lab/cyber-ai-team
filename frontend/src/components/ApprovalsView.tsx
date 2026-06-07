@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { api } from '@/lib/api'
 import { ShieldCheck, CheckCircle, XCircle, Clock } from 'lucide-react'
 
@@ -9,16 +10,43 @@ interface ApprovalsViewProps {
 }
 
 export default function ApprovalsView({ approvals, onRefresh }: ApprovalsViewProps) {
+  const [runningApprovalId, setRunningApprovalId] = useState<string | null>(null)
+
+  const toolReplay = (approval: any) => {
+    const payload = approval.action_payload || {}
+    const replayBody = payload.replay_instructions?.body || {}
+    const toolName = payload.tool_name || replayBody.tool_name
+    const params = payload.params || replayBody.params
+    if (!toolName || !params) {
+      return null
+    }
+    return { toolName, params }
+  }
+
   const handleAction = async (id: string, action: 'approve' | 'reject') => {
+    const approval = approvals.find((item) => item.id === id)
     try {
+      setRunningApprovalId(id)
       if (action === 'approve') {
         await api.approveAction(id, 'Approved via console')
+        const replay = approval ? toolReplay(approval) : null
+        if (replay) {
+          const result = await api.executeTool(replay.toolName, {
+            ...replay.params,
+            _approval_id: id,
+          })
+          if (result?.success === false) {
+            throw new Error(result.error || 'Approved tool execution failed')
+          }
+        }
       } else {
         await api.rejectAction(id, 'Rejected via console')
       }
       onRefresh()
     } catch (e: any) {
       alert(`Error: ${e.message}`)
+    } finally {
+      setRunningApprovalId(null)
     }
   }
 
@@ -108,13 +136,19 @@ export default function ApprovalsView({ approvals, onRefresh }: ApprovalsViewPro
               <div className="flex gap-2">
                 <button
                   onClick={() => handleAction(approval.id, 'approve')}
+                  disabled={runningApprovalId === approval.id}
                   className="btn-primary text-sm flex items-center gap-1"
                 >
-                  <CheckCircle className="w-4 h-4" />
+                  {runningApprovalId === approval.id ? (
+                    <Clock className="w-4 h-4 animate-pulse" />
+                  ) : (
+                    <CheckCircle className="w-4 h-4" />
+                  )}
                   Approve
                 </button>
                 <button
                   onClick={() => handleAction(approval.id, 'reject')}
+                  disabled={runningApprovalId === approval.id}
                   className="btn-danger text-sm flex items-center gap-1"
                 >
                   <XCircle className="w-4 h-4" />

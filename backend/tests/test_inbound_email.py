@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from cyber_team.api.routes.comms import router as comms_router
 from cyber_team.api.security import Principal, get_current_principal
+from cyber_team.comms.email_triage import EmailTriageService
 from cyber_team.comms.inbound_email import InboundEmailService
 from cyber_team.config import settings
 
@@ -142,6 +143,14 @@ def test_inbound_email_routes_list_poll_and_update(monkeypatch):
         poll_once=AsyncMock(return_value={"status": "ready", "stored": 1}),
     )
     app.state.inbound_email_service = service
+    app.state.email_triage_service = SimpleNamespace(
+        triage_and_prepare_reply=AsyncMock(
+            return_value={
+                "message": {"id": "msg-1", "status": "triaged"},
+                "approval": {"state": "approval_required", "approval_id": "approval-1"},
+            }
+        )
+    )
     app.state.comms_gateway = SimpleNamespace(get_logs=AsyncMock(return_value=[]))
 
     async def mock_get_current_principal():
@@ -171,4 +180,86 @@ def test_inbound_email_routes_list_poll_and_update(monkeypatch):
         "/api/comms/inbound-email/msg-1/status",
         json={"status": "triaged"},
     ).json()["status"] == "triaged"
+    assert client.post("/api/comms/inbound-email/msg-1/triage-reply", json={}).json()[
+        "approval"
+    ]["approval_id"] == "approval-1"
     assert client.post("/api/comms/inbound-email/poll", json={}).json()["stored"] == 1
+
+
+@pytest.mark.asyncio
+async def test_email_triage_creates_approval_backed_reply_without_sending():
+    message = {
+        "id": "msg-1",
+        "from_address": "customer@example.com",
+        "to_addresses": ["contact@example.com"],
+        "subject": "Need urgent support",
+        "snippet": "I have a login issue and need help ASAP.",
+        "text_body": "I have a login issue and need help ASAP.",
+        "metadata": {},
+    }
+    inbound = SimpleNamespace(
+        get_message=AsyncMock(return_value=message),
+        update_metadata=AsyncMock(
+            return_value={
+                **message,
+                "status": "triaged",
+                "metadata": {"triage": {"category": "support"}},
+            }
+        ),
+    )
+
+    class FakeToolRegistry:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, tool_name, params):
+            self.calls.append({"tool_name": tool_name, "params": params})
+            return SimpleNamespace(
+                success=False,
+                error="Approval required before executing this tool",
+                output={
+                    "approval_required": True,
+                    "approval_id": "approval-1",
+                    "tool_name": "send_email",
+                    "risk_level": "high",
+                    "reason": "Owner approval is required before executing this tool.",
+                    "target": {"type": "tool", "id": "send_email"},
+                    "payload_summary": {"to_address": "customer@example.com"},
+                    "replay_instructions": {
+                        "path": "/api/tools/execute",
+                        "body": {"tool_name": "send_email", "params": {}},
+                    },
+                },
+            )
+
+    tool_registry = FakeToolRegistry()
+    service = EmailTriageService(
+        inbound_email_service=inbound,
+        tool_registry=tool_registry,
+    )
+
+    result = await service.triage_and_prepare_reply("msg-1", requester="owner@example.com")
+
+    assert result["triage"]["category"] == "support"
+    assert result["triage"]["priority"] == "high"
+    assert result["approval"]["state"] == "approval_required"
+    assert result["approval"]["approval_id"] == "approval-1"
+    assert tool_registry.calls == [
+        {
+            "tool_name": "send_email",
+            "params": {
+                "to_address": "customer@example.com",
+                "subject": "Re: Need urgent support",
+                "body": result["draft_reply"]["body"],
+                "cc": [],
+                "idempotency_key": "inbound-reply:msg-1:v1",
+                "_actor": "owner@example.com",
+                "_actor_type": "user",
+                "_source_type": "inbound_email_reply",
+                "_conversation_id": "msg-1",
+            },
+        }
+    ]
+    inbound.update_metadata.assert_awaited_once()
+    _, metadata_patch = inbound.update_metadata.await_args.args[:2]
+    assert metadata_patch["triage"]["approval"]["approval_id"] == "approval-1"

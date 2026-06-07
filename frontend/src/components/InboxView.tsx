@@ -1,7 +1,16 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Archive, CheckCircle2, Inbox, MailOpen, RefreshCw, ShieldAlert } from 'lucide-react'
+import {
+  Archive,
+  CheckCircle2,
+  Inbox,
+  MailOpen,
+  RefreshCw,
+  Send,
+  ShieldAlert,
+  Sparkles,
+} from 'lucide-react'
 
 import { api } from '@/lib/api'
 
@@ -49,7 +58,9 @@ export default function InboxView() {
   const [loading, setLoading] = useState(true)
   const [polling, setPolling] = useState(false)
   const [updating, setUpdating] = useState<string | null>(null)
+  const [triaging, setTriaging] = useState(false)
   const [pollResult, setPollResult] = useState<any | null>(null)
+  const [triageResult, setTriageResult] = useState<any | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const loadMessages = useCallback(async (nextStatus = status) => {
@@ -89,6 +100,7 @@ export default function InboxView() {
 
   const openMessage = async (message: InboundEmail) => {
     setError(null)
+    setTriageResult(null)
     try {
       setSelected(await api.getInboundEmail(message.id))
     } catch (e: any) {
@@ -110,7 +122,28 @@ export default function InboxView() {
     }
   }
 
+  const triageAndPrepareReply = async (messageId: string) => {
+    setTriaging(true)
+    setError(null)
+    setTriageResult(null)
+    try {
+      const result = await api.triageInboundEmailAndPrepareReply(messageId)
+      setTriageResult(result)
+      if (result.message) {
+        setSelected(result.message)
+      } else {
+        setSelected(await api.getInboundEmail(messageId))
+      }
+      await loadMessages()
+    } catch (e: any) {
+      setError(e.message || 'Failed to triage message')
+    } finally {
+      setTriaging(false)
+    }
+  }
+
   const newCount = messages.filter((message) => message.status === 'new').length
+  const selectedTriage = selected?.metadata?.triage
 
   return (
     <div className="space-y-6">
@@ -267,6 +300,15 @@ export default function InboxView() {
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
+                  onClick={() => triageAndPrepareReply(selected.id)}
+                  disabled={triaging}
+                  className="btn-primary inline-flex items-center gap-2"
+                >
+                  <Sparkles className={`h-4 w-4 ${triaging ? 'animate-pulse' : ''}`} />
+                  Triage + Draft
+                </button>
+                <button
+                  type="button"
                   onClick={() => updateStatus(selected.id, 'triaged')}
                   disabled={updating === 'triaged'}
                   className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 transition-colors hover:border-amber-500"
@@ -293,6 +335,57 @@ export default function InboxView() {
                   Archive
                 </button>
               </div>
+
+              {(triageResult || selectedTriage) && (
+                <div className="rounded-lg border border-blue-900/60 bg-blue-950/20 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-blue-100">
+                        {selectedTriage?.owner_role || triageResult?.triage?.owner_role || 'Owner'}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {(selectedTriage?.category || triageResult?.triage?.category || 'message')
+                          .toString()
+                          .toUpperCase()}
+                        {' · '}
+                        {(selectedTriage?.priority || triageResult?.triage?.priority || 'low')
+                          .toString()
+                          .toUpperCase()}
+                      </p>
+                    </div>
+                    {(selectedTriage?.approval?.approval_id
+                      || triageResult?.approval?.approval_id) && (
+                      <span className="badge-warning">
+                        Approval {selectedTriage?.approval?.approval_id
+                          || triageResult?.approval?.approval_id}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-slate-300">
+                    {selectedTriage?.summary || triageResult?.triage?.summary}
+                  </p>
+                  {(selectedTriage?.approval?.state || triageResult?.approval?.state) && (
+                    <p className="mt-2 text-xs text-slate-400">
+                      Reply state: {selectedTriage?.approval?.state || triageResult?.approval?.state}
+                      {(selectedTriage?.approval?.reason || triageResult?.approval?.reason)
+                        ? ` · ${selectedTriage?.approval?.reason || triageResult?.approval?.reason}`
+                        : ''}
+                    </p>
+                  )}
+                  {(selectedTriage?.draft_reply || triageResult?.draft_reply) && (
+                    <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                      <div className="mb-2 flex items-center gap-2 text-xs text-slate-400">
+                        <Send className="h-3.5 w-3.5" />
+                        {selectedTriage?.draft_reply?.subject
+                          || triageResult?.draft_reply?.subject}
+                      </div>
+                      <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-200">
+                        {selectedTriage?.draft_reply?.body || triageResult?.draft_reply?.body}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
                 <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-200">

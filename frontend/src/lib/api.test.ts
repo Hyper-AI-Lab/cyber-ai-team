@@ -129,6 +129,10 @@ describe('ApiClient', () => {
       .mockResolvedValueOnce(jsonResponse({ id: 'msg-1', text_body: 'hello' }))
       .mockResolvedValueOnce(jsonResponse({ status: 'ready', stored: 1 }))
       .mockResolvedValueOnce(jsonResponse({ id: 'msg-1', status: 'triaged' }))
+      .mockResolvedValueOnce(jsonResponse({
+        message: { id: 'msg-1', status: 'triaged' },
+        approval: { approval_id: 'approval-1' },
+      }))
     vi.stubGlobal('fetch', fetchMock)
     const client = new ApiClient('http://api.test')
 
@@ -137,6 +141,7 @@ describe('ApiClient', () => {
     await client.getInboundEmail('msg-1')
     await client.pollInboundEmail()
     await client.updateInboundEmailStatus('msg-1', 'triaged')
+    await client.triageInboundEmailAndPrepareReply('msg-1')
 
     expect(fetchMock.mock.calls[0][0]).toBe(
       'http://api.test/api/comms/inbound-email?limit=25&status=new',
@@ -149,6 +154,11 @@ describe('ApiClient', () => {
     )
     expect(fetchMock.mock.calls[3][1]?.method).toBe('PATCH')
     expect(fetchMock.mock.calls[3][1]?.body).toBe(JSON.stringify({ status: 'triaged' }))
+    expect(fetchMock.mock.calls[4][0]).toBe(
+      'http://api.test/api/comms/inbound-email/msg-1/triage-reply',
+    )
+    expect(fetchMock.mock.calls[4][1]?.method).toBe('POST')
+    expect(fetchMock.mock.calls[4][1]?.body).toBe(JSON.stringify({}))
   })
 
   it('lists memory traces with optional filters', async () => {

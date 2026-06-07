@@ -34,11 +34,13 @@ from cyber_team.api.routes import (
 from cyber_team.api.security import get_current_principal
 from cyber_team.audit.service import AuditService
 from cyber_team.authorization.service import AuthorizationService
+from cyber_team.comms.email_triage import EmailTriageService
 from cyber_team.comms.gateway import CommsGateway
 from cyber_team.comms.inbound_email import InboundEmailService
 from cyber_team.config import settings
 from cyber_team.db import async_session, init_db
 from cyber_team.integrations.erpnext import ERPNextClient
+from cyber_team.llm.gateway import LLMGateway
 from cyber_team.memory.service import MemoryService
 from cyber_team.observability.metrics import MetricsService
 from cyber_team.operations.autonomous import AutonomousOperationsService
@@ -82,6 +84,7 @@ async def lifespan(app: FastAPI):
         metrics_service=app.state.metrics_service,
         audit_service=app.state.audit_service,
     )
+    app.state.llm_gateway = LLMGateway()
     app.state.erpnext = ERPNextClient()
     app.state.tool_registry = ToolRegistry()
     app.state.agent_manager = AgentManager(
@@ -122,6 +125,13 @@ async def lifespan(app: FastAPI):
         erpnext=app.state.erpnext,
         audit=app.state.audit_service,
         metrics=app.state.metrics_service,
+    )
+    app.state.email_triage_service = EmailTriageService(
+        inbound_email_service=app.state.inbound_email_service,
+        tool_registry=app.state.tool_registry,
+        llm_gateway=app.state.llm_gateway,
+        audit_service=app.state.audit_service,
+        metrics_service=app.state.metrics_service,
     )
     await app.state.memory_service.startup()
     await load_default_roles()
