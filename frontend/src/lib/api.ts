@@ -1,7 +1,62 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL
-  || `http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:8000`;
-const WS_BASE = process.env.NEXT_PUBLIC_WS_URL
-  || API_BASE.replace(/^http/, 'ws');
+type BrowserLocationLike = {
+  hostname: string;
+  origin: string;
+}
+
+function currentBrowserLocation(): BrowserLocationLike | null {
+  return typeof window !== 'undefined' ? window.location : null;
+}
+
+function stripTrailingSlash(value: string) {
+  return value.replace(/\/$/, '');
+}
+
+function isLoopbackHost(hostname: string) {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+function isLoopbackUrl(value?: string) {
+  if (!value) {
+    return false;
+  }
+  try {
+    return isLoopbackHost(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function resolveApiBase(
+  configuredApiBase: string | undefined = process.env.NEXT_PUBLIC_API_URL,
+  location: BrowserLocationLike | null = currentBrowserLocation(),
+) {
+  const configured = configuredApiBase ? stripTrailingSlash(configuredApiBase) : '';
+  if (configured && !(location && isLoopbackUrl(configured) && !isLoopbackHost(location.hostname))) {
+    return configured;
+  }
+  if (!location) {
+    return 'http://localhost:8000';
+  }
+  if (isLoopbackHost(location.hostname)) {
+    return `http://${location.hostname}:8000`;
+  }
+  return stripTrailingSlash(location.origin);
+}
+
+const API_BASE = resolveApiBase();
+export function resolveWsBase(
+  configuredWsBase: string | undefined = process.env.NEXT_PUBLIC_WS_URL,
+  apiBase: string = API_BASE,
+  location: BrowserLocationLike | null = currentBrowserLocation(),
+) {
+  const configured = configuredWsBase ? stripTrailingSlash(configuredWsBase) : '';
+  if (configured && !(location && isLoopbackUrl(configured) && !isLoopbackHost(location.hostname))) {
+    return configured;
+  }
+  return apiBase.replace(/^http/, 'ws');
+}
+
+const WS_BASE = resolveWsBase();
 const CHAT_WS_BASE = WS_BASE.replace(/\/ws\/?$/, '').replace(/\/$/, '');
 
 class ApiClient {

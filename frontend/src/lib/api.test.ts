@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import ApiClient from './api'
+import ApiClient, { resolveApiBase, resolveWsBase } from './api'
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -17,6 +17,30 @@ describe('ApiClient', () => {
   beforeEach(() => {
     window.localStorage.clear()
     vi.unstubAllGlobals()
+  })
+
+  it('uses same-origin API and WebSocket bases when loopback URLs are baked into a hosted UI', () => {
+    const hostedLocation = {
+      hostname: 'cyberteam.hyperailab.com',
+      origin: 'https://cyberteam.hyperailab.com',
+    }
+
+    const apiBase = resolveApiBase('http://localhost:8000', hostedLocation)
+    const wsBase = resolveWsBase('ws://localhost:8000', apiBase, hostedLocation)
+
+    expect(apiBase).toBe('https://cyberteam.hyperailab.com')
+    expect(wsBase).toBe('wss://cyberteam.hyperailab.com')
+  })
+
+  it('keeps loopback API URLs for local browser development', () => {
+    const localLocation = {
+      hostname: 'localhost',
+      origin: 'http://localhost:3001',
+    }
+
+    expect(resolveApiBase('http://localhost:8000', localLocation)).toBe(
+      'http://localhost:8000',
+    )
   })
 
   it('stores login tokens and sends the bearer token on later requests', async () => {
