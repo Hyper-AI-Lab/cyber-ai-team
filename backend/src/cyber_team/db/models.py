@@ -2,7 +2,17 @@
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from cyber_team.clock import utc_now
@@ -166,6 +176,40 @@ class CommunicationLog(Base):
     status: Mapped[str] = mapped_column(String(20), default="sent")
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+
+class InboundEmailMessage(Base):
+    __tablename__ = "inbound_email_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "mailbox",
+            "provider_uid",
+            name="uq_inbound_email_provider_mailbox_uid",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(30), default="imap", index=True)
+    mailbox: Mapped[str] = mapped_column(String(200), index=True)
+    provider_uid: Mapped[str] = mapped_column(String(200))
+    message_id: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
+    from_address: Mapped[str] = mapped_column(String(500), index=True)
+    to_addresses: Mapped[list] = mapped_column(JSON, default=list)
+    cc_addresses: Mapped[list] = mapped_column(JSON, default=list)
+    subject: Mapped[str] = mapped_column(String(500), default="")
+    text_body: Mapped[str] = mapped_column(Text, default="")
+    html_body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    snippet: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(30), default="new", index=True)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=utc_now,
+        onupdate=utc_now,
+    )
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
 
 
 class RoleManifest(Base):

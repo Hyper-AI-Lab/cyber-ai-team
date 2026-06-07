@@ -148,6 +148,17 @@ class Settings(BaseSettings):
     smtp_from_email: str = ""
     smtp_use_tls: bool = False
     smtp_starttls: bool = True
+    inbound_email_enabled: bool = False
+    imap_host: str = ""
+    imap_port: int = 993
+    imap_username: str = ""
+    imap_password: str = ""
+    imap_use_ssl: bool = True
+    imap_mailbox: str = "INBOX"
+    inbound_email_address: str = ""
+    inbound_email_poll_interval_seconds: int = 60
+    inbound_email_max_messages_per_poll: int = 20
+    inbound_email_mark_seen: bool = False
 
     # Langfuse
     langfuse_public_key: str = ""

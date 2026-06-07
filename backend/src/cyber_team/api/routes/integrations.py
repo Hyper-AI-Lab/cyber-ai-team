@@ -22,6 +22,9 @@ async def integration_status(
     await require_authorization(request, principal, "read", "integration_status")
     comms = request.app.state.comms_gateway
     communications = comms.integration_status()
+    inbound_email = getattr(request.app.state, "inbound_email_service", None)
+    if inbound_email:
+        communications = [*communications, inbound_email.integration_status()]
     blocking_reasons = []
     if settings.require_live_tool_executors:
         blocking_reasons = [
@@ -34,6 +37,9 @@ async def integration_status(
             for item in communications
             if item.get("mode") != "live"
         ]
+    last_validation = comms.last_validation_result()
+    if inbound_email and inbound_email.last_validation_result():
+        last_validation = inbound_email.last_validation_result()
     return {
         "environment": settings.environment,
         "communications": communications,
@@ -41,7 +47,7 @@ async def integration_status(
         "require_live_tool_executors": settings.require_live_tool_executors,
         "production_blocking_readiness": bool(blocking_reasons),
         "blocking_reasons": blocking_reasons,
-        "last_validation_result": comms.last_validation_result() or {
+        "last_validation_result": last_validation or {
             "status": "blocked" if blocking_reasons else "ready",
             "checked_at": None,
             "provider": "all",
@@ -64,7 +70,11 @@ async def validate_integration(
         data.provider,
         context=data.model_dump(),
     )
-    result = await request.app.state.comms_gateway.validate_integrations(data.provider)
+    inbound_email = getattr(request.app.state, "inbound_email_service", None)
+    if inbound_email and data.provider.lower() in {"imap", "inbound_email"}:
+        result = await inbound_email.validate()
+    else:
+        result = await request.app.state.comms_gateway.validate_integrations(data.provider)
     audit = getattr(request.app.state, "audit_service", None)
     if audit:
         await audit.record_control_evidence(

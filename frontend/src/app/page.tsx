@@ -12,6 +12,7 @@ import ApprovalsView from '@/components/ApprovalsView'
 import AuditView from '@/components/AuditView'
 import IntegrationsView from '@/components/IntegrationsView'
 import OperationsView from '@/components/OperationsView'
+import InboxView from '@/components/InboxView'
 
 export type ViewName =
   | 'dashboard'
@@ -19,6 +20,7 @@ export type ViewName =
   | 'memory'
   | 'workflows'
   | 'operations'
+  | 'inbox'
   | 'chat'
   | 'approvals'
   | 'audit'
@@ -196,6 +198,8 @@ export default function Home() {
         return <WorkflowsView />
       case 'operations':
         return <OperationsView cycles={autonomousCycles} onRefresh={refreshData} />
+      case 'inbox':
+        return <InboxView />
       case 'chat':
         return <ChatView agents={agents} />
       case 'approvals':

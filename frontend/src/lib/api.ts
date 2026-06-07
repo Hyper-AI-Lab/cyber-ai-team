@@ -391,6 +391,32 @@ class ApiClient {
     return this.request(`/api/comms/logs${params}`);
   }
 
+  async listInboundEmail(status?: string, limit: number = 50) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (status) {
+      params.set('status', status);
+    }
+    return this.request(`/api/comms/inbound-email?${params.toString()}`);
+  }
+
+  async getInboundEmail(messageId: string) {
+    return this.request(`/api/comms/inbound-email/${messageId}`);
+  }
+
+  async pollInboundEmail() {
+    return this.request('/api/comms/inbound-email/poll', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  }
+
+  async updateInboundEmailStatus(messageId: string, status: string) {
+    return this.request(`/api/comms/inbound-email/${messageId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  }
+
   // Tools
   async listTools(category?: string) {
     const params = category ? `?category=${category}` : '';

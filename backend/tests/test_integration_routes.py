@@ -107,3 +107,71 @@ def test_validate_integration_route_records_control_evidence(monkeypatch):
     assert kwargs["control_id"] == "integration.validation"
     assert kwargs["outcome"] == "blocked"
     assert kwargs["evidence"]["provider"] == "smtp"
+
+
+def test_validate_imap_integration_uses_inbound_email_service(monkeypatch):
+    app = FastAPI()
+    app.include_router(integrations_router, prefix="/api/integrations")
+
+    class FakeCommsGateway:
+        def integration_status(self):
+            return []
+
+        def last_validation_result(self):
+            return None
+
+    class FakeInboundEmailService:
+        async def validate(self):
+            return {
+                "status": "ready",
+                "checked_at": "2026-06-07T00:00:00+00:00",
+                "provider": "imap",
+                "results": [
+                    {
+                        "channel": "inbound_email",
+                        "provider": "imap",
+                        "status": "ready",
+                        "network_check": "passed",
+                    }
+                ],
+            }
+
+        def integration_status(self):
+            return {
+                "channel": "inbound_email",
+                "provider": "imap",
+                "configured": True,
+                "mode": "live",
+            }
+
+    app.state.comms_gateway = FakeCommsGateway()
+    app.state.inbound_email_service = FakeInboundEmailService()
+    app.state.audit_service = type(
+        "FakeAudit",
+        (),
+        {"record_control_evidence": AsyncMock()},
+    )()
+
+    async def mock_get_current_principal():
+        return Principal(
+            subject="owner",
+            email="owner@example.com",
+            role="owner",
+            token_type="access",
+        )
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.integrations.require_authorization",
+        mock_require_authorization,
+    )
+
+    response = TestClient(app).post("/api/integrations/validate", json={"provider": "imap"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["provider"] == "imap"

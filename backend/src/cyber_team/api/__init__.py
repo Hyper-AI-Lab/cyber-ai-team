@@ -35,6 +35,7 @@ from cyber_team.api.security import get_current_principal
 from cyber_team.audit.service import AuditService
 from cyber_team.authorization.service import AuthorizationService
 from cyber_team.comms.gateway import CommsGateway
+from cyber_team.comms.inbound_email import InboundEmailService
 from cyber_team.config import settings
 from cyber_team.db import async_session, init_db
 from cyber_team.integrations.erpnext import ERPNextClient
@@ -77,6 +78,10 @@ async def lifespan(app: FastAPI):
     app.state.memory_service = MemoryService()
     app.state.retention_service = RetentionService(memory_service=app.state.memory_service)
     app.state.comms_gateway = CommsGateway(metrics_service=app.state.metrics_service)
+    app.state.inbound_email_service = InboundEmailService(
+        metrics_service=app.state.metrics_service,
+        audit_service=app.state.audit_service,
+    )
     app.state.erpnext = ERPNextClient()
     app.state.tool_registry = ToolRegistry()
     app.state.agent_manager = AgentManager(
@@ -123,6 +128,9 @@ async def lifespan(app: FastAPI):
     app.state.autonomous_operations_task = None
     app.state.supervisor_review_task = None
     app.state.memory_steward_task = None
+    app.state.inbound_email_task = None
+    if settings.inbound_email_enabled:
+        app.state.inbound_email_task = asyncio.create_task(_inbound_email_loop(app))
     if settings.autonomous_operations_enabled:
         app.state.autonomous_operations_task = asyncio.create_task(
             _autonomous_operations_loop(app)
@@ -143,6 +151,7 @@ async def lifespan(app: FastAPI):
             "autonomous_operations_task",
             "supervisor_review_task",
             "memory_steward_task",
+            "inbound_email_task",
         ):
             task = getattr(app.state, task_name, None)
             if task:
@@ -198,6 +207,19 @@ async def _memory_steward_loop(app: FastAPI) -> None:
             raise
         except Exception:
             logger.exception("Memory steward loop failed")
+        await asyncio.sleep(interval)
+
+
+async def _inbound_email_loop(app: FastAPI) -> None:
+    await asyncio.sleep(10)
+    interval = max(30, settings.inbound_email_poll_interval_seconds)
+    while True:
+        try:
+            await app.state.inbound_email_service.poll_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Inbound email polling loop failed")
         await asyncio.sleep(interval)
 
 

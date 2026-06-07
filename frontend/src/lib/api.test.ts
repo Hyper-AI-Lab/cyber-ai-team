@@ -123,6 +123,34 @@ describe('ApiClient', () => {
     expect(fetchMock.mock.calls[0][1]?.body).toBe(JSON.stringify({ provider: 'smtp' }))
   })
 
+  it('manages inbound email through the authenticated API client', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'msg-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'msg-1', text_body: 'hello' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'ready', stored: 1 }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'msg-1', status: 'triaged' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.listInboundEmail('new', 25)
+    await client.getInboundEmail('msg-1')
+    await client.pollInboundEmail()
+    await client.updateInboundEmailStatus('msg-1', 'triaged')
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://api.test/api/comms/inbound-email?limit=25&status=new',
+    )
+    expect(fetchMock.mock.calls[1][0]).toBe('http://api.test/api/comms/inbound-email/msg-1')
+    expect(fetchMock.mock.calls[2][0]).toBe('http://api.test/api/comms/inbound-email/poll')
+    expect(fetchMock.mock.calls[2][1]?.method).toBe('POST')
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      'http://api.test/api/comms/inbound-email/msg-1/status',
+    )
+    expect(fetchMock.mock.calls[3][1]?.method).toBe('PATCH')
+    expect(fetchMock.mock.calls[3][1]?.body).toBe(JSON.stringify({ status: 'triaged' }))
+  })
+
   it('lists memory traces with optional filters', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'trace-1' }]))
