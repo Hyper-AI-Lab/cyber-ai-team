@@ -1,6 +1,8 @@
 # Backup and Restore Runbook
 
 This runbook covers PostgreSQL and Qdrant data protection for Cyber-Team.
+ERPNext has its own backup and restore drill flow because it owns MariaDB plus
+site files; see `docs/runbooks/erpnext.md`.
 
 ## Scope
 
@@ -93,6 +95,20 @@ deployment environment.
 Restore the snapshot into a staging Qdrant instance first, then run memory recall smoke
 checks. If Qdrant is unavailable or restore fails, the application should continue with
 the PostgreSQL fallback path, with degraded semantic ranking.
+
+## ERPNext Backup and Restore
+
+ERPNext stores CRM, accounting, project, support, and procurement records in its
+own MariaDB database and site file volumes. Run the ERPNext-specific automation
+before ERPNext changes or staging promotion:
+
+```bash
+ERPNEXT_ENV_FILE=deploy/environments/staging.env ./scripts/erpnext-backup.sh
+ERPNEXT_ENV_FILE=deploy/environments/staging.env ./scripts/erpnext-restore-drill.sh
+```
+
+ERPNext backup manifests are written under `backups/erpnext/staging/`.
+Restore drill evidence is written under `dist/erpnext/restore-drills/`.
 
 ## Incident Checklist
 

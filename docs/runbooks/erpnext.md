@@ -129,36 +129,64 @@ records after validation instead of deleting audit-relevant business history.
 
 ## Backup
 
-Back up ERPNext MariaDB and sites before promotion or risky changes:
+Back up ERPNext MariaDB and site files before promotion or risky changes:
 
 ```bash
-mkdir -p backups/erpnext/staging
-docker compose --env-file deploy/environments/staging.env --profile erp exec -T erpnext-backend \
-  bench --site "${ERPNEXT_SITE_NAME:-erpnext.hyperailab.com}" backup --with-files
-docker compose --env-file deploy/environments/staging.env --profile erp exec -T erpnext-backend \
-  find sites/"${ERPNEXT_SITE_NAME:-erpnext.hyperailab.com}"/private/backups -maxdepth 1 -type f -print
+ERPNEXT_ENV_FILE=deploy/environments/staging.env \
+./scripts/erpnext-backup.sh
 ```
 
-Copy the generated backup files from the `erpnext-backend` container or the
-`erpnext-sites` volume into `backups/erpnext/staging/` and keep them with the
-Cyber-Team deployment evidence.
+The script runs `bench backup --with-files` inside `erpnext-backend`, copies the
+database/public/private file artifacts into:
+
+```text
+backups/erpnext/staging/YYYYMMDDTHHMMSSZ/
+```
+
+It writes a manifest with filenames, sizes, and SHA-256 checksums to:
+
+```text
+backups/erpnext/staging/YYYYMMDDTHHMMSSZ/backup-manifest.json
+```
+
+It also writes non-secret operational evidence to:
+
+```text
+dist/erpnext/backups/erpnext-backup-YYYYMMDDTHHMMSSZ.json
+```
 
 ## Restore Drill
 
-Run the restore drill in an isolated environment or a temporary ERPNext site:
+Run the restore drill against the latest ERPNext backup artifact:
 
 ```bash
-docker compose --env-file deploy/environments/staging.env --profile erp exec -T erpnext-backend \
-  bench --site <temporary-site> restore /path/to/database.sql.gz --with-public-files /path/to/public.tar --with-private-files /path/to/private.tar
+ERPNEXT_ENV_FILE=deploy/environments/staging.env \
+./scripts/erpnext-restore-drill.sh
 ```
 
-Record restore evidence under `dist/erpnext/restore-drills/` with:
+To restore a specific backup manifest:
+
+```bash
+ERPNEXT_ENV_FILE=deploy/environments/staging.env \
+ERPNEXT_RESTORE_BACKUP_MANIFEST=backups/erpnext/staging/YYYYMMDDTHHMMSSZ/backup-manifest.json \
+./scripts/erpnext-restore-drill.sh
+```
+
+The script creates a temporary ERPNext site named
+`restore-drill-YYYYMMDDTHHMMSSZ.local`, restores the database and site files into
+that site, runs `bench migrate`, validates the REST ping endpoint through the
+ERPNext frontend, records key DocType counts, verifies the Cyber-Team integration
+user exists, and then drops the temporary site.
+
+Restore evidence is written under `dist/erpnext/restore-drills/` with:
 
 - Backup filenames and checksums.
 - Temporary site name.
 - Restore start/end timestamps.
 - `bench --site <temporary-site> migrate` output.
 - API validation result against the temporary site.
+- Restored Lead, Task, Issue, Material Request, Item, Company, and User counts.
+- Temporary-site cleanup status.
 
 ## Rollback
 

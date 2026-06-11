@@ -364,3 +364,57 @@
   - `scripts/erpnext-smoke.py`
 - Next step:
   - Stage, commit, and push the tracked implementation changes to GitHub.
+
+## 2026-06-11T02:27:31Z - STEP-014 - ERPNext backup and restore drill automation
+
+- Files/services changed:
+  - `scripts/erpnext-backup.sh`
+  - `scripts/erpnext-restore-drill.sh`
+  - `docs/runbooks/erpnext.md`
+  - `docs/runbooks/backup-restore.md`
+  - ERPNext temporary restore drill sites: `restore-drill-20260611T015920Z.local` and `restore-drill-20260611T021559Z.local`
+- Commands run:
+  - `bash -n scripts/erpnext-backup.sh`
+  - `ERPNEXT_ENV_FILE=deploy/environments/staging.env ./scripts/erpnext-backup.sh`
+  - `ERPNEXT_ENV_FILE=deploy/environments/staging.env ERPNEXT_RESTORE_BACKUP_MANIFEST=backups/erpnext/staging/20260611T015857Z/backup-manifest.json ./scripts/erpnext-restore-drill.sh`
+  - `docker compose --env-file deploy/environments/staging.env --profile erp exec -T erpnext-backend bash -lc 'test ! -d sites/restore-drill-20260611T021559Z.local && echo temporary-site-cleaned || echo temporary-site-still-present'`
+- Result:
+  - Added an ERPNext backup script that runs `bench backup --with-files` inside the ERPNext backend container, copies database/public/private file artifacts into ignored local backup storage, records file sizes and SHA-256 checksums, and writes non-secret evidence.
+  - Added an ERPNext restore drill script that creates a temporary ERPNext site, restores the selected database and file backup, runs `bench migrate`, validates API reachability through the ERPNext frontend, records restored DocType row counts and integration-user presence, writes evidence, and drops the temporary site during cleanup.
+  - Verified a staging ERPNext backup artifact at `backups/erpnext/staging/20260611T015857Z/backup-manifest.json`.
+  - Verified two restore drill passes. The final pass restored Lead, Task, Issue, Material Request, Item, Company, and User records, validated `{"message":"pong"}`, confirmed `cyberteam.integration@example.local`, and cleaned up `restore-drill-20260611T021559Z.local`.
+  - Updated runbooks so ERPNext backup/restore uses the automated scripts and so the core backup/restore runbook points to the ERPNext-specific flow.
+- Evidence path/link:
+  - `/home/projects/cyber-team/backups/erpnext/staging/20260611T015857Z/backup-manifest.json`
+  - `/home/projects/cyber-team/dist/erpnext/backups/erpnext-backup-20260611T015857Z.json`
+  - `/home/projects/cyber-team/dist/erpnext/restore-drills/erpnext-restore-drill-20260611T021559Z.json`
+  - `docs/runbooks/erpnext.md`
+  - `docs/runbooks/backup-restore.md`
+- Next step:
+  - Run final quality gates for the backup/restore automation change, then stage, commit, push, and watch GitHub CI.
+
+## 2026-06-11T02:29:25Z - STEP-015 - Verification for ERPNext backup/restore automation
+
+- Files/services changed:
+  - No additional implementation changes after STEP-014.
+  - Verification touched staging Cyber-Team approval records and staging ERPNext smoke records through existing smoke scripts.
+- Commands run:
+  - `bash -n scripts/erpnext-backup.sh scripts/erpnext-restore-drill.sh scripts/bootstrap-erpnext.sh scripts/compose-smoke.sh`
+  - `docker compose --env-file deploy/environments/staging.env --profile erp config >/tmp/cyber-team-erp-compose-config-restore-drill-20260611.yml`
+  - `git diff --check`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `.venv-quality/bin/ruff check backend/src backend/tests backend/alembic scripts/erpnext-smoke.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m compileall -q backend/src backend/tests`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env API_BASE=http://127.0.0.1:18000 UI_BASE=http://127.0.0.1:13001 ./scripts/compose-smoke.sh`
+  - `./scripts/erpnext-smoke.py --env-file deploy/environments/staging.env --api-base http://127.0.0.1:18000`
+- Result:
+  - Shell syntax checks, ERPNext Compose config, diff whitespace check, Ruff, and backend compile all passed.
+  - Backend test suite passed: 131 passed, 2 warnings.
+  - Cyber-Team compose smoke passed against `https://cyberteam.hyperailab.com`, including owner login, dashboard KPIs, integration status, one-time WebSocket ticket minting, tool readiness, and approval queue rejection flow.
+  - Cyber-Team-to-ERPNext smoke passed through approval-gated tool execution: Lead, Task, Issue, and Material Request were created in ERPNext; Lead was archived to `Do Not Contact`, Tasks to `Completed`, Issue to `Closed`, and Material Request remains a staging Draft audit record.
+- Evidence path/link:
+  - `/tmp/cyber-team-erp-compose-config-restore-drill-20260611.yml`
+  - `/home/projects/cyber-team/dist/erpnext/restore-drills/erpnext-restore-drill-20260611T021559Z.json`
+  - `/home/projects/cyber-team/dist/erpnext/smoke/cyberteam-erpnext-tool-smoke-20260611T022918Z.json`
+- Next step:
+  - Stage, commit, and push the tracked backup/restore automation changes to GitHub, then watch CI.
