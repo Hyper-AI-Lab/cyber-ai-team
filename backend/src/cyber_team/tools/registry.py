@@ -12,7 +12,9 @@ from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from urllib.parse import quote
 
+import httpx
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 
@@ -565,6 +567,21 @@ class ToolRegistry:
     ) -> dict[str, Any] | None:
         if tool.name in {"send_email", "send_sms", "make_call", "send_message"}:
             return self._communications_readiness(tool, params)
+        if tool.name == "ci_trigger":
+            if settings.github_ci_configured:
+                return {
+                    "state": "live",
+                    "readiness_reason": "GitHub workflow_dispatch credentials are configured.",
+                    "requires_configuration": False,
+                }
+            return {
+                "state": "configuration_required",
+                "readiness_reason": (
+                    "GITHUB_TOKEN, GITHUB_REPOSITORY, GITHUB_DEFAULT_WORKFLOW, "
+                    "and GITHUB_DEFAULT_REF are required for CI triggering."
+                ),
+                "requires_configuration": True,
+            }
         if tool.category == "erpnext" and (
             tool.side_effects or settings.require_live_tool_executors
         ):
@@ -1344,16 +1361,68 @@ class ToolRegistry:
             required=False,
             default="",
         )
-        entity_id_param = ToolParameter(
-            name="entity_id",
-            description="Target entity identifier",
-            required=False,
-            default="",
-        )
         updates_param = ToolParameter(
             name="updates",
             type="dict",
             description="Proposed updates",
+            required=False,
+            default={},
+        )
+        contact_id_param = ToolParameter(
+            name="contact_id",
+            description="ERPNext Contact identifier",
+        )
+        opportunity_id_param = ToolParameter(
+            name="opportunity_id",
+            description="ERPNext Opportunity identifier",
+        )
+        task_id_param = ToolParameter(
+            name="task_id",
+            description="ERPNext Task identifier",
+        )
+        issue_id_param = ToolParameter(
+            name="issue_id",
+            description="ERPNext Issue identifier",
+        )
+        task_data_param = ToolParameter(
+            name="task_data",
+            type="dict",
+            description="ERPNext Task fields, including at least subject",
+        )
+        issue_data_param = ToolParameter(
+            name="issue_data",
+            type="dict",
+            description="ERPNext Issue fields, including at least subject",
+        )
+        material_request_data_param = ToolParameter(
+            name="request_data",
+            type="dict",
+            description=(
+                "ERPNext Material Request fields with items containing item_code and qty"
+            ),
+        )
+        github_workflow_param = ToolParameter(
+            name="workflow",
+            description="GitHub Actions workflow file name or workflow id",
+            required=False,
+            default="",
+        )
+        github_ref_param = ToolParameter(
+            name="ref",
+            description="Git ref to run the workflow on",
+            required=False,
+            default="",
+        )
+        github_repository_param = ToolParameter(
+            name="repository",
+            description="GitHub owner/repo override",
+            required=False,
+            default="",
+        )
+        github_inputs_param = ToolParameter(
+            name="inputs",
+            type="dict",
+            description="Optional workflow_dispatch inputs",
             required=False,
             default={},
         )
@@ -1451,11 +1520,8 @@ class ToolRegistry:
             "browser_automate": ("engineering", "Plan browser automation steps", "medium"),
             "candidate_screen": ("hr", "Draft a candidate screening summary", "medium"),
             "cashflow_forecast": ("finance", "Draft a cash-flow forecast", "medium"),
-            "ci_trigger": ("engineering", "Prepare a CI trigger request", "high"),
             "compliance_check": ("governance", "Run a compliance checklist", "medium"),
             "content_create": ("marketing", "Draft marketing content", "medium"),
-            "crm_contact_update": ("erpnext", "Prepare a CRM contact update", "high"),
-            "crm_deal_update": ("erpnext", "Prepare a CRM deal update", "high"),
             "git_commit_draft": ("engineering", "Draft a git commit summary", "medium"),
             "git_read": ("engineering", "Summarize repository read request", "low"),
             "incident_report": ("security", "Draft a security incident report", "medium"),
@@ -1463,7 +1529,6 @@ class ToolRegistry:
             "nda_draft": ("legal", "Draft an NDA outline", "medium"),
             "onboarding_checklist": ("hr", "Draft an onboarding checklist", "low"),
             "process_audit": ("operations", "Produce a process audit summary", "medium"),
-            "procurement_request": ("operations", "Prepare a procurement request", "high"),
             "progress_report": ("product", "Draft a progress report", "low"),
             "regulation_search": ("legal", "Summarize regulatory research", "low"),
             "research_report": ("knowledge", "Draft a research report", "low"),
@@ -1471,25 +1536,12 @@ class ToolRegistry:
             "sla_monitor": ("operations", "Summarize SLA monitoring status", "low"),
             "social_post_draft": ("marketing", "Draft a social media post", "medium"),
             "sprint_plan": ("product", "Draft a sprint plan", "low"),
-            "task_create": ("product", "Prepare a task creation request", "medium"),
-            "task_update": ("product", "Prepare a task update request", "medium"),
             "test_run": ("engineering", "Plan or summarize a test run", "medium"),
-            "ticket_create": ("support", "Prepare a support ticket creation request", "medium"),
             "ticket_read": ("support", "Summarize a support ticket read request", "low"),
-            "ticket_update": ("support", "Prepare a support ticket update request", "medium"),
             "vendor_search": ("operations", "Summarize vendor research", "low"),
             "web_search": ("knowledge", "Summarize a web research request", "low"),
         }
-        external_mutation_tools = {
-            "ci_trigger",
-            "crm_contact_update",
-            "crm_deal_update",
-            "procurement_request",
-            "task_create",
-            "task_update",
-            "ticket_create",
-            "ticket_update",
-        }
+        external_mutation_tools = set()
         for name, (category, description, risk_level) in generic_tools.items():
             requires_approval = risk_level == "high"
             side_effects = name in external_mutation_tools
@@ -1511,6 +1563,87 @@ class ToolRegistry:
                     else "Advisory drafting/inspection tool; it cannot mutate external systems."
                 ),
             )
+
+        erpnext_business_tools = [
+            (
+                "crm_contact_update",
+                "Update an ERPNext Contact record",
+                self._tool_crm_contact_update,
+                [contact_id_param, updates_param],
+                "high",
+            ),
+            (
+                "crm_deal_update",
+                "Update an ERPNext Opportunity record",
+                self._tool_crm_deal_update,
+                [opportunity_id_param, updates_param],
+                "high",
+            ),
+            (
+                "task_create",
+                "Create an ERPNext Task record",
+                self._tool_task_create,
+                [task_data_param],
+                "medium",
+            ),
+            (
+                "task_update",
+                "Update an ERPNext Task record",
+                self._tool_task_update,
+                [task_id_param, updates_param],
+                "medium",
+            ),
+            (
+                "ticket_create",
+                "Create an ERPNext Issue record",
+                self._tool_ticket_create,
+                [issue_data_param],
+                "medium",
+            ),
+            (
+                "ticket_update",
+                "Update an ERPNext Issue record",
+                self._tool_ticket_update,
+                [issue_id_param, updates_param],
+                "medium",
+            ),
+            (
+                "procurement_request",
+                "Create an ERPNext Material Request",
+                self._tool_procurement_request,
+                [material_request_data_param],
+                "high",
+            ),
+        ]
+        for name, description, executor, parameters, risk_level in erpnext_business_tools:
+            self._register_manifest_tool(
+                name,
+                description,
+                "erpnext",
+                executor,
+                parameters,
+                requires_approval=True,
+                risk_level=risk_level,
+                side_effects=True,
+                requires_configuration=True,
+            )
+
+        self._register_manifest_tool(
+            "ci_trigger",
+            "Trigger a configured GitHub Actions workflow_dispatch run",
+            "engineering",
+            self._tool_ci_trigger,
+            [
+                github_workflow_param,
+                github_ref_param,
+                github_repository_param,
+                github_inputs_param,
+            ],
+            requires_approval=True,
+            risk_level="high",
+            side_effects=True,
+            requires_configuration=True,
+        )
 
         # Real legal tool registrations
         self._register_manifest_tool(
@@ -1717,9 +1850,6 @@ class ToolRegistry:
                 risk_level="low",
             )
 
-        for name in ["crm_contact_update", "crm_deal_update", "task_update"]:
-            self._tools[name].parameters.extend([entity_id_param, updates_param])
-
     def _register_manifest_tool(
         self,
         name: str,
@@ -1922,7 +2052,10 @@ class ToolRegistry:
     async def _tool_erpnext_create_lead(self, lead_data: dict):
         if not self._erpnext_client:
             return "ERPNext client not available"
-        return await self._erpnext_client.create_lead(lead_data)
+        self._require_non_empty_dict(lead_data, "lead_data")
+        self._require_non_empty_string(lead_data.get("lead_name"), "lead_data.lead_name")
+        record = await self._erpnext_client.create_lead(lead_data)
+        return self._erpnext_write_result("Lead", "created", record)
 
     async def _tool_erpnext_get_projects(self, filters: dict = None):
         if not self._erpnext_client:
@@ -2016,7 +2149,9 @@ class ToolRegistry:
     async def _tool_erpnext_create_invoice(self, invoice_data: dict):
         if not self._erpnext_client:
             return "ERPNext client not available"
-        return await self._erpnext_client.create_invoice(invoice_data)
+        self._require_non_empty_dict(invoice_data, "invoice_data")
+        record = await self._erpnext_client.create_invoice(invoice_data)
+        return self._erpnext_write_result("Sales Invoice", "created", record)
 
     async def _tool_erpnext_get_expenses(self, filters: dict = None):
         if not self._erpnext_client:
@@ -2032,6 +2167,98 @@ class ToolRegistry:
         if not self._erpnext_client:
             return "ERPNext client not available"
         return await self._erpnext_client.get_leads(filters)
+
+    async def _tool_crm_contact_update(self, contact_id: str, updates: dict):
+        if not self._erpnext_client:
+            return "ERPNext client not available"
+        self._require_non_empty_string(contact_id, "contact_id")
+        self._require_non_empty_dict(updates, "updates")
+        record = await self._erpnext_client.update_contact(contact_id, updates)
+        return self._erpnext_write_result("Contact", "updated", record)
+
+    async def _tool_crm_deal_update(self, opportunity_id: str, updates: dict):
+        if not self._erpnext_client:
+            return "ERPNext client not available"
+        self._require_non_empty_string(opportunity_id, "opportunity_id")
+        self._require_non_empty_dict(updates, "updates")
+        record = await self._erpnext_client.update_opportunity(opportunity_id, updates)
+        return self._erpnext_write_result("Opportunity", "updated", record)
+
+    async def _tool_task_create(self, task_data: dict):
+        if not self._erpnext_client:
+            return "ERPNext client not available"
+        self._require_non_empty_dict(task_data, "task_data")
+        self._require_non_empty_string(task_data.get("subject"), "task_data.subject")
+        record = await self._erpnext_client.create_task(task_data)
+        return self._erpnext_write_result("Task", "created", record)
+
+    async def _tool_task_update(self, task_id: str, updates: dict):
+        if not self._erpnext_client:
+            return "ERPNext client not available"
+        self._require_non_empty_string(task_id, "task_id")
+        self._require_non_empty_dict(updates, "updates")
+        record = await self._erpnext_client.update_task(task_id, updates)
+        return self._erpnext_write_result("Task", "updated", record)
+
+    async def _tool_ticket_create(self, issue_data: dict):
+        if not self._erpnext_client:
+            return "ERPNext client not available"
+        self._require_non_empty_dict(issue_data, "issue_data")
+        self._require_non_empty_string(issue_data.get("subject"), "issue_data.subject")
+        record = await self._erpnext_client.create_issue(issue_data)
+        return self._erpnext_write_result("Issue", "created", record)
+
+    async def _tool_ticket_update(self, issue_id: str, updates: dict):
+        if not self._erpnext_client:
+            return "ERPNext client not available"
+        self._require_non_empty_string(issue_id, "issue_id")
+        self._require_non_empty_dict(updates, "updates")
+        record = await self._erpnext_client.update_issue(issue_id, updates)
+        return self._erpnext_write_result("Issue", "updated", record)
+
+    async def _tool_procurement_request(self, request_data: dict):
+        if not self._erpnext_client:
+            return "ERPNext client not available"
+        self._validate_material_request_data(request_data)
+        record = await self._erpnext_client.create_material_request(request_data)
+        return self._erpnext_write_result("Material Request", "created", record)
+
+    @staticmethod
+    def _require_non_empty_string(value: Any, field_name: str) -> None:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{field_name} is required")
+
+    @staticmethod
+    def _require_non_empty_dict(value: Any, field_name: str) -> None:
+        if not isinstance(value, dict) or not value:
+            raise ValueError(f"{field_name} must be a non-empty object")
+
+    def _validate_material_request_data(self, request_data: dict) -> None:
+        self._require_non_empty_dict(request_data, "request_data")
+        items = request_data.get("items")
+        if not isinstance(items, list) or not items:
+            raise ValueError("request_data.items must contain at least one item")
+        for index, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                raise ValueError(f"request_data.items[{index}] must be an object")
+            self._require_non_empty_string(
+                item.get("item_code"),
+                f"request_data.items[{index}].item_code",
+            )
+            qty = item.get("qty")
+            if not isinstance(qty, (int, float)) or qty <= 0:
+                raise ValueError(f"request_data.items[{index}].qty must be greater than 0")
+
+    @staticmethod
+    def _erpnext_write_result(doctype: str, action: str, record: dict) -> dict[str, Any]:
+        return {
+            "status": "complete",
+            "doctype": doctype,
+            "action": action,
+            "record": record,
+            "record_id": record.get("name"),
+            "side_effects": True,
+        }
 
     def _make_erpnext_search_reader(
         self,
@@ -2256,6 +2483,61 @@ class ToolRegistry:
             "communication_statuses": statuses,
             "communication_channels": channels,
             "side_effects": False,
+        }
+
+    async def _tool_ci_trigger(
+        self,
+        workflow: str = "",
+        ref: str = "",
+        repository: str = "",
+        inputs: dict = None,
+    ):
+        token = settings.github_token
+        repo = repository.strip() or settings.github_repository
+        workflow_name = workflow.strip() or settings.github_default_workflow
+        git_ref = ref.strip() or settings.github_default_ref
+        missing = []
+        if not token:
+            missing.append("GITHUB_TOKEN")
+        if not repo:
+            missing.append("GITHUB_REPOSITORY")
+        if not workflow_name:
+            missing.append("GITHUB_DEFAULT_WORKFLOW")
+        if not git_ref:
+            missing.append("GITHUB_DEFAULT_REF")
+        if missing:
+            raise RuntimeError(
+                "GitHub workflow dispatch is not configured; missing "
+                + ", ".join(missing)
+            )
+        if "/" not in repo:
+            raise ValueError("repository must use owner/repo format")
+
+        url = (
+            f"https://api.github.com/repos/{repo}/actions/workflows/"
+            f"{quote(workflow_name, safe='')}/dispatches"
+        )
+        payload = {"ref": git_ref, "inputs": inputs or {}}
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(url, json=payload, headers=headers)
+        if response.status_code != 204:
+            detail = response.text[:500] if response.text else response.reason_phrase
+            raise RuntimeError(
+                f"GitHub workflow dispatch failed with HTTP {response.status_code}: {detail}"
+            )
+        return {
+            "status": "complete",
+            "provider": "github_actions",
+            "repository": repo,
+            "workflow": workflow_name,
+            "ref": git_ref,
+            "inputs": payload["inputs"],
+            "side_effects": True,
         }
 
     async def _tool_git_read(self, query: str = "", limit: int = 20):

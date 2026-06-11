@@ -170,23 +170,143 @@ async def test_unavailable_tool_service_reports_autonomous_gap():
 
 
 @pytest.mark.asyncio
-async def test_side_effect_manifest_placeholder_is_blocked_not_prepared():
+async def test_erpnext_business_tool_is_config_required_when_unconfigured(monkeypatch):
+    monkeypatch.setattr(
+        "cyber_team.tools.registry.settings.require_live_tool_executors",
+        True,
+    )
+    monkeypatch.setattr("cyber_team.tools.registry.settings.erpnext_api_key", "")
+    monkeypatch.setattr("cyber_team.tools.registry.settings.erpnext_api_secret", "")
     registry = ToolRegistry()
     contract = next(
         tool for tool in registry.list_tool_contracts()
         if tool["name"] == "task_create"
     )
 
-    assert contract["state"] == "unavailable"
+    assert contract["state"] == "configuration_required"
     assert contract["side_effects"] is True
     assert contract["requires_configuration"] is True
 
-    result = await registry.execute("task_create", {"topic": "Follow up"})
+    result = await registry.execute("task_create", {"task_data": {"subject": "Follow up"}})
 
     assert result.success is False
     assert result.output["blocked"] is True
-    assert result.output["state"] == "unavailable"
-    assert "No live executor" in result.error
+    assert result.output["state"] == "configuration_required"
+    assert "ERPNext API credentials" in result.error
+
+
+@pytest.mark.asyncio
+async def test_approved_task_create_executes_against_erpnext(monkeypatch):
+    monkeypatch.setattr(
+        "cyber_team.tools.registry.settings.require_live_tool_executors",
+        True,
+    )
+    monkeypatch.setattr(
+        "cyber_team.tools.registry.settings.autonomy_side_effect_mode",
+        "manual_only",
+    )
+    monkeypatch.setattr("cyber_team.tools.registry.settings.erpnext_api_key", "key")
+    monkeypatch.setattr("cyber_team.tools.registry.settings.erpnext_api_secret", "secret")
+    registry = ToolRegistry()
+    manager = AsyncMock()
+    manager.approval_is_executable.return_value = True
+    manager.consume_approval = AsyncMock()
+    erpnext = AsyncMock()
+    erpnext.create_task.return_value = {"name": "TASK-0001", "subject": "Follow up"}
+    registry.set_services(agent_manager=manager, erpnext=erpnext)
+
+    result = await registry.execute(
+        "task_create",
+        {
+            "task_data": {"subject": "Follow up"},
+            "_approval_id": "approval-1",
+        },
+    )
+
+    assert result.success is True
+    assert result.output["doctype"] == "Task"
+    assert result.output["action"] == "created"
+    assert result.output["record_id"] == "TASK-0001"
+    erpnext.create_task.assert_awaited_once_with({"subject": "Follow up"})
+    manager.consume_approval.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_approved_lead_create_uses_standard_erpnext_write_result(monkeypatch):
+    monkeypatch.setattr(
+        "cyber_team.tools.registry.settings.require_live_tool_executors",
+        True,
+    )
+    monkeypatch.setattr(
+        "cyber_team.tools.registry.settings.autonomy_side_effect_mode",
+        "manual_only",
+    )
+    monkeypatch.setattr("cyber_team.tools.registry.settings.erpnext_api_key", "key")
+    monkeypatch.setattr("cyber_team.tools.registry.settings.erpnext_api_secret", "secret")
+    registry = ToolRegistry()
+    manager = AsyncMock()
+    manager.approval_is_executable.return_value = True
+    manager.consume_approval = AsyncMock()
+    erpnext = AsyncMock()
+    erpnext.create_lead.return_value = {
+        "name": "CRM-LEAD-0001",
+        "lead_name": "Smoke Lead",
+    }
+    registry.set_services(agent_manager=manager, erpnext=erpnext)
+
+    result = await registry.execute(
+        "erpnext_create_lead",
+        {
+            "lead_data": {"lead_name": "Smoke Lead"},
+            "_approval_id": "approval-1",
+        },
+    )
+
+    assert result.success is True
+    assert result.output["doctype"] == "Lead"
+    assert result.output["action"] == "created"
+    assert result.output["record_id"] == "CRM-LEAD-0001"
+    erpnext.create_lead.assert_awaited_once_with({"lead_name": "Smoke Lead"})
+
+
+@pytest.mark.asyncio
+async def test_procurement_request_validates_required_items(monkeypatch):
+    monkeypatch.setattr("cyber_team.tools.registry.settings.erpnext_api_key", "key")
+    monkeypatch.setattr("cyber_team.tools.registry.settings.erpnext_api_secret", "secret")
+    registry = ToolRegistry()
+    manager = AsyncMock()
+    manager.approval_is_executable.return_value = True
+    manager.consume_approval = AsyncMock()
+    registry.set_services(agent_manager=manager, erpnext=AsyncMock())
+
+    result = await registry.execute(
+        "procurement_request",
+        {
+            "request_data": {"items": [{"qty": 1}]},
+            "_approval_id": "approval-1",
+        },
+    )
+
+    assert result.success is False
+    assert "item_code" in result.error
+
+
+def test_ci_trigger_readiness_tracks_github_configuration(monkeypatch):
+    monkeypatch.setattr("cyber_team.tools.registry.settings.github_token", "")
+    monkeypatch.setattr("cyber_team.tools.registry.settings.github_repository", "")
+    registry = ToolRegistry()
+    unconfigured = registry.get_tool_readiness("ci_trigger")
+    assert unconfigured["state"] == "configuration_required"
+
+    monkeypatch.setattr("cyber_team.tools.registry.settings.github_token", "token")
+    monkeypatch.setattr(
+        "cyber_team.tools.registry.settings.github_repository",
+        "Hyper-AI-Lab/cyber-team",
+    )
+    monkeypatch.setattr("cyber_team.tools.registry.settings.github_default_workflow", "ci.yml")
+    monkeypatch.setattr("cyber_team.tools.registry.settings.github_default_ref", "main")
+    configured = registry.get_tool_readiness("ci_trigger")
+    assert configured["state"] == "live"
 
 
 @pytest.mark.asyncio

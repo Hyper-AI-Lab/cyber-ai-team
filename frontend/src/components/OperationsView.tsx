@@ -337,6 +337,38 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
                 build: {readiness.version?.build_sha}
               </span>
             </div>
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+              <ReadinessPanel
+                title="Required Providers"
+                value={(readiness.integrations?.required_providers || []).join(', ') || 'none'}
+                detail={
+                  readiness.integrations?.required_blockers?.length
+                    ? `${readiness.integrations.required_blockers.length} blocking`
+                    : 'all required providers clear'
+                }
+              />
+              <ReadinessPanel
+                title="ERPNext"
+                value={readiness.integrations?.erpnext?.mode || 'unavailable'}
+                detail={
+                  readiness.integrations?.erpnext?.detail
+                  || readiness.integrations?.erpnext?.site_url
+                  || 'ERPNext status not reported'
+                }
+              />
+              <ReadinessPanel
+                title="Optional Disabled"
+                value={String(readiness.integrations?.optional_disabled?.length || 0)}
+                detail={
+                  readiness.integrations?.optional_disabled?.length
+                    ? readiness.integrations.optional_disabled
+                        .slice(0, 3)
+                        .map((item: any) => item.provider || item.channel)
+                        .join(', ')
+                    : 'no optional provider warnings'
+                }
+              />
+            </div>
             {readiness.blockers?.length > 0 ? (
               <div className="space-y-2">
                 <h4 className="text-sm font-medium text-amber-200">Readiness Blockers</h4>
@@ -844,6 +876,24 @@ function Metric({ label, value }: { label: string; value: number }) {
     <div className="rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-3">
       <div className="text-xs text-slate-400">{label}</div>
       <div className="mt-1 text-2xl font-bold text-white">{value}</div>
+    </div>
+  )
+}
+
+function ReadinessPanel({
+  title,
+  value,
+  detail,
+}: {
+  title: string
+  value: string
+  detail: string
+}) {
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-900/30 px-3 py-3">
+      <div className="text-xs text-slate-500">{title}</div>
+      <div className="mt-1 break-words text-sm font-semibold text-slate-100">{value}</div>
+      <div className="mt-1 text-xs text-slate-400">{detail}</div>
     </div>
   )
 }

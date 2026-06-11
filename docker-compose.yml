@@ -15,7 +15,7 @@ services:
       - QDRANT_HOST=qdrant
       - TEMPORAL_HOST=temporal
       - OPA_API_URL=http://opa:8181
-      - ERPNEXT_URL=http://erpnext:8000
+      - ERPNEXT_URL=http://erpnext-frontend:8080
       - OPENFGA_API_URL=http://openfga:8080
       - APP_VERSION=${APP_VERSION:-0.1.0}
       - BUILD_SHA=${BUILD_SHA:-local}
@@ -60,6 +60,7 @@ services:
       - QDRANT_HOST=qdrant
       - TEMPORAL_HOST=temporal
       - OPA_API_URL=http://opa:8181
+      - ERPNEXT_URL=http://erpnext-frontend:8080
       - APP_VERSION=${APP_VERSION:-0.1.0}
       - BUILD_SHA=${BUILD_SHA:-local}
     depends_on:
@@ -303,25 +304,178 @@ services:
       - prometheus-data:/prometheus
     restart: unless-stopped
 
-  # ─── ERPNext ──────────────────────────────────────────────────────
-  erpnext:
-    image: frappe/erpnext:latest
-    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-erpnext
+  # ─── ERPNext / Frappe System of Record ────────────────────────────
+  erpnext-mariadb:
+    image: mariadb:10.11
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-erpnext-mariadb
     profiles: ["erp"]
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
     environment:
-      - FRAPPE_SITE_NAME_HEADLESS=1
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=${POSTGRES_DB:-cyberteam}
-      - DB_USER=${POSTGRES_USER:-cyberteam}
-      - DB_PASSWORD=${POSTGRES_PASSWORD:-changeme-postgres-password}
-    ports:
-      - "${ERPNEXT_PUBLISHED_PORT:-8100}:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
+      MYSQL_ROOT_PASSWORD: ${ERPNEXT_MARIADB_ROOT_PASSWORD:-changeme-erpnext-mariadb-root}
     volumes:
-      - erpnext-data:/home/frappe/frappe-bench/sites
+      - erpnext-mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h localhost -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  erpnext-redis-cache:
+    image: redis:7-alpine
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-erpnext-redis-cache
+    profiles: ["erp"]
+    volumes:
+      - erpnext-redis-cache-data:/data
+    restart: unless-stopped
+
+  erpnext-redis-queue:
+    image: redis:7-alpine
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-erpnext-redis-queue
+    profiles: ["erp"]
+    volumes:
+      - erpnext-redis-queue-data:/data
+    restart: unless-stopped
+
+  erpnext-configurator:
+    image: ${ERPNEXT_IMAGE:-frappe/erpnext:v16.21.1}
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-erpnext-configurator
+    profiles: ["erp"]
+    entrypoint: ["bash", "-lc"]
+    command: >
+      "ls -1 apps > sites/apps.txt &&
+      bench set-config -g db_host erpnext-mariadb &&
+      bench set-config -gp db_port 3306 &&
+      bench set-config -g redis_cache redis://erpnext-redis-cache:6379 &&
+      bench set-config -g redis_queue redis://erpnext-redis-queue:6379 &&
+      bench set-config -g redis_socketio redis://erpnext-redis-queue:6379 &&
+      bench set-config -gp socketio_port 9000"
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+      - erpnext-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      erpnext-mariadb:
+        condition: service_healthy
+      erpnext-redis-cache:
+        condition: service_started
+      erpnext-redis-queue:
+        condition: service_started
+    restart: "no"
+
+  erpnext-create-site:
+    image: ${ERPNEXT_IMAGE:-frappe/erpnext:v16.21.1}
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-erpnext-create-site
+    profiles: ["erp"]
+    entrypoint: ["bash", "-lc"]
+    command: >
+      "wait-for-it -t 180 erpnext-mariadb:3306 &&
+      wait-for-it -t 180 erpnext-redis-cache:6379 &&
+      wait-for-it -t 180 erpnext-redis-queue:6379 &&
+      if [ -d sites/${ERPNEXT_SITE_NAME:-erpnext.hyperailab.com} ]; then
+        echo 'ERPNext site already exists: ${ERPNEXT_SITE_NAME:-erpnext.hyperailab.com}';
+      else
+        bench new-site ${ERPNEXT_SITE_NAME:-erpnext.hyperailab.com} --mariadb-user-host-login-scope=% --db-root-username=root --db-root-password=${ERPNEXT_MARIADB_ROOT_PASSWORD:-changeme-erpnext-mariadb-root} --db-password=${ERPNEXT_DB_PASSWORD:-changeme-erpnext-db-password} --admin-password=${ERPNEXT_ADMIN_PASSWORD:-changeme-erpnext-admin} --install-app erpnext --set-default;
+      fi"
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+      - erpnext-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      erpnext-configurator:
+        condition: service_completed_successfully
+    restart: "no"
+
+  erpnext-backend:
+    image: ${ERPNEXT_IMAGE:-frappe/erpnext:v16.21.1}
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-erpnext-backend
+    profiles: ["erp"]
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+      - erpnext-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      erpnext-create-site:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  erpnext-frontend:
+    image: ${ERPNEXT_IMAGE:-frappe/erpnext:v16.21.1}
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-erpnext-frontend
+    profiles: ["erp"]
+    command: ["nginx-entrypoint.sh"]
+    environment:
+      BACKEND: erpnext-backend:8000
+      FRAPPE_SITE_NAME_HEADER: ${ERPNEXT_SITE_NAME:-erpnext.hyperailab.com}
+      SOCKETIO: erpnext-websocket:9000
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      PROXY_READ_TIMEOUT: 120
+      CLIENT_MAX_BODY_SIZE: 50m
+    ports:
+      - "${ERPNEXT_PUBLISHED_PORT:-18100}:8080"
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+      - erpnext-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      erpnext-backend:
+        condition: service_started
+      erpnext-websocket:
+        condition: service_started
+    restart: unless-stopped
+
+  erpnext-websocket:
+    image: ${ERPNEXT_IMAGE:-frappe/erpnext:v16.21.1}
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-erpnext-websocket
+    profiles: ["erp"]
+    command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+      - erpnext-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      erpnext-create-site:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  erpnext-queue-short:
+    image: ${ERPNEXT_IMAGE:-frappe/erpnext:v16.21.1}
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-erpnext-queue-short
+    profiles: ["erp"]
+    command: ["bench", "worker", "--queue", "short,default"]
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+      - erpnext-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      erpnext-create-site:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  erpnext-queue-long:
+    image: ${ERPNEXT_IMAGE:-frappe/erpnext:v16.21.1}
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-erpnext-queue-long
+    profiles: ["erp"]
+    command: ["bench", "worker", "--queue", "long,default,short"]
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+      - erpnext-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      erpnext-create-site:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  erpnext-scheduler:
+    image: ${ERPNEXT_IMAGE:-frappe/erpnext:v16.21.1}
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-erpnext-scheduler
+    profiles: ["erp"]
+    command: ["bench", "schedule"]
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+      - erpnext-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      erpnext-create-site:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # ─── Asterisk (Telephony) ─────────────────────────────────────────
@@ -359,7 +513,11 @@ volumes:
   grafana-data:
   prometheus-data:
   core-data:
-  erpnext-data:
+  erpnext-sites:
+  erpnext-logs:
+  erpnext-mariadb-data:
+  erpnext-redis-cache-data:
+  erpnext-redis-queue-data:
   asterisk-config:
   asterisk-spool:
   jasmin-data:

@@ -175,3 +175,62 @@ def test_validate_imap_integration_uses_inbound_email_service(monkeypatch):
     body = response.json()
     assert body["status"] == "ready"
     assert body["provider"] == "imap"
+
+
+def test_validate_erpnext_integration_uses_erpnext_client(monkeypatch):
+    app = FastAPI()
+    app.include_router(integrations_router, prefix="/api/integrations")
+
+    class FakeERPNext:
+        async def validate(self):
+            return {
+                "status": "ready",
+                "provider": "erpnext",
+                "mode": "live",
+                "configured": True,
+                "detail": "ERPNext REST API token validation passed.",
+            }
+
+    app.state.comms_gateway = type(
+        "FakeCommsGateway",
+        (),
+        {
+            "integration_status": lambda _self: [],
+            "last_validation_result": lambda _self: None,
+        },
+    )()
+    app.state.erpnext = FakeERPNext()
+    app.state.audit_service = type(
+        "FakeAudit",
+        (),
+        {"record_control_evidence": AsyncMock()},
+    )()
+
+    async def mock_get_current_principal():
+        return Principal(
+            subject="owner",
+            email="owner@example.com",
+            role="owner",
+            token_type="access",
+        )
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.integrations.require_authorization",
+        mock_require_authorization,
+    )
+
+    response = TestClient(app).post(
+        "/api/integrations/validate",
+        json={"provider": "erpnext"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["provider"] == "erpnext"
+    assert body["results"][0]["mode"] == "live"
+    app.state.audit_service.record_control_evidence.assert_awaited_once()

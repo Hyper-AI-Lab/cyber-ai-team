@@ -112,8 +112,17 @@ class Settings(BaseSettings):
 
     # ERPNext
     erpnext_url: str = "http://localhost:8100"
+    erpnext_site_name: str = "erpnext.hyperailab.com"
+    erpnext_edge_domain: str = "erpnext.hyperailab.com"
+    erpnext_published_port: int = 18100
+    erpnext_integration_user: str = "cyberteam.integration@example.local"
     erpnext_api_key: str = ""
     erpnext_api_secret: str = ""
+    required_communication_providers: str = "smtp,imap,erpnext"
+    github_token: str = ""
+    github_repository: str = ""
+    github_default_workflow: str = "ci.yml"
+    github_default_ref: str = "main"
 
     # Telephony
     twilio_account_sid: str = ""
@@ -195,6 +204,27 @@ class Settings(BaseSettings):
     @property
     def cors_allows_wildcard(self) -> bool:
         return "*" in self.cors_origins
+
+    @property
+    def required_provider_names(self) -> set[str]:
+        return {
+            provider.strip().lower()
+            for provider in self.required_communication_providers.split(",")
+            if provider.strip()
+        }
+
+    @property
+    def erpnext_configured(self) -> bool:
+        return bool(self.erpnext_url and self.erpnext_api_key and self.erpnext_api_secret)
+
+    @property
+    def github_ci_configured(self) -> bool:
+        return bool(
+            self.github_token
+            and self.github_repository
+            and self.github_default_workflow
+            and self.github_default_ref
+        )
 
     def validate_runtime_config(self) -> None:
         if self.environment.lower() != "production":

@@ -137,6 +137,114 @@ def test_operations_readiness_reports_tool_and_integration_blockers(monkeypatch)
     assert body["memory"]["recent_trace_errors"] == 1
 
 
+def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+
+    class FakeRegistry:
+        def list_tool_contracts(self):
+            return [
+                {"name": "task_create", "state": "live", "side_effects": True},
+                {
+                    "name": "send_sms",
+                    "state": "configuration_required",
+                    "side_effects": True,
+                    "category": "communications",
+                    "readiness_reason": "SMS is intentionally disabled.",
+                },
+                {
+                    "name": "make_call",
+                    "state": "configuration_required",
+                    "side_effects": True,
+                    "category": "communications",
+                    "readiness_reason": "Voice is intentionally disabled.",
+                },
+                {
+                    "name": "ci_trigger",
+                    "state": "configuration_required",
+                    "side_effects": True,
+                    "category": "devops",
+                    "readiness_reason": "GitHub dispatch is not configured.",
+                },
+            ]
+
+    class FakeComms:
+        def integration_status(self):
+            return [
+                {
+                    "channel": "email",
+                    "provider": "smtp",
+                    "mode": "live",
+                    "detail": "SMTP ready.",
+                },
+                {
+                    "channel": "sms",
+                    "provider": "twilio",
+                    "mode": "disabled",
+                    "detail": "SMS is intentionally disabled.",
+                },
+            ]
+
+    class FakeInbound:
+        def integration_status(self):
+            return {
+                "channel": "inbound_email",
+                "provider": "imap",
+                "mode": "live",
+                "detail": "IMAP ready.",
+            }
+
+    class FakeERPNext:
+        def integration_status(self, _last_validation=None):
+            return {
+                "provider": "erpnext",
+                "mode": "live",
+                "configured": True,
+                "detail": "ERPNext ready.",
+            }
+
+    app.state.tool_registry = FakeRegistry()
+    app.state.comms_gateway = FakeComms()
+    app.state.inbound_email_service = FakeInbound()
+    app.state.erpnext = FakeERPNext()
+    app.state.audit_service = AsyncMock()
+    app.state.audit_service.list_events.return_value = []
+    app.state.memory_service = AsyncMock()
+    app.state.memory_service.list_memory_traces.return_value = []
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.settings.require_live_tool_executors",
+        True,
+    )
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.settings.required_communication_providers",
+        "smtp,imap,erpnext",
+    )
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+
+    response = TestClient(app).get("/api/operations/readiness")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["tools"]["side_effect_blockers"] == []
+    assert {
+        item["tool_name"] for item in body["tools"]["non_blocking_side_effects"]
+    } == {"send_sms", "make_call", "ci_trigger"}
+    assert body["integrations"]["blocking_readiness"] is False
+    assert body["integrations"]["optional_disabled"][0]["provider"] == "twilio"
+
+
 def test_plan_scan_forces_manual_only_autonomy(monkeypatch):
     app = FastAPI()
     app.include_router(operations_router, prefix="/api/operations")

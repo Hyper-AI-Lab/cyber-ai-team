@@ -6,12 +6,17 @@ import { AlertTriangle, CheckCircle2, CircleDashed, RefreshCw, XCircle } from 'l
 import { api } from '@/lib/api'
 
 type IntegrationItem = {
-  channel: string
+  channel?: string
   provider: string
   configured: boolean
-  mode: 'live' | 'simulated' | 'disabled' | 'profile_only' | string
+  mode: 'live' | 'simulated' | 'disabled' | 'profile_only' | 'configuration_required' | string
   implementation?: string
   detail?: string
+  required?: boolean
+  optional_disabled?: boolean
+  blocking?: boolean
+  site_url?: string
+  api_url?: string
   circuit?: {
     state: 'open' | 'closed' | string
     failures: number
@@ -22,6 +27,9 @@ type IntegrationItem = {
 type IntegrationStatus = {
   environment: string
   communications: IntegrationItem[]
+  erpnext?: IntegrationItem | null
+  required_providers?: string[]
+  optional_disabled?: IntegrationItem[]
   simulation_enabled: boolean
   last_validation_result?: IntegrationValidationResult
 }
@@ -45,12 +53,15 @@ const modeStyles: Record<string, string> = {
   simulated: 'badge-warning',
   disabled: 'badge-danger',
   profile_only: 'badge-info',
+  configuration_required: 'badge-warning',
 }
 
 function ModeIcon({ mode }: { mode: string }) {
   if (mode === 'live') return <CheckCircle2 className="h-5 w-5 text-green-400" />
   if (mode === 'simulated') return <AlertTriangle className="h-5 w-5 text-yellow-400" />
-  if (mode === 'disabled') return <XCircle className="h-5 w-5 text-red-400" />
+  if (mode === 'disabled' || mode === 'configuration_required') {
+    return <XCircle className="h-5 w-5 text-red-400" />
+  }
   return <CircleDashed className="h-5 w-5 text-blue-400" />
 }
 
@@ -92,6 +103,12 @@ export default function IntegrationsView() {
   }
 
   const latestValidation = validationResult || status?.last_validation_result
+  const integrationItems = [
+    ...(status?.communications || []),
+    ...(status?.erpnext ? [status.erpnext] : []),
+  ]
+  const liveCount = integrationItems.filter((item) => item.mode === 'live').length
+  const blockerCount = integrationItems.filter((item) => item.blocking).length
 
   return (
     <div className="space-y-6">
@@ -149,24 +166,38 @@ export default function IntegrationsView() {
             </div>
             <div className="card">
               <p className="text-sm text-slate-400">Live Channels</p>
-              <p className="mt-2 text-xl font-semibold">
-                {status?.communications.filter((item) => item.mode === 'live').length ?? 0}
-              </p>
+              <p className="mt-2 text-xl font-semibold">{liveCount}</p>
+            </div>
+            <div className="card">
+              <p className="text-sm text-slate-400">Required Blockers</p>
+              <p className="mt-2 text-xl font-semibold">{blockerCount}</p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {status?.communications.map((item) => (
-              <div key={`${item.channel}-${item.provider}`} className="card">
+            {integrationItems.map((item) => (
+              <div key={`${item.channel || 'integration'}-${item.provider}`} className="card">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-start gap-3">
                     <ModeIcon mode={item.mode} />
                     <div>
-                      <h3 className="font-semibold capitalize">{item.channel}</h3>
+                      <h3 className="font-semibold capitalize">{item.channel || item.provider}</h3>
                       <p className="mt-1 text-sm text-slate-400">{item.detail}</p>
+                      {item.site_url && (
+                        <p className="mt-1 text-xs text-slate-500">{item.site_url}</p>
+                      )}
                     </div>
                   </div>
-                  <span className={modeStyles[item.mode] || 'badge-info'}>{item.mode}</span>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {item.required ? (
+                      <span className="badge-info">required</span>
+                    ) : (
+                      <span className="rounded-full bg-slate-700 px-2.5 py-1 text-xs font-medium text-slate-300">
+                        optional
+                      </span>
+                    )}
+                    <span className={modeStyles[item.mode] || 'badge-info'}>{item.mode}</span>
+                  </div>
                 </div>
                 <div className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
                   <div>
@@ -175,16 +206,18 @@ export default function IntegrationsView() {
                   </div>
                   <div>
                     <p className="text-slate-500">Implementation</p>
-                    <p className="text-slate-200">{item.implementation || 'unknown'}</p>
+                    <p className="text-slate-200">
+                      {item.implementation || (item.provider === 'erpnext' ? 'implemented' : 'unknown')}
+                    </p>
                   </div>
                   <div>
-                    <p className="text-slate-500">Circuit</p>
+                    <p className="text-slate-500">{item.api_url ? 'API' : 'Circuit'}</p>
                     <p
                       className={
                         item.circuit?.state === 'open' ? 'text-red-300' : 'text-slate-200'
                       }
                     >
-                      {item.circuit?.state || 'unknown'}
+                      {item.api_url || item.circuit?.state || 'unknown'}
                       {item.circuit && item.circuit.failures > 0
                         ? ` (${item.circuit.failures} failures)`
                         : ''}

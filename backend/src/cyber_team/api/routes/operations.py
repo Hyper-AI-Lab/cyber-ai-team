@@ -53,6 +53,57 @@ class SubjectDeleteRequest(BaseModel):
     audit_preserving: bool = True
 
 
+def _provider_key(item: dict[str, Any]) -> str:
+    return str(item.get("provider") or item.get("channel") or "").lower()
+
+
+def _annotate_provider_status(item: dict[str, Any]) -> dict[str, Any]:
+    annotated = dict(item)
+    provider = _provider_key(annotated)
+    required = provider in settings.required_provider_names
+    mode = annotated.get("mode")
+    live = mode == "live"
+    optional_disabled = not required and not live
+    blocking = settings.require_live_tool_executors and required and not live
+    annotated.update(
+        {
+            "required": required,
+            "optional_disabled": optional_disabled,
+            "blocking": blocking,
+        }
+    )
+    return annotated
+
+
+def _tool_is_required_for_readiness(tool: dict[str, Any]) -> bool:
+    required = settings.required_provider_names
+    name = str(tool.get("name") or "")
+    category = str(tool.get("category") or "")
+    if category == "erpnext" or name.startswith("erpnext_"):
+        return "erpnext" in required
+    if name in {
+        "crm_contact_update",
+        "crm_deal_update",
+        "task_create",
+        "task_update",
+        "ticket_create",
+        "ticket_update",
+        "procurement_request",
+    }:
+        return "erpnext" in required
+    if name == "send_email":
+        return "smtp" in required or "email" in required
+    if name == "send_sms":
+        return "sms" in required or "twilio" in required or "jasmin" in required
+    if name == "make_call":
+        return "voice" in required or "twilio" in required or "asterisk" in required
+    if name == "send_message":
+        return bool({"slack", "telegram", "whatsapp"} & required)
+    if name == "ci_trigger":
+        return "github" in required or "github_ci" in required or "ci" in required
+    return True
+
+
 @router.post("/autonomous-cycle", response_model=AutonomousCycleResponse)
 async def run_autonomous_cycle(
     data: AutonomousCycleRequest,
@@ -150,27 +201,62 @@ async def operations_readiness(
     tools = registry.list_tool_contracts()
     tool_counts: dict[str, int] = {}
     side_effect_blockers = []
+    non_blocking_side_effects = []
     for tool in tools:
         state = tool.get("state") or "unknown"
         tool_counts[state] = tool_counts.get(state, 0) + 1
         if tool.get("side_effects") and state != "live":
-            side_effect_blockers.append({
+            entry = {
                 "tool_name": tool["name"],
                 "state": state,
                 "reason": tool.get("readiness_reason"),
-            })
+            }
+            if _tool_is_required_for_readiness(tool):
+                side_effect_blockers.append(entry)
+            else:
+                non_blocking_side_effects.append(entry)
 
-    comms = request.app.state.comms_gateway.integration_status()
-    integration_blockers = []
-    if settings.require_live_tool_executors:
-        for item in comms:
-            if item.get("mode") != "live":
-                integration_blockers.append({
-                    "channel": item.get("channel"),
-                    "provider": item.get("provider"),
-                    "mode": item.get("mode"),
-                    "reason": item.get("detail"),
-                })
+    comms = [
+        _annotate_provider_status(item)
+        for item in request.app.state.comms_gateway.integration_status()
+    ]
+    inbound_email = getattr(request.app.state, "inbound_email_service", None)
+    if inbound_email:
+        comms.append(_annotate_provider_status(inbound_email.integration_status()))
+    erpnext = getattr(request.app.state, "erpnext", None)
+    erpnext_status = None
+    if erpnext:
+        erpnext_status = _annotate_provider_status(
+            erpnext.integration_status(
+                getattr(request.app.state, "erpnext_last_validation_result", None)
+            )
+        )
+    elif "erpnext" in settings.required_provider_names:
+        erpnext_status = _annotate_provider_status(
+            {
+                "provider": "erpnext",
+                "configured": False,
+                "mode": "configuration_required",
+                "detail": "ERPNext client is not available.",
+            }
+        )
+    provider_items = [*comms]
+    if erpnext_status:
+        provider_items.append(erpnext_status)
+    integration_blockers = [
+        {
+            "channel": item.get("channel"),
+            "provider": item.get("provider"),
+            "mode": item.get("mode"),
+            "required": item.get("required"),
+            "reason": item.get("detail") or item.get("readiness_reason"),
+        }
+        for item in provider_items
+        if item.get("blocking")
+    ]
+    optional_disabled = [
+        item for item in provider_items if item.get("optional_disabled")
+    ]
 
     evidence = await request.app.state.audit_service.list_events(
         event_type="control.evidence",
@@ -202,9 +288,14 @@ async def operations_readiness(
             "total": len(tools),
             "counts_by_state": tool_counts,
             "side_effect_blockers": side_effect_blockers,
+            "non_blocking_side_effects": non_blocking_side_effects,
         },
         "integrations": {
             "communications": comms,
+            "erpnext": erpnext_status,
+            "required_providers": sorted(settings.required_provider_names),
+            "required_blockers": integration_blockers,
+            "optional_disabled": optional_disabled,
             "blocking_readiness": bool(integration_blockers),
             "blocking_reasons": integration_blockers,
         },
