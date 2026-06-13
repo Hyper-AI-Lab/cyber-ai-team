@@ -87,6 +87,40 @@ this host before Caddy can obtain a public certificate. If DNS is not ready,
 validate Caddy syntax, verify the local HTTP redirect, and complete the public
 smoke after DNS propagation.
 
+## Credential Rotation
+
+The ignored staging env file is the desired local configuration, but changing it
+does not automatically update already-created ERPNext users or the live Caddy
+basic-auth hash.
+
+After changing `ERPNEXT_ADMIN_PASSWORD`, apply it to the existing ERPNext site:
+
+```bash
+set -a
+. deploy/environments/staging.env
+set +a
+
+docker compose --env-file deploy/environments/staging.env --profile erp exec -T \
+  -e SITE_NAME="$ERPNEXT_SITE_NAME" \
+  -e NEW_ADMIN_PASSWORD="$ERPNEXT_ADMIN_PASSWORD" \
+  erpnext-backend bash -lc \
+  'bench --site "$SITE_NAME" set-admin-password "$NEW_ADMIN_PASSWORD" --logout-all-sessions'
+```
+
+After changing `ERPNEXT_CADDY_BASIC_AUTH_USER` or
+`ERPNEXT_CADDY_BASIC_AUTH_PASSWORD`, regenerate the Caddy bcrypt hash in
+`/etc/caddy/Caddyfile`, then validate and reload Caddy:
+
+```bash
+printf '%s\n' "$ERPNEXT_CADDY_BASIC_AUTH_PASSWORD" | caddy hash-password
+caddy validate --config /etc/caddy/Caddyfile
+systemctl reload caddy
+```
+
+Smoke-test both layers after rotation: unauthenticated public ERPNext requests
+should return Caddy `401`, Caddy-authenticated requests should reach the ERPNext
+login page, and `Administrator` should log in with `ERPNEXT_ADMIN_PASSWORD`.
+
 ## Smoke Validation
 
 Run the product-path Cyber-Team smoke first. This drives the real owner API,

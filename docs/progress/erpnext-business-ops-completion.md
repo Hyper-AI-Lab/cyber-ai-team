@@ -448,3 +448,29 @@
   - `journalctl -u caddy` certificate issuance entries for `erpnext.hyperailab.com` at `2026-06-13T07:09:31Z`.
 - Next step:
   - Stage, commit, push, and watch GitHub CI for the ERPNext public-edge runbook/progress update.
+
+## 2026-06-13T10:37:00Z - STEP-017 - Apply rotated ERPNext and Caddy credentials
+
+- Files/services changed:
+  - `/etc/caddy/Caddyfile`
+  - `docs/runbooks/erpnext.md`
+  - ERPNext `Administrator` password hash updated in the existing ERPNext site.
+  - Caddy service reloaded with a regenerated ERPNext basic-auth hash.
+- Commands run:
+  - `bench --site "$SITE_NAME" set-admin-password "$NEW_ADMIN_PASSWORD" --logout-all-sessions`
+  - `printf '%s\n' "$ERPNEXT_CADDY_BASIC_AUTH_PASSWORD" | caddy hash-password`
+  - `caddy validate --config /etc/caddy/Caddyfile`
+  - `systemctl reload caddy`
+  - `curl ... https://erpnext.hyperailab.com/login`
+  - `curl ... https://erpnext.hyperailab.com/api/method/login`
+  - `curl ... https://erpnext.hyperailab.com/app`
+- Result:
+  - Applied the newly saved `ERPNEXT_ADMIN_PASSWORD` to the existing ERPNext site; editing the env file alone does not update an already-created ERPNext user's password hash.
+  - Applied the newly saved Caddy basic-auth credentials by regenerating the host Caddy bcrypt hash; editing the env file alone does not update `/etc/caddy/Caddyfile`.
+  - Verified public ERPNext behavior after rotation: no Caddy credentials returns `401`, valid Caddy credentials reach the ERPNext `Login` page with HTTP `200`, `Administrator` login returns `Logged In`, and the resulting session opens `/app` with HTTP `200`.
+  - Documented ERPNext/Caddy credential rotation in the ERPNext runbook.
+- Evidence path/link:
+  - `docs/runbooks/erpnext.md`
+  - `/etc/caddy/Caddyfile`
+- Next step:
+  - Commit and push the runbook/progress documentation update, then watch GitHub CI.
