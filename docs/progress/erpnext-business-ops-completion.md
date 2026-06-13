@@ -418,3 +418,33 @@
   - `/home/projects/cyber-team/dist/erpnext/smoke/cyberteam-erpnext-tool-smoke-20260611T022918Z.json`
 - Next step:
   - Stage, commit, and push the tracked backup/restore automation changes to GitHub, then watch CI.
+
+## 2026-06-13T07:12:15Z - STEP-016 - Public ERPNext DNS, TLS, and edge-auth validation
+
+- Files/services changed:
+  - `/etc/caddy/Caddyfile`
+  - `docs/runbooks/erpnext.md`
+  - Caddy service reloaded after DNS for `erpnext.hyperailab.com` resolved to this host.
+- Commands run:
+  - `getent hosts erpnext.hyperailab.com`
+  - `caddy validate --config /etc/caddy/Caddyfile`
+  - `systemctl reload caddy`
+  - `journalctl -u caddy --since '2 minutes ago' --no-pager`
+  - `curl -I --max-time 20 https://erpnext.hyperailab.com/login`
+  - `curl -sS -o /dev/null -w '%{http_code}\n' --max-time 20 https://erpnext.hyperailab.com/login`
+  - `curl -sS -o /tmp/erpnext-login-check.html -w '%{http_code}\n' --max-time 25 -u '<edge-basic-auth>' https://erpnext.hyperailab.com/login`
+  - `./scripts/erpnext-smoke.py --env-file deploy/environments/staging.env --api-base http://127.0.0.1:18000`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env API_BASE=http://127.0.0.1:18000 UI_BASE=http://127.0.0.1:13001 ./scripts/compose-smoke.sh`
+  - `git diff --check`
+- Result:
+  - DNS for `erpnext.hyperailab.com` resolves to this host and Caddy obtained a public Let's Encrypt certificate after reload.
+  - Public ERPNext edge behavior is correct: unauthenticated requests return Caddy `401`, authenticated Caddy requests reach ERPNext and return the `Login` page with HTTP `200`.
+  - Fixed the Caddy-to-ERPNext auth-header collision by stripping the consumed edge `Authorization` header before proxying to ERPNext; otherwise ERPNext interpreted the Caddy basic-auth header as ERPNext API auth and returned `401`.
+  - Cyber-Team-to-ERPNext smoke passed through approval-gated Lead, Task, Issue, and Material Request tool execution, including approval target mismatch and consumed-approval checks.
+  - Cyber-Team compose smoke passed after the Caddy reload.
+- Evidence path/link:
+  - `/home/projects/cyber-team/dist/erpnext/smoke/cyberteam-erpnext-tool-smoke-20260613T071149Z.json`
+  - `docs/runbooks/erpnext.md`
+  - `journalctl -u caddy` certificate issuance entries for `erpnext.hyperailab.com` at `2026-06-13T07:09:31Z`.
+- Next step:
+  - Stage, commit, push, and watch GitHub CI for the ERPNext public-edge runbook/progress update.

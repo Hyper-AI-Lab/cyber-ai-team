@@ -63,7 +63,11 @@ erpnext.hyperailab.com {
         cyberteam <caddy-hash>
     }
 
-    reverse_proxy 127.0.0.1:18100
+    reverse_proxy 127.0.0.1:18100 {
+        # Caddy consumes the edge basic-auth credential. Do not forward that
+        # header to ERPNext, where it would be interpreted as ERPNext API auth.
+        header_up -Authorization
+    }
 }
 ```
 
