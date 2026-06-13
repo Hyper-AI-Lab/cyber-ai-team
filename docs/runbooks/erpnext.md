@@ -48,26 +48,11 @@ Compose `up`.
 
 ## Caddy Exposure
 
-Generate a Caddy basic-auth hash on the host. Prefer stdin so the plaintext
-password does not appear in shell history or process arguments:
-
-```bash
-printf '%s\n' "$ERPNEXT_CADDY_BASIC_AUTH_PASSWORD" | caddy hash-password
-```
-
 Add this block to `/etc/caddy/Caddyfile`:
 
 ```caddyfile
 erpnext.hyperailab.com {
-    basicauth {
-        cyberteam <caddy-hash>
-    }
-
-    reverse_proxy 127.0.0.1:18100 {
-        # Caddy consumes the edge basic-auth credential. Do not forward that
-        # header to ERPNext, where it would be interpreted as ERPNext API auth.
-        header_up -Authorization
-    }
+    reverse_proxy 127.0.0.1:18100
 }
 ```
 
@@ -78,7 +63,7 @@ caddy validate --config /etc/caddy/Caddyfile
 systemctl reload caddy
 ```
 
-ERPNext remains protected by both Caddy basic auth and ERPNext login. The
+ERPNext is protected by its own login, roles, and session management. The
 Cyber-Team backend talks to ERPNext through the private Compose service URL
 `http://erpnext-frontend:8080`.
 
@@ -107,19 +92,21 @@ docker compose --env-file deploy/environments/staging.env --profile erp exec -T 
   'bench --site "$SITE_NAME" set-admin-password "$NEW_ADMIN_PASSWORD" --logout-all-sessions'
 ```
 
-After changing `ERPNEXT_CADDY_BASIC_AUTH_USER` or
-`ERPNEXT_CADDY_BASIC_AUTH_PASSWORD`, regenerate the Caddy bcrypt hash in
-`/etc/caddy/Caddyfile`, then validate and reload Caddy:
+`ERPNEXT_CADDY_BASIC_AUTH_USER` and `ERPNEXT_CADDY_BASIC_AUTH_PASSWORD` are
+retained for environments that intentionally add an outer edge-auth gate. The
+current staging site does not use that extra layer because it makes the public
+login flow ambiguous; ERPNext login is the active authentication boundary.
+
+After changing the Caddy route, validate and reload Caddy:
 
 ```bash
-printf '%s\n' "$ERPNEXT_CADDY_BASIC_AUTH_PASSWORD" | caddy hash-password
 caddy validate --config /etc/caddy/Caddyfile
 systemctl reload caddy
 ```
 
-Smoke-test both layers after rotation: unauthenticated public ERPNext requests
-should return Caddy `401`, Caddy-authenticated requests should reach the ERPNext
-login page, and `Administrator` should log in with `ERPNEXT_ADMIN_PASSWORD`.
+Smoke-test the public flow after rotation: public ERPNext requests should reach
+the ERPNext login page, and `Administrator` should log in with
+`ERPNEXT_ADMIN_PASSWORD`.
 
 ## Smoke Validation
 
@@ -142,7 +129,7 @@ writes non-secret evidence under `dist/erpnext/smoke/`.
 Check public login reachability:
 
 ```bash
-curl -I -u "$ERPNEXT_CADDY_BASIC_AUTH_USER:$ERPNEXT_CADDY_BASIC_AUTH_PASSWORD" https://erpnext.hyperailab.com/login
+curl -I https://erpnext.hyperailab.com/login
 ```
 
 Check private API token reachability from the Compose network:

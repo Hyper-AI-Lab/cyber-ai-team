@@ -474,3 +474,27 @@
   - `/etc/caddy/Caddyfile`
 - Next step:
   - Commit and push the runbook/progress documentation update, then watch GitHub CI.
+
+## 2026-06-13T11:26:30Z - STEP-018 - Remove ERPNext edge basic auth for single-login UX
+
+- Files/services changed:
+  - `/etc/caddy/Caddyfile`
+  - `docs/runbooks/erpnext.md`
+  - Caddy service reloaded with ERPNext exposed behind ERPNext's own login only.
+- Commands run:
+  - `caddy validate --config /etc/caddy/Caddyfile`
+  - `systemctl reload caddy`
+  - `curl https://erpnext.hyperailab.com/login`
+  - `curl https://erpnext.hyperailab.com/api/method/login`
+  - `curl https://erpnext.hyperailab.com/app`
+- Result:
+  - Removed the extra Caddy basic-auth prompt from `erpnext.hyperailab.com` because it created an ambiguous two-login browser flow and repeated user login failures despite server-side validation passing.
+  - Public ERPNext now presents a single authentication boundary: the ERPNext login page.
+  - Verified `https://erpnext.hyperailab.com/login` returns HTTP `200` with the ERPNext `Login` page.
+  - Verified `Administrator` login with `ERPNEXT_ADMIN_PASSWORD` returns `Logged In`, and the resulting session opens `/app` with HTTP `200`.
+  - Updated the ERPNext runbook to describe the single-login staging behavior and keep Caddy edge auth as an optional environment-specific hardening layer rather than the current default.
+- Evidence path/link:
+  - `docs/runbooks/erpnext.md`
+  - `/etc/caddy/Caddyfile`
+- Next step:
+  - Commit and push the runbook/progress documentation update, then watch GitHub CI.
