@@ -108,7 +108,9 @@ for table in \
   memory_traces \
   memory_steward_findings \
   autonomous_plans \
-  autonomous_tasks
+  autonomous_tasks \
+  company_context_snapshots \
+  company_context_sync_runs
 do
   count="$(
     docker exec "$CONTAINER_NAME" \

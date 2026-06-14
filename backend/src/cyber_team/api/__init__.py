@@ -37,6 +37,7 @@ from cyber_team.authorization.service import AuthorizationService
 from cyber_team.comms.email_triage import EmailTriageService
 from cyber_team.comms.gateway import CommsGateway
 from cyber_team.comms.inbound_email import InboundEmailService
+from cyber_team.company.context_sync import CompanyContextSyncService
 from cyber_team.config import settings
 from cyber_team.db import async_session, init_db
 from cyber_team.integrations.erpnext import ERPNextClient
@@ -111,6 +112,17 @@ async def lifespan(app: FastAPI):
         memory_steward_service=app.state.memory_steward_service,
         tool_registry=app.state.tool_registry,
         audit_service=app.state.audit_service,
+    )
+    app.state.company_context_sync_service = CompanyContextSyncService(
+        erpnext=app.state.erpnext,
+        agent_manager=app.state.agent_manager,
+        memory_service=app.state.memory_service,
+        tool_registry=app.state.tool_registry,
+        audit_service=app.state.audit_service,
+        planner=app.state.autonomous_planning_service,
+    )
+    app.state.autonomous_planning_service.set_company_context_service(
+        app.state.company_context_sync_service
     )
     app.state.autonomous_operations_service = AutonomousOperationsService(
         supervisor_review_service=app.state.supervisor_review_service,

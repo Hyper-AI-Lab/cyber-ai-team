@@ -80,6 +80,20 @@ async def integration_status(
         erpnext_status = _annotate_provider_status(
             erpnext.integration_status(erpnext_last_validation)
         )
+        company_context_service = getattr(
+            request.app.state,
+            "company_context_sync_service",
+            None,
+        )
+        if company_context_service:
+            latest_snapshot = await company_context_service.latest_snapshot()
+            latest_runs = await company_context_service.list_sync_runs(limit=1)
+            erpnext_status["company_context"] = (
+                company_context_service.readiness_from_snapshot(
+                    latest_snapshot,
+                    latest_run=latest_runs[0] if latest_runs else None,
+                )
+            )
     elif "erpnext" in _required_provider_names():
         erpnext_status = _annotate_provider_status(
             {

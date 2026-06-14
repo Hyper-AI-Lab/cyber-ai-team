@@ -475,6 +475,103 @@
 - Next step:
   - Commit and push the runbook/progress documentation update, then watch GitHub CI.
 
+## 2026-06-14T12:13:14Z - STEP-019 - Company-context milestone reconnaissance
+
+- Files/services changed:
+  - None; this was read-only implementation reconnaissance for the ERPNext post-onboarding company-context milestone.
+- Commands run:
+  - `find backend/alembic/versions -maxdepth 1 -type f -name '*.py' | sort | tail -20`
+  - `sed -n '450,780p' backend/src/cyber_team/agents/manager.py`
+  - `sed -n '1,760p' backend/src/cyber_team/api/routes/operations.py`
+  - `sed -n '1,1320p' backend/src/cyber_team/operations/planning.py`
+  - `sed -n '1,760p' backend/src/cyber_team/integrations/erpnext.py`
+  - `sed -n '1,1420p' backend/src/cyber_team/company/operating_model.py`
+  - `sed -n '1,620p' frontend/src/lib/api.ts`
+  - `sed -n '1,620p' frontend/src/components/OperationsView.tsx`
+  - `sed -n '1,320p' frontend/src/components/AgentsView.tsx`
+  - `sed -n '1,260p' frontend/src/components/IntegrationsView.tsx`
+- Result:
+  - Confirmed the existing ERPNext client already exposes token-auth REST validation, generic list/create/update helpers, and ERPNext-backed business methods.
+  - Confirmed the Company Builder path currently creates all planned roles, so ERPNext-sourced context needs a narrower safety filter before automatic application.
+  - Confirmed autonomous planning is extensible through durable plan/task records and explicit task handlers.
+  - Confirmed operations readiness and integration status routes are the correct API homes for company-context freshness and ERPNext sync status.
+- Evidence path/link:
+  - `backend/src/cyber_team/integrations/erpnext.py`
+  - `backend/src/cyber_team/company/operating_model.py`
+  - `backend/src/cyber_team/operations/planning.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+- Next step:
+  - Add persistent company-context snapshot/sync-run models, migration, and the ERPNext sync service.
+
+## 2026-06-14T12:29:37Z - STEP-020 - Company-context persistence, sync service, planner, and owner-console surfaces
+
+- Files/services changed:
+  - `backend/src/cyber_team/db/models.py`
+  - `backend/alembic/versions/0009_company_context_snapshots.py`
+  - `backend/src/cyber_team/company/context_sync.py`
+  - `backend/src/cyber_team/api/__init__.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/src/cyber_team/api/routes/integrations.py`
+  - `backend/src/cyber_team/operations/planning.py`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/components/AgentsView.tsx`
+  - `frontend/src/components/OperationsView.tsx`
+  - `frontend/src/components/IntegrationsView.tsx`
+- Commands run:
+  - `python3 -m py_compile backend/src/cyber_team/company/context_sync.py backend/src/cyber_team/operations/planning.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/api/routes/integrations.py backend/src/cyber_team/db/models.py backend/src/cyber_team/api/__init__.py`
+- Result:
+  - Added durable `company_context_snapshots` and `company_context_sync_runs` tables.
+  - Added an ERPNext company-context sync service that validates ERPNext, reads allowlisted DocTypes, redacts sensitive fields, normalizes a company profile, hashes source context for idempotency, seeds memory, applies only safe internal roles, and reports unsafe role specs as role gaps.
+  - Extended autonomous planning with `company_context_snapshot` plans and task handlers for assessment, memory seeding, low-risk role application, and risky role-gap reporting.
+  - Added owner APIs for sync, latest context, sync history, readiness freshness, and ERPNext integration last-sync status.
+  - Added owner-console actions and summaries for ERPNext context sync in Agents, Operations, and Integrations.
+  - Backend syntax check passed with `python3 -m py_compile`.
+- Evidence path/link:
+  - `backend/src/cyber_team/company/context_sync.py`
+  - `backend/alembic/versions/0009_company_context_snapshots.py`
+  - `frontend/src/components/AgentsView.tsx`
+- Next step:
+  - Add focused tests for the new company-context sync, planner, routes, readiness, and frontend API client.
+
+## 2026-06-14T12:47:57Z - STEP-021 - Company-context tests and migration rehearsal
+
+- Files/services changed:
+  - `backend/tests/test_company_context_sync.py`
+  - `backend/tests/test_api_operations.py`
+  - `backend/tests/test_autonomous_planning.py`
+  - `backend/tests/test_integration_routes.py`
+  - `frontend/src/lib/api.test.ts`
+  - `scripts/migration-rehearsal.sh`
+- Commands run:
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_company_context_sync.py backend/tests/test_api_operations.py backend/tests/test_autonomous_planning.py backend/tests/test_integration_routes.py -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/company/context_sync.py backend/src/cyber_team/operations/planning.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/api/routes/integrations.py backend/src/cyber_team/db/models.py backend/tests/test_company_context_sync.py backend/tests/test_api_operations.py backend/tests/test_autonomous_planning.py backend/tests/test_integration_routes.py`
+  - `python3 -m compileall -q backend/src backend/tests`
+  - `npm run build`
+  - `npx tsc --noEmit`
+  - `npx -y node@20 node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `PYTHONPATH=src ../.venv-quality/bin/alembic -c alembic.ini upgrade head --sql > /tmp/cyberteam-alembic-offline.sql`
+  - `MIGRATION_REHEARSAL_PORT=55434 ./scripts/migration-rehearsal.sh`
+  - `git diff --check`
+- Result:
+  - Focused backend tests passed: `20 passed`.
+  - Full backend tests passed: `136 passed`.
+  - Ruff passed for all touched backend files and tests.
+  - Backend compileall passed.
+  - Frontend production build passed without warnings after fixing the Agents hook dependency.
+  - TypeScript passed after Next generated `.next/types`.
+  - Frontend API tests passed under transient Node 20: `16 passed`.
+  - Container Node 18 cannot start Vitest 4/rolldown because `node:util.styleText` is missing; Node 20 verification passed.
+  - Alembic offline SQL generated through `0009_company_context_snapshots`.
+  - Migration rehearsal passed against both the legacy pre-Alembic schema and the representative seeded `0001` schema.
+- Evidence path/link:
+  - `/tmp/cyberteam-alembic-offline.sql`
+  - `scripts/migration-rehearsal.sh`
+  - `backend/tests/test_company_context_sync.py`
+  - `frontend/src/lib/api.test.ts`
+- Next step:
+  - Run the live staging ERPNext company-context sync, compose smoke, and ERPNext smoke.
+
 ## 2026-06-13T11:26:30Z - STEP-018 - Remove ERPNext edge basic auth for single-login UX
 
 - Files/services changed:
@@ -498,3 +595,53 @@
   - `/etc/caddy/Caddyfile`
 - Next step:
   - Commit and push the runbook/progress documentation update, then watch GitHub CI.
+
+## 2026-06-14T13:11:34Z - STEP-022 - ERPNext company-context staging sync and release verification
+
+- Files/services changed:
+  - `backend/src/cyber_team/company/context_sync.py`
+  - `backend/src/cyber_team/operations/planning.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/src/cyber_team/api/routes/integrations.py`
+  - `backend/src/cyber_team/db/models.py`
+  - `backend/alembic/versions/0009_company_context_snapshots.py`
+  - `frontend/src/components/AgentsView.tsx`
+  - `frontend/src/components/OperationsView.tsx`
+  - `frontend/src/components/IntegrationsView.tsx`
+  - `frontend/src/lib/api.ts`
+  - `scripts/staging-restore-drill.sh`
+  - `docs/runbooks/erpnext.md`
+  - Staging `core`, `worker`, and `ui` services rebuilt/restarted with `BUILD_SHA=local-company-context-3`.
+- Commands run:
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/company/context_sync.py backend/src/cyber_team/operations/planning.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/api/routes/integrations.py backend/src/cyber_team/db/models.py backend/tests/test_company_context_sync.py backend/tests/test_api_operations.py backend/tests/test_autonomous_planning.py backend/tests/test_integration_routes.py`
+  - `python3 -m compileall -q backend/src backend/tests`
+  - `npm run build`
+  - `npx tsc --noEmit`
+  - `npx -y node@20 node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `PYTHONPATH=src ../.venv-quality/bin/alembic -c alembic.ini upgrade head --sql > /tmp/cyberteam-alembic-offline-final.sql`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env ./scripts/compose-smoke.sh`
+  - `./scripts/erpnext-smoke.py --env-file deploy/environments/staging.env --api-base http://127.0.0.1:18000`
+  - `RESTORE_DRILL_BACKUP_FILE=backups/staging/cyberteam-staging-company-context-20260614T130952Z.dump ./scripts/staging-restore-drill.sh`
+  - `MIGRATION_REHEARSAL_PORT=55434 ./scripts/migration-rehearsal.sh`
+  - `git diff --check`
+- Result:
+  - Full backend tests passed: `136 passed`.
+  - Ruff, backend compileall, frontend build, TypeScript, Node 20 API tests, Alembic offline SQL, and diff hygiene passed.
+  - Compose smoke passed against the public Cyber-Team staging edge.
+  - ERPNext tool smoke passed with approval-gated staging Lead, Task, Issue, and Material Request writes; cleanup closed/completed safe records and left the Material Request as a staging draft audit record.
+  - Fresh Cyber-Team PostgreSQL staging backup was created and restored into an isolated PostgreSQL container; restore drill passed and now verifies the company-context tables.
+  - Migration rehearsal passed against both the legacy pre-Alembic schema and the representative seeded `0001` schema.
+  - Live ERPNext company-context sync succeeded from ERPNext REST data, created snapshot `ctx_822fdbd69ff9`, recorded source hash `77fd5015a60eb0f882d59d8317f222deaa7f157b64757f6009ed7bce53a475ce`, seeded memory, applied safe internal context updates, and left side-effectful/risky role work in owner-review state.
+  - A repeated sync with the same ERPNext source hash recorded a `noop` run instead of duplicating snapshots, memory seeds, agents, or role gaps.
+  - Operations readiness is `ready`, company context is `ready`, and there are no readiness blockers for the selected staging scope.
+- Evidence path/link:
+  - `dist/company-context/company-context-sync-20260614T125702Z.json`
+  - `dist/company-context/company-context-sync-20260614T125935Z.json`
+  - `dist/company-context/company-context-final-readiness-20260614T131117Z.json`
+  - `dist/erpnext/smoke/cyberteam-erpnext-tool-smoke-20260614T130817Z.json`
+  - `dist/restore-drills/staging/staging-restore-drill-20260614T131007Z.json`
+  - `/tmp/cyberteam-alembic-offline-final.sql`
+  - `backups/staging/cyberteam-staging-company-context-20260614T130952Z.dump`
+- Next step:
+  - Commit and push the company-context milestone, then watch GitHub CI.

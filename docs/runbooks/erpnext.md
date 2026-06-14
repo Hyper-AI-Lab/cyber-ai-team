@@ -152,6 +152,38 @@ PY
 Use staging-only records for live write smoke tests. Archive or cancel smoke
 records after validation instead of deleting audit-relevant business history.
 
+## Company Context Sync
+
+After ERPNext onboarding changes, sync the live ERPNext setup into Cyber-Team so
+the owner console, memory, Company Builder, and autonomous planner share the same
+canonical company context:
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer $CYBERTEAM_OWNER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"source":"erpnext","dry_run":false,"apply_low_risk":true,"run_planner":true}' \
+  http://127.0.0.1:18000/api/operations/company-context/sync
+```
+
+Expected behavior:
+
+- A changed ERPNext setup creates one `company_context_snapshots` row and one
+  `company_context_sync_runs` row.
+- An unchanged ERPNext setup records a `noop` sync run with the same source
+  hash.
+- Low-risk internal memory and role updates may apply automatically.
+- Side-effectful or higher-risk role/tool changes become owner-review planner
+  tasks and role gaps; they must not execute external writes without approval.
+
+Check freshness through the owner console, or via:
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer $CYBERTEAM_OWNER_TOKEN" \
+  http://127.0.0.1:18000/api/operations/company-context
+```
+
 ## Backup
 
 Back up ERPNext MariaDB and site files before promotion or risky changes:

@@ -532,6 +532,27 @@ class ApiClient {
     return this.request('/api/operations/readiness');
   }
 
+  async syncCompanyContext(options: Record<string, any> = {}) {
+    return this.request('/api/operations/company-context/sync', {
+      method: 'POST',
+      body: JSON.stringify({
+        dry_run: false,
+        apply_low_risk: true,
+        run_planner: true,
+        source: 'erpnext',
+        ...options,
+      }),
+    });
+  }
+
+  async getCompanyContext() {
+    return this.request('/api/operations/company-context');
+  }
+
+  async listCompanyContextSyncRuns(limit: number = 20) {
+    return this.request(`/api/operations/company-context/sync-runs?limit=${limit}`);
+  }
+
   async getDecisionTimeline(limit: number = 50) {
     return this.request(`/api/operations/decision-timeline?limit=${limit}`);
   }

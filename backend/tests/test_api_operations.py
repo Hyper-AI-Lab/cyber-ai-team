@@ -207,6 +207,29 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
     app.state.comms_gateway = FakeComms()
     app.state.inbound_email_service = FakeInbound()
     app.state.erpnext = FakeERPNext()
+    class FakeCompanyContext:
+        async def latest_snapshot(self):
+            return {
+                "id": "ctx_1",
+                "source_hash": "hash-1",
+                "company_namespace": "company:hyper_ai_lab",
+                "created_at": "2026-06-14T00:00:00",
+            }
+
+        async def list_sync_runs(self, limit=1):
+            return [{"id": "run_1", "status": "synced"}]
+
+        def readiness_from_snapshot(self, snapshot, latest_run=None):
+            return {
+                "status": "ready",
+                "required": True,
+                "blocking": False,
+                "stale": False,
+                "last_sync_at": "2026-06-14T00:00:00",
+                "source_hash": "hash-1",
+            }
+
+    app.state.company_context_sync_service = FakeCompanyContext()
     app.state.audit_service = AsyncMock()
     app.state.audit_service.list_events.return_value = []
     app.state.memory_service = AsyncMock()
@@ -243,6 +266,7 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
     } == {"send_sms", "make_call", "ci_trigger"}
     assert body["integrations"]["blocking_readiness"] is False
     assert body["integrations"]["optional_disabled"][0]["provider"] == "twilio"
+    assert body["company_context"]["status"] == "ready"
 
 
 def test_plan_scan_forces_manual_only_autonomy(monkeypatch):
@@ -280,6 +304,61 @@ def test_plan_scan_forces_manual_only_autonomy(monkeypatch):
     assert app.state.autonomous_planning_service.scan_and_plan.await_args.kwargs[
         "auto_execute"
     ] is False
+
+
+def test_company_context_sync_routes(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    app.state.company_context_sync_service = AsyncMock()
+    app.state.company_context_sync_service.sync_from_erpnext.return_value = {
+        "status": "synced",
+        "snapshot": {"id": "ctx_1"},
+    }
+    app.state.company_context_sync_service.get_latest_context.return_value = {
+        "snapshot": {"id": "ctx_1"},
+        "freshness": {"status": "ready"},
+    }
+    app.state.company_context_sync_service.list_sync_runs.return_value = [
+        {"id": "run_1", "status": "synced"}
+    ]
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+    client = TestClient(app)
+
+    sync_response = client.post(
+        "/api/operations/company-context/sync",
+        json={
+            "dry_run": False,
+            "apply_low_risk": True,
+            "run_planner": True,
+            "source": "erpnext",
+        },
+    )
+    latest_response = client.get("/api/operations/company-context")
+    runs_response = client.get("/api/operations/company-context/sync-runs?limit=5")
+
+    assert sync_response.status_code == 200
+    assert sync_response.json()["snapshot"]["id"] == "ctx_1"
+    assert latest_response.status_code == 200
+    assert latest_response.json()["freshness"]["status"] == "ready"
+    assert runs_response.status_code == 200
+    assert runs_response.json()[0]["status"] == "synced"
+    app.state.company_context_sync_service.sync_from_erpnext.assert_awaited_once_with(
+        actor="owner@example.com",
+        dry_run=False,
+        apply_low_risk=True,
+        run_planner=True,
+    )
 
 
 def test_gdpr_subject_delete_is_audit_preserving(monkeypatch):

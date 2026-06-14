@@ -59,6 +59,7 @@ function cycleStatus(event: any) {
 function sourceLabel(plan: any) {
   if (plan.source_type === 'role_gap') return 'Role gap'
   if (plan.source_type === 'memory_steward_finding') return 'Memory'
+  if (plan.source_type === 'company_context_snapshot') return 'Company context'
   return plan.source_type || 'Unknown'
 }
 
@@ -217,6 +218,7 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
       await api.scanAutonomousPlans({
         include_role_gaps: true,
         include_memory_findings: true,
+        include_company_context: true,
         auto_execute: autoExecutePlans,
         limit: remediationLimit,
       })
@@ -337,7 +339,7 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
                 build: {readiness.version?.build_sha}
               </span>
             </div>
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
               <ReadinessPanel
                 title="Required Providers"
                 value={(readiness.integrations?.required_providers || []).join(', ') || 'none'}
@@ -366,6 +368,15 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
                         .map((item: any) => item.provider || item.channel)
                         .join(', ')
                     : 'no optional provider warnings'
+                }
+              />
+              <ReadinessPanel
+                title="Company Context"
+                value={readiness.company_context?.status || 'unavailable'}
+                detail={
+                  readiness.company_context?.last_sync_at
+                    ? `last sync ${formatDate(readiness.company_context.last_sync_at)}`
+                    : readiness.company_context?.detail || 'no ERPNext context sync recorded'
                 }
               />
             </div>

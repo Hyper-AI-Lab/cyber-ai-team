@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cyber_team.db import Base
-from cyber_team.db.models import MemoryStewardFinding, RoleGap
+from cyber_team.db.models import CompanyContextSnapshot, MemoryStewardFinding, RoleGap
 from cyber_team.operations.planning import AutonomousPlanningService
 
 
@@ -146,6 +146,64 @@ class FakeMemorySteward:
         return {"actions_applied": len(self.findings)}
 
 
+class FakeCompanyContext:
+    def __init__(self, *, unsafe_role_count: int = 1):
+        self.unsafe_role_count = unsafe_role_count
+        self.assess_snapshot = AsyncMock(side_effect=self._assess)
+        self.seed_snapshot_memory = AsyncMock(
+            return_value={"created_memory_ids": ["mem_1"], "already_seeded": False}
+        )
+        self.apply_snapshot_low_risk_roles = AsyncMock(
+            return_value={
+                "agent_ids": ["company_memory_steward"],
+                "role_manifest_ids": ["company_memory_steward"],
+                "skipped_role_specs": [{"name": "Sales & CRM Agent"}],
+            }
+        )
+        self.report_snapshot_risky_role_gaps = AsyncMock(
+            return_value={
+                "role_gap_ids": ["gap_sales"],
+                "unsafe_role_count": unsafe_role_count,
+            }
+        )
+
+    async def _assess(self, snapshot_id):
+        return {
+            "snapshot_id": snapshot_id,
+            "source_hash": "hash-1",
+            "company_namespace": "company:hyper_ai_lab",
+            "counts": {"planned_roles": 2},
+            "safe_role_count": 1,
+            "unsafe_role_count": self.unsafe_role_count,
+            "capability_gap_count": 0,
+            "errors": [],
+        }
+
+
+def company_context_snapshot(snapshot_id: str = "ctx_1") -> CompanyContextSnapshot:
+    now = datetime(2026, 6, 3, 12, 0, 0)
+    return CompanyContextSnapshot(
+        id=snapshot_id,
+        source="erpnext",
+        source_id="erpnext.hyperailab.com",
+        source_hash="hash-1",
+        company_namespace="company:hyper_ai_lab",
+        status="active",
+        normalized_profile={"name": "Hyper AI Lab"},
+        erpnext_summary={"counts": {"Company": 1}},
+        operating_model={"planned_role_specs": []},
+        memory_ids=[],
+        agent_ids=[],
+        role_manifest_ids=[],
+        role_gap_ids=[],
+        approval_ids=[],
+        plan_ids=[],
+        errors=[],
+        created_by="owner@example.com",
+        created_at=now,
+    )
+
+
 def tool_registry(*tools: FakeTool) -> FakeToolRegistry:
     return FakeToolRegistry(list(tools))
 
@@ -217,6 +275,66 @@ async def test_scan_creates_role_gap_graph_and_waits_for_owner_review():
         assert plan["tasks"][3]["approval_id"] == "review_approval_1"
         manager._request_approval.assert_awaited_once()
         manager.apply_role_gap_proposal.assert_not_awaited()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_company_context_snapshot_plan_executes_safe_tasks_and_waits_for_review():
+    engine, session_factory = await build_session_factory()
+    manager = FakeAgentManager({"status": "resolved"})
+    company_context = FakeCompanyContext(unsafe_role_count=1)
+    try:
+        async with session_factory() as session:
+            session.add(company_context_snapshot())
+            await session.commit()
+
+        service = AutonomousPlanningService(
+            agent_manager=manager,
+            memory_steward_service=FakeMemorySteward(),
+            tool_registry=low_risk_tool_registry(),
+            company_context_service=company_context,
+            session_factory=session_factory,
+        )
+
+        result = await service.scan_and_plan(
+            actor="test",
+            include_role_gaps=False,
+            include_memory_findings=False,
+            include_company_context=True,
+            auto_execute=True,
+        )
+
+        assert result["plans_created"] == 1
+        assert result["execution"]["plans_waiting_approval"] == 1
+        plan = (await service.list_plans())[0]
+        assert plan["source_type"] == "company_context_snapshot"
+        assert [task["task_type"] for task in plan["tasks"]] == [
+            "company_context.assess",
+            "company_context.seed_memory",
+            "company_context.apply_low_risk_roles",
+            "company_context.report_risky_roles",
+            "plan.owner_review",
+        ]
+        assert [task["status"] for task in plan["tasks"]] == [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "waiting_approval",
+        ]
+        company_context.seed_snapshot_memory.assert_awaited_once_with(
+            "ctx_1",
+            actor="test",
+        )
+        company_context.apply_snapshot_low_risk_roles.assert_awaited_once_with(
+            "ctx_1",
+            actor="test",
+        )
+        company_context.report_snapshot_risky_role_gaps.assert_awaited_once_with(
+            "ctx_1",
+            actor="test",
+        )
     finally:
         await engine.dispose()
 

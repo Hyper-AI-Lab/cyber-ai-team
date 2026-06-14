@@ -13,6 +13,7 @@ from cyber_team.db import async_session
 from cyber_team.db.models import (
     AutonomousPlan,
     AutonomousTask,
+    CompanyContextSnapshot,
     MemoryStewardFinding,
     RoleGap,
 )
@@ -36,6 +37,7 @@ class AutonomousPlanningService:
         memory_steward_service,
         tool_registry=None,
         audit_service=None,
+        company_context_service=None,
         session_factory=async_session,
     ):
         self._agent_manager = agent_manager
@@ -43,7 +45,11 @@ class AutonomousPlanningService:
         self._tool_registry = tool_registry
         self._audit = audit_service
         self._metrics = getattr(audit_service, "_metrics", None)
+        self._company_context = company_context_service
         self._session_factory = session_factory
+
+    def set_company_context_service(self, service) -> None:
+        self._company_context = service
 
     async def scan_and_plan(
         self,
@@ -51,6 +57,7 @@ class AutonomousPlanningService:
         actor: str = "autonomous_planner",
         include_role_gaps: bool = True,
         include_memory_findings: bool = True,
+        include_company_context: bool = True,
         auto_execute: bool = True,
         limit: int = 50,
     ) -> dict[str, Any]:
@@ -77,6 +84,17 @@ class AutonomousPlanningService:
                     (created if result["created"] else existing).append(result["plan"])
                 except Exception as exc:
                     errors.append(self._error("memory_steward_finding", finding["id"], exc))
+
+        if include_company_context:
+            for snapshot in await self._load_company_context_snapshots(safe_limit):
+                try:
+                    result = await self.create_plan_from_company_context_snapshot(
+                        snapshot["id"],
+                        actor=actor,
+                    )
+                    (created if result["created"] else existing).append(result["plan"])
+                except Exception as exc:
+                    errors.append(self._error("company_context_snapshot", snapshot["id"], exc))
 
         execution = None
         if auto_execute:
@@ -257,6 +275,125 @@ class AutonomousPlanningService:
         )
         return {"created": True, "plan": plan}
 
+    async def create_plan_from_company_context_snapshot(
+        self,
+        snapshot_id: str,
+        *,
+        actor: str = "autonomous_planner",
+    ) -> dict[str, Any]:
+        existing = await self._find_active_plan("company_context_snapshot", snapshot_id)
+        if existing:
+            return {"created": False, "plan": existing}
+        if not self._company_context:
+            raise ValueError("Company context sync service is not available")
+
+        assessment = await self._company_context.assess_snapshot(snapshot_id)
+        unsafe_count = assessment["unsafe_role_count"]
+        policy = {
+            "policy_version": "planner-company-context-v1",
+            "source_type": "company_context_snapshot",
+            "source_id": snapshot_id,
+            "max_risk": "medium" if unsafe_count else "low",
+            "owner_review_required": unsafe_count > 0,
+            "review_reasons": (
+                [f"{unsafe_count} role specs require owner review before creation"]
+                if unsafe_count
+                else []
+            ),
+            "blockers": [],
+            "autonomous_execution": "owner_review" if unsafe_count else "auto",
+        }
+        task_specs = [
+            self._task_spec(
+                "Assess ERPNext company context",
+                "Summarize synced ERPNext context, freshness, role coverage, and gaps.",
+                "company_context.assess",
+                "company_context_snapshot",
+                snapshot_id,
+                "low",
+                {"snapshot_id": snapshot_id, "policy": policy},
+            ),
+            self._task_spec(
+                "Seed company memory from ERPNext",
+                "Write durable memory entries for the normalized ERPNext company profile.",
+                "company_context.seed_memory",
+                "company_context_snapshot",
+                snapshot_id,
+                "low",
+                {"snapshot_id": snapshot_id, "policy": policy},
+            ),
+            self._task_spec(
+                "Apply low-risk internal roles",
+                "Create only auto-policy roles whose tools are ready and non-side-effectful.",
+                "company_context.apply_low_risk_roles",
+                "company_context_snapshot",
+                snapshot_id,
+                "low",
+                {"snapshot_id": snapshot_id, "policy": policy},
+            ),
+            self._task_spec(
+                "Report risky role backlog",
+                "Convert side-effectful or approval-gated role specs into explicit role gaps.",
+                "company_context.report_risky_roles",
+                "company_context_snapshot",
+                snapshot_id,
+                "low",
+                {"snapshot_id": snapshot_id, "policy": policy},
+            ),
+        ]
+        if unsafe_count:
+            task_specs.append(
+                self._task_spec(
+                    "Owner review: risky ERPNext-derived roles",
+                    "Review role gaps created for side-effectful or approval-gated specialists.",
+                    "plan.owner_review",
+                    "company_context_snapshot",
+                    snapshot_id,
+                    "medium",
+                    {
+                        "review_for": "company_context.report_risky_roles",
+                        "review_title": "Risky ERPNext-derived role backlog",
+                        "review_description": (
+                            "ERPNext context implies specialist roles that use side-effectful "
+                            "or approval-gated tools. Review their generated role gaps before "
+                            "creating live agents."
+                        ),
+                        "source_type": "company_context_snapshot",
+                        "source_id": snapshot_id,
+                        "policy": policy,
+                        "review_reasons": policy["review_reasons"],
+                        "target_payload": {"snapshot_id": snapshot_id},
+                    },
+                    autonomous_allowed=False,
+                )
+            )
+
+        plan = await self._create_plan(
+            title="Apply ERPNext company context",
+            objective=(
+                "Turn synced ERPNext setup and business records into Cyber-Team memory, "
+                "safe internal roles, and reviewable role-gap backlog."
+            ),
+            source_type="company_context_snapshot",
+            source_id=snapshot_id,
+            priority="medium" if unsafe_count else "low",
+            created_by=actor,
+            context={
+                "company_namespace": assessment["company_namespace"],
+                "source_hash": assessment["source_hash"],
+                "counts": assessment["counts"],
+                "policy": policy,
+            },
+            task_specs=self._number_task_specs(task_specs),
+        )
+        await self._record(
+            "autonomous_plan.created",
+            actor=actor,
+            resource_id=plan["id"],
+            metadata={"source_type": "company_context_snapshot", "source_id": snapshot_id},
+        )
+        return {"created": True, "plan": plan}
+
     async def execute_ready_plans(
         self,
         *,
@@ -354,6 +491,20 @@ class AutonomousPlanningService:
                 result = await self._execute_role_gap_apply(task, actor)
             elif task["task_type"] == "memory_finding.remediate":
                 result = await self._execute_memory_remediation(task, actor)
+            elif task["task_type"] == "company_context.assess":
+                result = await self._execute_company_context_assess(task)
+            elif task["task_type"] == "company_context.seed_memory":
+                result = await self._execute_company_context_seed_memory(task, actor)
+            elif task["task_type"] == "company_context.apply_low_risk_roles":
+                result = await self._execute_company_context_apply_low_risk_roles(
+                    task,
+                    actor,
+                )
+            elif task["task_type"] == "company_context.report_risky_roles":
+                result = await self._execute_company_context_report_risky_roles(
+                    task,
+                    actor,
+                )
             else:
                 raise ValueError(f"Unsupported autonomous task type: {task['task_type']}")
         except Exception as exc:
@@ -703,6 +854,70 @@ class AutonomousPlanningService:
             error=remediation.get("reason") or "No executable memory remediation was produced.",
         )
 
+    async def _execute_company_context_assess(
+        self,
+        task: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not self._company_context:
+            return await self._finish_task(
+                task["id"],
+                "blocked",
+                error="Company context sync service is not available.",
+            )
+        result = await self._company_context.assess_snapshot(task["target_id"])
+        return await self._finish_task(task["id"], "completed", result=result)
+
+    async def _execute_company_context_seed_memory(
+        self,
+        task: dict[str, Any],
+        actor: str,
+    ) -> dict[str, Any]:
+        if not self._company_context:
+            return await self._finish_task(
+                task["id"],
+                "blocked",
+                error="Company context sync service is not available.",
+            )
+        result = await self._company_context.seed_snapshot_memory(
+            task["target_id"],
+            actor=actor,
+        )
+        return await self._finish_task(task["id"], "completed", result=result)
+
+    async def _execute_company_context_apply_low_risk_roles(
+        self,
+        task: dict[str, Any],
+        actor: str,
+    ) -> dict[str, Any]:
+        if not self._company_context:
+            return await self._finish_task(
+                task["id"],
+                "blocked",
+                error="Company context sync service is not available.",
+            )
+        result = await self._company_context.apply_snapshot_low_risk_roles(
+            task["target_id"],
+            actor=actor,
+        )
+        return await self._finish_task(task["id"], "completed", result=result)
+
+    async def _execute_company_context_report_risky_roles(
+        self,
+        task: dict[str, Any],
+        actor: str,
+    ) -> dict[str, Any]:
+        if not self._company_context:
+            return await self._finish_task(
+                task["id"],
+                "blocked",
+                error="Company context sync service is not available.",
+            )
+        result = await self._company_context.report_snapshot_risky_role_gaps(
+            task["target_id"],
+            actor=actor,
+        )
+        return await self._finish_task(task["id"], "completed", result=result)
+
     async def _finish_task(
         self,
         task_id: str,
@@ -751,6 +966,19 @@ class AutonomousPlanningService:
                 .limit(limit)
             )
             return [self._memory_finding_to_dict(finding) for finding in result.scalars().all()]
+
+    async def _load_company_context_snapshots(self, limit: int) -> list[dict[str, Any]]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(CompanyContextSnapshot)
+                .where(CompanyContextSnapshot.status == "active")
+                .order_by(desc(CompanyContextSnapshot.created_at))
+                .limit(limit)
+            )
+            return [
+                self._company_context_snapshot_to_dict(snapshot)
+                for snapshot in result.scalars().all()
+            ]
 
     async def _get_role_gap(self, gap_id: str) -> dict[str, Any] | None:
         async with self._session_factory() as session:
@@ -1325,6 +1553,32 @@ class AutonomousPlanningService:
             "created_at": finding.created_at.isoformat(),
             "updated_at": finding.updated_at.isoformat(),
             "resolved_at": finding.resolved_at.isoformat() if finding.resolved_at else None,
+        }
+
+    @staticmethod
+    def _company_context_snapshot_to_dict(
+        snapshot: CompanyContextSnapshot,
+    ) -> dict[str, Any]:
+        return {
+            "id": snapshot.id,
+            "source": snapshot.source,
+            "source_id": snapshot.source_id,
+            "source_hash": snapshot.source_hash,
+            "company_namespace": snapshot.company_namespace,
+            "status": snapshot.status,
+            "normalized_profile": snapshot.normalized_profile or {},
+            "erpnext_summary": snapshot.erpnext_summary or {},
+            "operating_model": snapshot.operating_model or {},
+            "memory_ids": snapshot.memory_ids or [],
+            "agent_ids": snapshot.agent_ids or [],
+            "role_manifest_ids": snapshot.role_manifest_ids or [],
+            "role_gap_ids": snapshot.role_gap_ids or [],
+            "approval_ids": snapshot.approval_ids or [],
+            "plan_ids": snapshot.plan_ids or [],
+            "errors": snapshot.errors or [],
+            "created_by": snapshot.created_by,
+            "created_at": snapshot.created_at.isoformat(),
+            "applied_at": snapshot.applied_at.isoformat() if snapshot.applied_at else None,
         }
 
     @staticmethod

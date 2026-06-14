@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
-import { Bot, Play, Plus, Cpu, Shield, HelpCircle, Check, X } from 'lucide-react'
+import { Bot, Play, Plus, Cpu, Shield, HelpCircle, Check, X, RefreshCw, Database } from 'lucide-react'
 
 interface AgentsViewProps {
   agents: any[]
@@ -32,6 +32,9 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
   const [roleGaps, setRoleGaps] = useState<any[]>([])
   const [loadingRoleGaps, setLoadingRoleGaps] = useState(false)
   const [reviewingRoleGaps, setReviewingRoleGaps] = useState(false)
+  const [companyContext, setCompanyContext] = useState<any | null>(null)
+  const [syncingCompanyContext, setSyncingCompanyContext] = useState(false)
+  const [companyContextError, setCompanyContextError] = useState<string | null>(null)
 
   // 2. Custom Role Provisioning State
   const [roleFamily, setRoleFamily] = useState('engineering')
@@ -48,6 +51,7 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
 
   useEffect(() => {
     loadRoleGaps()
+    loadCompanyContext()
   }, [])
 
   const loadRoleGaps = async () => {
@@ -74,6 +78,57 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
       alert(`Error: ${e.message}`)
     } finally {
       setReviewingRoleGaps(false)
+    }
+  }
+
+  const loadCompanyContext = async () => {
+    setCompanyContextError(null)
+    try {
+      const context = await api.getCompanyContext()
+      setCompanyContext(context)
+      const profile = context?.normalized_company_profile
+      if (profile) {
+        setCompanyName((current) => current || profile.name || profile.company_name || '')
+        setCompanyIndustry((current) => current || profile.industry || '')
+        setCompanyStage((current) => current || profile.stage || '')
+        setCompanyProduct((current) => current || profile.product || '')
+        setCompanyCustomers((current) => current || profile.target_customers || '')
+        setCompanyChannels((current) => current || profile.channels || '')
+        setCompanyGoals((current) => current || profile.goals || '')
+        setCompanyJurisdictions((current) => current || profile.jurisdictions || '')
+      }
+    } catch (e: any) {
+      setCompanyContext(null)
+      setCompanyContextError(e.message || 'Failed to load company context')
+    }
+  }
+
+  const handleSyncCompanyContext = async () => {
+    setSyncingCompanyContext(true)
+    setCompanyContextError(null)
+    try {
+      const result = await api.syncCompanyContext({
+        dry_run: false,
+        apply_low_risk: true,
+        run_planner: true,
+        source: 'erpnext',
+      })
+      setBuilderResult(result.snapshot ? {
+        instantiated_agents: (result.snapshot.agent_ids || []).map((agentId: string) => ({
+          agent_id: agentId,
+          status: 'synced',
+        })),
+        role_backlog: result.apply_result?.skipped_role_specs || [],
+        capability_gaps: result.snapshot.operating_model?.capability_gaps || [],
+        operating_model: result.snapshot.operating_model,
+      } : null)
+      await loadCompanyContext()
+      await loadRoleGaps()
+      onRefresh()
+    } catch (e: any) {
+      setCompanyContextError(e.message || 'ERPNext company-context sync failed')
+    } finally {
+      setSyncingCompanyContext(false)
     }
   }
 
@@ -188,6 +243,14 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
         </div>
         <div className="flex gap-3">
           <button
+            onClick={handleSyncCompanyContext}
+            disabled={syncingCompanyContext}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <RefreshCw className={`w-4 h-4 ${syncingCompanyContext ? 'animate-spin' : ''}`} />
+            Sync from ERPNext
+          </button>
+          <button
             onClick={() => setCreationMode(creationMode === 'builder' ? null : 'builder')}
             className={`btn-secondary flex items-center gap-2 ${creationMode === 'builder' ? 'ring-2 ring-blue-500' : ''}`}
           >
@@ -203,6 +266,49 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
           </button>
         </div>
       </div>
+
+      {(companyContext || companyContextError) && (
+        <div className="card border-slate-700 bg-slate-900/70">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <Database className="mt-1 h-5 w-5 text-emerald-300" />
+              <div>
+                <h3 className="font-semibold">ERPNext Company Context</h3>
+                {companyContextError ? (
+                  <p className="mt-1 text-sm text-red-300">{companyContextError}</p>
+                ) : (
+                  <p className="mt-1 text-sm text-slate-400">
+                    {companyContext?.normalized_company_profile?.name || 'Company context'} ·{' '}
+                    {companyContext?.freshness?.status || 'unknown'} ·{' '}
+                    {companyContext?.freshness?.last_sync_at
+                      ? new Date(companyContext.freshness.last_sync_at).toLocaleString()
+                      : 'never synced'}
+                  </p>
+                )}
+              </div>
+            </div>
+            {companyContext?.snapshot && (
+              <div className="grid grid-cols-3 gap-3 text-right text-sm">
+                <div>
+                  <p className="text-slate-500">Agents</p>
+                  <p className="text-slate-100">{companyContext.snapshot.agent_ids?.length || 0}</p>
+                </div>
+                <div>
+                  <p className="text-slate-500">Plans</p>
+                  <p className="text-slate-100">{companyContext.pending_plans?.length || 0}</p>
+                </div>
+                <div>
+                  <p className="text-slate-500">Records</p>
+                  <p className="text-slate-100">
+                    {Object.values(companyContext.snapshot.erpnext_summary?.counts || {})
+                      .reduce((total: number, value: any) => total + Number(value || 0), 0)}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 1. Company Builder Panel */}
       {creationMode === 'builder' && (

@@ -132,6 +132,37 @@ describe('ApiClient', () => {
     expect(fetchMock.mock.calls[0][1]?.headers.Authorization).toBe('Bearer access-1')
   })
 
+  it('manages ERPNext company context through the authenticated API client', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ status: 'synced', snapshot: { id: 'ctx-1' } }))
+      .mockResolvedValueOnce(jsonResponse({ snapshot: { id: 'ctx-1' } }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1' }]))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.syncCompanyContext({ dry_run: true, apply_low_risk: false })
+    await client.getCompanyContext()
+    await client.listCompanyContextSyncRuns(5)
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://api.test/api/operations/company-context/sync',
+    )
+    expect(fetchMock.mock.calls[0][1]?.method).toBe('POST')
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({
+      dry_run: true,
+      apply_low_risk: false,
+      run_planner: true,
+      source: 'erpnext',
+    })
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/operations/company-context',
+    )
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/operations/company-context/sync-runs?limit=5',
+    )
+  })
+
   it('validates an integration provider through the authenticated API client', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ status: 'blocked' }))

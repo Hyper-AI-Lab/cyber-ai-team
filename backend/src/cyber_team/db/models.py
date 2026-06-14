@@ -253,6 +253,62 @@ class RoleGap(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class CompanyContextSnapshot(Base):
+    __tablename__ = "company_context_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "source",
+            "source_hash",
+            name="uq_company_context_snapshots_source_hash",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source: Mapped[str] = mapped_column(String(40), default="erpnext", index=True)
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    source_hash: Mapped[str] = mapped_column(String(64), index=True)
+    company_namespace: Mapped[str] = mapped_column(String(200), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    normalized_profile: Mapped[dict] = mapped_column(JSON, default=dict)
+    erpnext_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    operating_model: Mapped[dict] = mapped_column(JSON, default=dict)
+    memory_ids: Mapped[list] = mapped_column(JSON, default=list)
+    agent_ids: Mapped[list] = mapped_column(JSON, default=list)
+    role_manifest_ids: Mapped[list] = mapped_column(JSON, default=list)
+    role_gap_ids: Mapped[list] = mapped_column(JSON, default=list)
+    approval_ids: Mapped[list] = mapped_column(JSON, default=list)
+    plan_ids: Mapped[list] = mapped_column(JSON, default=list)
+    errors: Mapped[list] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String(200), default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class CompanyContextSyncRun(Base):
+    __tablename__ = "company_context_sync_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source: Mapped[str] = mapped_column(String(40), default="erpnext", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="running", index=True)
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
+    apply_low_risk: Mapped[bool] = mapped_column(Boolean, default=True)
+    run_planner: Mapped[bool] = mapped_column(Boolean, default=True)
+    snapshot_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("company_context_snapshots.id"),
+        nullable=True,
+        index=True,
+    )
+    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    company_namespace: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    counts: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    errors: Mapped[list] = mapped_column(JSON, default=list)
+    actor: Mapped[str] = mapped_column(String(200), default="system")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class AutonomousPlan(Base):
     __tablename__ = "autonomous_plans"
 

@@ -17,6 +17,12 @@ type IntegrationItem = {
   blocking?: boolean
   site_url?: string
   api_url?: string
+  company_context?: {
+    status?: string
+    last_sync_at?: string | null
+    stale?: boolean
+    detail?: string
+  }
   circuit?: {
     state: 'open' | 'closed' | string
     failures: number
@@ -185,6 +191,14 @@ export default function IntegrationsView() {
                       <p className="mt-1 text-sm text-slate-400">{item.detail}</p>
                       {item.site_url && (
                         <p className="mt-1 text-xs text-slate-500">{item.site_url}</p>
+                      )}
+                      {item.company_context && (
+                        <p className="mt-1 text-xs text-slate-500">
+                          context {item.company_context.status || 'unknown'} ·{' '}
+                          {item.company_context.last_sync_at
+                            ? new Date(item.company_context.last_sync_at).toLocaleString()
+                            : item.company_context.detail || 'not synced'}
+                        </p>
                       )}
                     </div>
                   </div>

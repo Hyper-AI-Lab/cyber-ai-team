@@ -234,3 +234,67 @@ def test_validate_erpnext_integration_uses_erpnext_client(monkeypatch):
     assert body["provider"] == "erpnext"
     assert body["results"][0]["mode"] == "live"
     app.state.audit_service.record_control_evidence.assert_awaited_once()
+
+
+def test_integration_status_includes_erpnext_company_context(monkeypatch):
+    app = FastAPI()
+    app.include_router(integrations_router, prefix="/api/integrations")
+
+    class FakeERPNext:
+        def integration_status(self, _last_validation=None):
+            return {
+                "provider": "erpnext",
+                "configured": True,
+                "mode": "live",
+                "detail": "ERPNext ready.",
+            }
+
+    class FakeCompanyContext:
+        async def latest_snapshot(self):
+            return {"id": "ctx_1"}
+
+        async def list_sync_runs(self, limit=1):
+            return [{"id": "run_1", "status": "synced"}]
+
+        def readiness_from_snapshot(self, snapshot, latest_run=None):
+            return {
+                "status": "ready",
+                "last_sync_at": "2026-06-14T00:00:00",
+                "source_hash": "hash-1",
+                "latest_run_status": latest_run["status"],
+            }
+
+    app.state.comms_gateway = type(
+        "FakeCommsGateway",
+        (),
+        {
+            "integration_status": lambda _self: [],
+            "last_validation_result": lambda _self: None,
+        },
+    )()
+    app.state.erpnext = FakeERPNext()
+    app.state.company_context_sync_service = FakeCompanyContext()
+
+    async def mock_get_current_principal():
+        return Principal(
+            subject="owner",
+            email="owner@example.com",
+            role="owner",
+            token_type="access",
+        )
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.integrations.require_authorization",
+        mock_require_authorization,
+    )
+
+    response = TestClient(app).get("/api/integrations/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["erpnext"]["company_context"]["status"] == "ready"
+    assert body["erpnext"]["company_context"]["latest_run_status"] == "synced"

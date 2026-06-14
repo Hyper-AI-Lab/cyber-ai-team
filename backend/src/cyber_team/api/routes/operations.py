@@ -40,8 +40,16 @@ class AutonomousCycleResponse(BaseModel):
 class PlanScanRequest(BaseModel):
     include_role_gaps: bool = True
     include_memory_findings: bool = True
+    include_company_context: bool = True
     auto_execute: bool = True
     limit: int = Field(default=50, ge=1, le=200)
+
+
+class CompanyContextSyncRequest(BaseModel):
+    dry_run: bool = False
+    apply_low_risk: bool = True
+    run_planner: bool = True
+    source: str = Field(default="erpnext", pattern="^erpnext$")
 
 
 class RetentionCleanupRequest(BaseModel):
@@ -185,6 +193,57 @@ async def get_autonomous_plan(
     return plan
 
 
+@router.post("/company-context/sync")
+async def sync_company_context(
+    data: CompanyContextSyncRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "sync",
+        "company_context",
+        data.source,
+        context=data.model_dump(),
+    )
+    service = request.app.state.company_context_sync_service
+    return await service.sync_from_erpnext(
+        actor=principal.email,
+        dry_run=data.dry_run,
+        apply_low_risk=data.apply_low_risk,
+        run_planner=data.run_planner,
+    )
+
+
+@router.get("/company-context")
+async def get_company_context(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "company_context", "latest")
+    service = request.app.state.company_context_sync_service
+    return await service.get_latest_context()
+
+
+@router.get("/company-context/sync-runs")
+async def list_company_context_sync_runs(
+    request: Request,
+    limit: int = 20,
+    principal: Principal = Depends(get_current_principal),
+):
+    safe_limit = max(1, min(limit, 200))
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "company_context_sync_run",
+        context={"limit": safe_limit},
+    )
+    service = request.app.state.company_context_sync_service
+    return await service.list_sync_runs(limit=safe_limit)
+
+
 @router.get("/readiness")
 async def operations_readiness(
     request: Request,
@@ -257,6 +316,35 @@ async def operations_readiness(
     optional_disabled = [
         item for item in provider_items if item.get("optional_disabled")
     ]
+    company_context_service = getattr(
+        request.app.state,
+        "company_context_sync_service",
+        None,
+    )
+    company_context_status = {
+        "status": "unavailable",
+        "required": "erpnext" in settings.required_provider_names,
+        "blocking": "erpnext" in settings.required_provider_names,
+        "stale": True,
+        "detail": "Company context sync service is not available.",
+    }
+    if company_context_service:
+        latest_snapshot = await company_context_service.latest_snapshot()
+        latest_runs = await company_context_service.list_sync_runs(limit=1)
+        company_context_status = company_context_service.readiness_from_snapshot(
+            latest_snapshot,
+            latest_run=latest_runs[0] if latest_runs else None,
+        )
+    company_context_blockers = []
+    if company_context_status.get("blocking"):
+        company_context_blockers.append(
+            {
+                "provider": "erpnext",
+                "mode": company_context_status.get("status"),
+                "required": company_context_status.get("required"),
+                "reason": company_context_status.get("detail"),
+            }
+        )
 
     evidence = await request.app.state.audit_service.list_events(
         event_type="control.evidence",
@@ -267,7 +355,7 @@ async def operations_readiness(
         trace for trace in traces
         if trace.get("errors") or trace.get("metadata", {}).get("coverage") == "error"
     ]
-    blockers = side_effect_blockers + integration_blockers
+    blockers = side_effect_blockers + integration_blockers + company_context_blockers
     status = "ready" if not blockers else "degraded"
     return {
         "status": status,
@@ -299,6 +387,7 @@ async def operations_readiness(
             "blocking_readiness": bool(integration_blockers),
             "blocking_reasons": integration_blockers,
         },
+        "company_context": company_context_status,
         "memory": {
             "recent_traces_reviewed": len(traces),
             "recent_trace_errors": len(trace_errors),

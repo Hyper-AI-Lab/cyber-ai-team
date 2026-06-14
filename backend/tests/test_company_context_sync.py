@@ -1,0 +1,169 @@
+from unittest.mock import AsyncMock
+
+import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from cyber_team.company.context_sync import CompanyContextSyncService
+from cyber_team.db import Base
+
+
+async def build_session_factory():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    return engine, async_sessionmaker(engine, expire_on_commit=False)
+
+
+class FakeERPNext:
+    async def validate(self):
+        return {
+            "status": "ready",
+            "provider": "erpnext",
+            "mode": "live",
+            "configured": True,
+            "detail": "ok",
+        }
+
+    async def get_doc(self, doctype, name):
+        if doctype == "Global Defaults":
+            return {
+                "name": name,
+                "default_company": "Hyper AI Lab",
+                "default_currency": "USD",
+                "country": "United States",
+                "api_secret": "must-not-leak",
+            }
+        if doctype == "System Settings":
+            return {"name": name, "country": "United States", "time_zone": "UTC"}
+        return {"name": name}
+
+    async def list_docs(self, doctype, filters=None, fields=None, limit=None):
+        records = {
+            "Company": [
+                {
+                    "name": "Hyper AI Lab",
+                    "company_name": "Hyper AI Lab",
+                    "country": "United States",
+                    "default_currency": "USD",
+                    "abbr": "HAL",
+                }
+            ],
+            "Customer": [{"name": "CUST-1", "customer_name": "Acme"}],
+            "Supplier": [{"name": "SUP-1", "supplier_name": "Cloud Vendor"}],
+            "Project": [{"name": "PROJ-1", "project_name": "Cyber-Team"}],
+            "Task": [{"name": "TASK-1", "subject": "Ship context sync", "status": "Open"}],
+            "Issue": [{"name": "ISS-1", "subject": "Support request", "status": "Open"}],
+            "Item": [{"name": "ITEM-1", "item_name": "AI Company OS"}],
+        }.get(doctype, [])
+        allowed = set(fields or [])
+        return [
+            {key: value for key, value in record.items() if key in allowed}
+            for record in records
+        ][: limit or len(records)]
+
+
+class FakeAgentManager:
+    def __init__(self):
+        self.list_role_manifests = AsyncMock(return_value=[])
+        self.create_role_manifest = AsyncMock()
+        self.instantiate_role = AsyncMock()
+        self.report_role_gap = AsyncMock()
+
+
+class FakeMemory:
+    def __init__(self):
+        self.remember = AsyncMock(side_effect=self._remember)
+        self._count = 0
+
+    async def _remember(self, data):
+        self._count += 1
+        return {
+            "id": f"mem_{self._count}",
+            "namespace": data.namespace,
+            "content": data.content,
+        }
+
+
+class FakeToolRegistry:
+    def list_tools(self):
+        return []
+
+    def get_tool(self, name):
+        return None
+
+    def get_tool_readiness(self, name):
+        return {
+            "state": "unavailable",
+            "readiness_reason": f"{name} not registered",
+            "side_effects": False,
+            "requires_configuration": False,
+        }
+
+
+@pytest.mark.asyncio
+async def test_erpnext_company_context_sync_creates_snapshot_and_noops_on_same_hash():
+    engine, session_factory = await build_session_factory()
+    memory = FakeMemory()
+    try:
+        service = CompanyContextSyncService(
+            erpnext=FakeERPNext(),
+            agent_manager=FakeAgentManager(),
+            memory_service=memory,
+            tool_registry=FakeToolRegistry(),
+            session_factory=session_factory,
+        )
+
+        first = await service.sync_from_erpnext(
+            actor="owner@example.com",
+            run_planner=False,
+        )
+        second = await service.sync_from_erpnext(
+            actor="owner@example.com",
+            run_planner=False,
+        )
+        latest = await service.get_latest_context()
+        runs = await service.list_sync_runs()
+
+        assert first["status"] == "synced"
+        assert first["snapshot"]["normalized_profile"]["name"] == "Hyper AI Lab"
+        assert first["snapshot"]["company_namespace"] == "company:hyper_ai_lab"
+        assert first["snapshot"]["memory_ids"]
+        assert "must-not-leak" not in str(first["snapshot"]["erpnext_summary"])
+        assert second["status"] == "noop"
+        assert second["snapshot"]["id"] == first["snapshot"]["id"]
+        assert memory.remember.await_count == len(first["snapshot"]["memory_ids"])
+        assert latest["freshness"]["status"] == "ready"
+        assert [run["status"] for run in runs[:2]] == ["noop", "synced"]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_dry_run_records_sync_run_without_snapshot_or_memory():
+    engine, session_factory = await build_session_factory()
+    memory = FakeMemory()
+    try:
+        service = CompanyContextSyncService(
+            erpnext=FakeERPNext(),
+            agent_manager=FakeAgentManager(),
+            memory_service=memory,
+            tool_registry=FakeToolRegistry(),
+            session_factory=session_factory,
+        )
+
+        result = await service.sync_from_erpnext(
+            actor="owner@example.com",
+            dry_run=True,
+            run_planner=False,
+        )
+        latest = await service.get_latest_context()
+        runs = await service.list_sync_runs()
+
+        assert result["status"] == "dry_run"
+        assert result["snapshot"]["source_hash"]
+        assert latest["snapshot"] is None
+        assert latest["freshness"]["status"] == "missing"
+        assert runs[0]["status"] == "dry_run"
+        memory.remember.assert_not_awaited()
+    finally:
+        await engine.dispose()

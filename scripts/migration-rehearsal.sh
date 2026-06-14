@@ -103,8 +103,8 @@ if [ "$legacy_rows" != "1" ]; then
   exit 1
 fi
 
-workflow_tables="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('workflows', 'workflow_runs', 'memory_entries', 'audit_events', 'communication_logs', 'role_manifests', 'role_gaps', 'memory_traces', 'memory_steward_findings')")"
-if [ "$workflow_tables" != "9" ]; then
+workflow_tables="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('workflows', 'workflow_runs', 'memory_entries', 'audit_events', 'communication_logs', 'role_manifests', 'role_gaps', 'memory_traces', 'memory_steward_findings', 'company_context_snapshots', 'company_context_sync_runs')")"
+if [ "$workflow_tables" != "11" ]; then
   echo "Expected new Cyber-Team tables were not created" >&2
   exit 1
 fi
@@ -127,8 +127,8 @@ if [ "$retention_index" != "3" ]; then
   exit 1
 fi
 
-adaptive_operations_indexes="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_role_gaps_status', 'ix_role_gaps_severity', 'ix_role_gaps_source_agent_id', 'ix_role_gaps_company_namespace', 'ix_role_gaps_capability', 'ix_role_gaps_created_at', 'ix_role_gaps_resolved_at', 'ix_memory_traces_invocation_id', 'ix_memory_traces_agent_id', 'ix_memory_traces_conversation_id', 'ix_memory_traces_source_type', 'ix_memory_traces_memory_namespace', 'ix_memory_traces_created_at', 'ix_memory_steward_findings_finding_type', 'ix_memory_steward_findings_severity', 'ix_memory_steward_findings_status', 'ix_memory_steward_findings_agent_id', 'ix_memory_steward_findings_memory_namespace', 'ix_memory_steward_findings_company_namespace', 'ix_memory_steward_findings_created_at')")"
-if [ "$adaptive_operations_indexes" != "20" ]; then
+adaptive_operations_indexes="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_role_gaps_status', 'ix_role_gaps_severity', 'ix_role_gaps_source_agent_id', 'ix_role_gaps_company_namespace', 'ix_role_gaps_capability', 'ix_role_gaps_created_at', 'ix_role_gaps_resolved_at', 'ix_memory_traces_invocation_id', 'ix_memory_traces_agent_id', 'ix_memory_traces_conversation_id', 'ix_memory_traces_source_type', 'ix_memory_traces_memory_namespace', 'ix_memory_traces_created_at', 'ix_memory_steward_findings_finding_type', 'ix_memory_steward_findings_severity', 'ix_memory_steward_findings_status', 'ix_memory_steward_findings_agent_id', 'ix_memory_steward_findings_memory_namespace', 'ix_memory_steward_findings_company_namespace', 'ix_memory_steward_findings_created_at', 'uq_company_context_snapshots_source_hash', 'ix_company_context_snapshots_source', 'ix_company_context_snapshots_source_id', 'ix_company_context_snapshots_source_hash', 'ix_company_context_snapshots_company_namespace', 'ix_company_context_snapshots_status', 'ix_company_context_snapshots_created_at', 'ix_company_context_sync_runs_source', 'ix_company_context_sync_runs_status', 'ix_company_context_sync_runs_snapshot_id', 'ix_company_context_sync_runs_source_hash', 'ix_company_context_sync_runs_company_namespace', 'ix_company_context_sync_runs_started_at')")"
+if [ "$adaptive_operations_indexes" != "33" ]; then
   echo "Expected adaptive operations indexes are missing: $adaptive_operations_indexes" >&2
   exit 1
 fi
@@ -191,8 +191,8 @@ if [ "$MIGRATION_REHEARSAL_RUN_REPRESENTATIVE" = "1" ]; then
     fi
   done <<<"$representative_counts"
 
-  representative_indexes="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_communication_logs_idempotency_key', 'ix_communication_logs_created_at', 'ix_memory_entries_expires_at', 'ix_workflow_runs_completed_at', 'ix_approval_requests_resolved_at', 'ix_role_gaps_status', 'ix_role_gaps_severity', 'ix_role_gaps_source_agent_id', 'ix_role_gaps_company_namespace', 'ix_role_gaps_capability', 'ix_role_gaps_created_at', 'ix_role_gaps_resolved_at', 'ix_memory_traces_invocation_id', 'ix_memory_traces_agent_id', 'ix_memory_traces_conversation_id', 'ix_memory_traces_source_type', 'ix_memory_traces_memory_namespace', 'ix_memory_traces_created_at', 'ix_memory_steward_findings_finding_type', 'ix_memory_steward_findings_severity', 'ix_memory_steward_findings_status', 'ix_memory_steward_findings_agent_id', 'ix_memory_steward_findings_memory_namespace', 'ix_memory_steward_findings_company_namespace', 'ix_memory_steward_findings_created_at')")"
-  if [ "$representative_indexes" != "25" ]; then
+  representative_indexes="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_communication_logs_idempotency_key', 'ix_communication_logs_created_at', 'ix_memory_entries_expires_at', 'ix_workflow_runs_completed_at', 'ix_approval_requests_resolved_at', 'ix_role_gaps_status', 'ix_role_gaps_severity', 'ix_role_gaps_source_agent_id', 'ix_role_gaps_company_namespace', 'ix_role_gaps_capability', 'ix_role_gaps_created_at', 'ix_role_gaps_resolved_at', 'ix_memory_traces_invocation_id', 'ix_memory_traces_agent_id', 'ix_memory_traces_conversation_id', 'ix_memory_traces_source_type', 'ix_memory_traces_memory_namespace', 'ix_memory_traces_created_at', 'ix_memory_steward_findings_finding_type', 'ix_memory_steward_findings_severity', 'ix_memory_steward_findings_status', 'ix_memory_steward_findings_agent_id', 'ix_memory_steward_findings_memory_namespace', 'ix_memory_steward_findings_company_namespace', 'ix_memory_steward_findings_created_at', 'uq_company_context_snapshots_source_hash', 'ix_company_context_snapshots_source', 'ix_company_context_snapshots_source_id', 'ix_company_context_snapshots_source_hash', 'ix_company_context_snapshots_company_namespace', 'ix_company_context_snapshots_status', 'ix_company_context_snapshots_created_at', 'ix_company_context_sync_runs_source', 'ix_company_context_sync_runs_status', 'ix_company_context_sync_runs_snapshot_id', 'ix_company_context_sync_runs_source_hash', 'ix_company_context_sync_runs_company_namespace', 'ix_company_context_sync_runs_started_at')")"
+  if [ "$representative_indexes" != "38" ]; then
     echo "Representative migration indexes missing: $representative_indexes" >&2
     exit 1
   fi
