@@ -1007,6 +1007,28 @@ Propose a new role to fill this gap. Return JSON with:
 
     async def get_approval_queue(self, status: str | None = None) -> list[dict]:
         async with async_session() as session:
+            now = utc_now()
+            if status in {None, "pending"}:
+                expired_result = await session.execute(
+                    select(ApprovalRequest).where(
+                        ApprovalRequest.status == "pending",
+                        ApprovalRequest.expires_at.is_not(None),
+                        ApprovalRequest.expires_at < now,
+                    )
+                )
+                expired_requests = expired_result.scalars().all()
+                for req in expired_requests:
+                    req.status = "expired"
+                    req.resolved_at = now
+                if expired_requests:
+                    await session.commit()
+                    if self._metrics:
+                        for req in expired_requests:
+                            self._metrics.record_approval_event(
+                                "expired",
+                                "expired",
+                                req.risk_level,
+                            )
             query = select(ApprovalRequest)
             if status:
                 query = query.where(ApprovalRequest.status == status)

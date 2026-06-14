@@ -645,3 +645,29 @@
   - `backups/staging/cyberteam-staging-company-context-20260614T130952Z.dump`
 - Next step:
   - Commit and push the company-context milestone, then watch GitHub CI.
+
+## 2026-06-14T13:51:34Z - STEP-023 - Approval expiry queue and console guard
+
+- Files/services changed:
+  - `backend/src/cyber_team/agents/manager.py`
+  - `backend/tests/test_approval_locking.py`
+  - `frontend/src/components/ApprovalsView.tsx`
+- Commands run:
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_approval_locking.py -q`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/agents/manager.py backend/tests/test_approval_locking.py`
+  - `npx tsc --noEmit`
+  - `npm run build`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `git diff --check`
+- Result:
+  - Confirmed that the expired approval seen in the owner console was an old `memory_steward.report_role_gap` approval created before the current company-context milestone.
+  - Fixed the approval queue so expired pending approvals are marked `expired` before pending approvals are returned.
+  - Added frontend guards so expired approvals render as expired and cannot be approved/rejected from a stale browser state.
+  - Focused approval tests passed: `4 passed`.
+  - Full backend tests passed: `137 passed`.
+  - Ruff, TypeScript, frontend production build, and diff hygiene passed.
+- Evidence path/link:
+  - `backend/tests/test_approval_locking.py`
+  - `frontend/src/components/ApprovalsView.tsx`
+- Next step:
+  - Commit, push, deploy the approval expiry guard to staging, and watch GitHub CI.

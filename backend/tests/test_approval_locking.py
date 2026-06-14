@@ -4,6 +4,7 @@ import pytest
 
 from cyber_team.agents import manager as manager_module
 from cyber_team.agents.manager import AgentManager
+from cyber_team.clock import utc_now
 
 
 class FakeResult:
@@ -12,6 +13,22 @@ class FakeResult:
 
     def scalar_one_or_none(self):
         return self._value
+
+
+class FakeScalarList:
+    def __init__(self, values):
+        self._values = values
+
+    def all(self):
+        return self._values
+
+
+class FakeListResult:
+    def __init__(self, values):
+        self._values = values
+
+    def scalars(self):
+        return FakeScalarList(self._values)
 
 
 class FakeSession:
@@ -26,6 +43,30 @@ class FakeSession:
 
     async def commit(self):
         self.committed = True
+
+
+class FakeQueueSession:
+    def __init__(self, requests):
+        self.requests = requests
+        self.commits = 0
+        self.execute_calls = 0
+
+    async def execute(self, statement):
+        self.execute_calls += 1
+        if self.execute_calls == 1:
+            return FakeListResult(
+                [
+                    request
+                    for request in self.requests
+                    if request.status == "pending"
+                    and request.expires_at is not None
+                    and request.expires_at < utc_now()
+                ]
+            )
+        return FakeListResult([request for request in self.requests if request.status == "pending"])
+
+    async def commit(self):
+        self.commits += 1
 
 
 class FakeSessionContext:
@@ -44,6 +85,11 @@ def approval_request(status="approved"):
         id="approval-1",
         status=status,
         action_type="tool:send_email",
+        action_description="Send email",
+        action_payload={},
+        agent_id=None,
+        requester="system",
+        requester_type="system",
         target_type="tool",
         target_id="send_email",
         risk_level="high",
@@ -52,11 +98,22 @@ def approval_request(status="approved"):
         resolved_at=None,
         consumed_at=None,
         expires_at=None,
+        created_at=utc_now(),
     )
 
 
 def patch_session(monkeypatch, request):
     session = FakeSession(request)
+    monkeypatch.setattr(
+        manager_module,
+        "async_session",
+        lambda: FakeSessionContext(session),
+    )
+    return session
+
+
+def patch_queue_session(monkeypatch, requests):
+    session = FakeQueueSession(requests)
     monkeypatch.setattr(
         manager_module,
         "async_session",
@@ -74,6 +131,24 @@ async def test_resolve_approval_locks_row(monkeypatch):
     assert result == {"id": "approval-1", "status": "approved"}
     assert session.statement._for_update_arg is not None
     assert session.committed is True
+
+
+@pytest.mark.asyncio
+async def test_get_approval_queue_expires_stale_pending_requests(monkeypatch):
+    expired = approval_request(status="pending")
+    expired.id = "expired-approval"
+    expired.expires_at = utc_now() - manager_module.timedelta(minutes=1)
+    fresh = approval_request(status="pending")
+    fresh.id = "fresh-approval"
+    fresh.expires_at = utc_now() + manager_module.timedelta(minutes=10)
+    session = patch_queue_session(monkeypatch, [expired, fresh])
+
+    queue = await AgentManager().get_approval_queue()
+
+    assert [item["id"] for item in queue] == ["fresh-approval"]
+    assert expired.status == "expired"
+    assert expired.resolved_at is not None
+    assert session.commits == 1
 
 
 @pytest.mark.asyncio
