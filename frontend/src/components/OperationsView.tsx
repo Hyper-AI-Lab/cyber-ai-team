@@ -18,6 +18,7 @@ import {
 interface OperationsViewProps {
   cycles: any[]
   onRefresh: () => Promise<void> | void
+  onNavigate?: (view: 'agents' | 'approvals' | 'operations') => void
 }
 
 const statusClass: Record<string, string> = {
@@ -98,7 +99,7 @@ function planSignals(plan: any) {
   return signals.slice(0, 3)
 }
 
-export default function OperationsView({ cycles, onRefresh }: OperationsViewProps) {
+export default function OperationsView({ cycles, onRefresh, onNavigate }: OperationsViewProps) {
   const [localCycles, setLocalCycles] = useState<any[]>(cycles)
   const [plans, setPlans] = useState<any[]>([])
   const [readiness, setReadiness] = useState<any | null>(null)
@@ -739,14 +740,24 @@ export default function OperationsView({ cycles, onRefresh }: OperationsViewProp
                       {formatDate(plan.updated_at)}
                     </td>
                     <td className="py-3 pr-4">
-                      <button
-                        onClick={() => executePlan(plan.id)}
-                        disabled={!canExecutePlan(plan) || planAction !== null}
-                        className="btn-secondary flex items-center gap-2 px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <Play className="h-3.5 w-3.5" />
-                        {planAction === plan.id ? 'Executing...' : 'Execute'}
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => executePlan(plan.id)}
+                          disabled={!canExecutePlan(plan) || planAction !== null}
+                          className="btn-secondary flex items-center gap-2 px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                          {planAction === plan.id ? 'Executing...' : 'Execute'}
+                        </button>
+                        {plan.source_type === 'company_context_snapshot' && onNavigate && (
+                          <button
+                            onClick={() => onNavigate('agents')}
+                            className="btn-secondary px-3 py-1.5 text-xs"
+                          >
+                            Review Roles
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

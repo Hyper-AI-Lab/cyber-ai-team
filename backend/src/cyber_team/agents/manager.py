@@ -4,14 +4,22 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import desc, select, update
+from sqlalchemy import desc, or_, select, update
+from sqlalchemy.orm import selectinload
 
 from cyber_team.audit.service import AuditService
 from cyber_team.clock import utc_now
 from cyber_team.company.operating_model import OperatingModelBuilder
 from cyber_team.config import settings
 from cyber_team.db import async_session
-from cyber_team.db.models import Agent, ApprovalRequest, RoleGap, RoleManifest
+from cyber_team.db.models import (
+    Agent,
+    ApprovalRequest,
+    AutonomousPlan,
+    CompanyContextSnapshot,
+    RoleGap,
+    RoleManifest,
+)
 from cyber_team.llm.gateway import LLMGateway
 from cyber_team.memory.protocol import AgentMemoryProtocol
 from cyber_team.memory.service import MemoryService
@@ -757,6 +765,215 @@ Propose a new role to fill this gap. Return JSON with:
             gap = result.scalar_one_or_none()
             return self._role_gap_to_dict(gap) if gap else None
 
+    async def summarize_role_backlog(
+        self,
+        statuses: list[str] | None = None,
+        source_type: str | None = None,
+        limit: int = 200,
+    ) -> dict:
+        safe_limit = max(1, min(limit, 500))
+        async with async_session() as session:
+            query = select(RoleGap)
+            if statuses:
+                query = query.where(RoleGap.status.in_(statuses))
+            if source_type:
+                query = query.where(RoleGap.source_type == source_type)
+            result = await session.execute(
+                query.order_by(desc(RoleGap.updated_at)).limit(safe_limit)
+            )
+            gaps = list(result.scalars().all())
+            gap_ids = [gap.id for gap in gaps]
+
+            approvals_by_gap: dict[str, list[ApprovalRequest]] = {gap_id: [] for gap_id in gap_ids}
+            if gap_ids:
+                approval_result = await session.execute(
+                    select(ApprovalRequest)
+                    .where(
+                        ApprovalRequest.action_type == "role_gap.tool_grant",
+                        ApprovalRequest.target_type == "role_gap",
+                        ApprovalRequest.target_id.in_(gap_ids),
+                    )
+                    .order_by(desc(ApprovalRequest.created_at))
+                )
+                approvals = list(approval_result.scalars().all())
+                now = utc_now()
+                expired = []
+                for approval in approvals:
+                    if (
+                        approval.status == "pending"
+                        and approval.expires_at is not None
+                        and approval.expires_at < now
+                    ):
+                        approval.status = "expired"
+                        approval.resolved_at = now
+                        expired.append(approval)
+                    approvals_by_gap.setdefault(str(approval.target_id), []).append(approval)
+                if expired:
+                    await session.commit()
+
+            snapshot_ids = {
+                str((gap.context or {}).get("snapshot_id"))
+                for gap in gaps
+                if (gap.context or {}).get("snapshot_id")
+            }
+            source_hashes = {
+                str((gap.context or {}).get("source_hash"))
+                for gap in gaps
+                if (gap.context or {}).get("source_hash")
+            }
+            snapshots: dict[str, CompanyContextSnapshot] = {}
+            if snapshot_ids or source_hashes:
+                snapshot_result = await session.execute(
+                    select(CompanyContextSnapshot).where(
+                        or_(
+                            CompanyContextSnapshot.id.in_(snapshot_ids or {"__none__"}),
+                            CompanyContextSnapshot.source_hash.in_(source_hashes or {"__none__"}),
+                        )
+                    )
+                )
+                for snapshot in snapshot_result.scalars().all():
+                    snapshots[snapshot.id] = snapshot
+                    snapshots[snapshot.source_hash] = snapshot
+
+            plan_by_snapshot: dict[str, AutonomousPlan] = {}
+            if snapshot_ids:
+                plan_result = await session.execute(
+                    select(AutonomousPlan)
+                    .options(selectinload(AutonomousPlan.tasks))
+                    .where(
+                        AutonomousPlan.source_type == "company_context_snapshot",
+                        AutonomousPlan.source_id.in_(snapshot_ids),
+                    )
+                    .order_by(desc(AutonomousPlan.created_at))
+                )
+                for plan in plan_result.scalars().all():
+                    plan_by_snapshot.setdefault(plan.source_id, plan)
+
+            items = [
+                self._role_gap_summary_item(
+                    self._role_gap_to_dict(gap),
+                    approvals_by_gap.get(gap.id, []),
+                    snapshots,
+                    plan_by_snapshot,
+                )
+                for gap in gaps
+            ]
+
+        groups_by_function: dict[str, dict] = {}
+        counts = {
+            "total": len(items),
+            "open": 0,
+            "proposed": 0,
+            "resolved": 0,
+            "dismissed": 0,
+            "deferred": 0,
+            "by_status": {},
+            "by_function": {},
+            "by_risk": {},
+        }
+        for item in items:
+            status = item["status"]
+            function = item["business_function"]
+            risk = item["risk_level"]
+            counts["by_status"][status] = counts["by_status"].get(status, 0) + 1
+            counts["by_function"][function] = counts["by_function"].get(function, 0) + 1
+            counts["by_risk"][risk] = counts["by_risk"].get(risk, 0) + 1
+            if status in counts:
+                counts[status] += 1
+            group = groups_by_function.setdefault(
+                function,
+                {
+                    "business_function": function,
+                    "count": 0,
+                    "open_count": 0,
+                    "proposed_count": 0,
+                    "blocked_count": 0,
+                    "approval_count": 0,
+                    "expired_approval_count": 0,
+                    "risk_levels": [],
+                    "requested_tools": [],
+                    "items": [],
+                },
+            )
+            group["count"] += 1
+            if status == "open":
+                group["open_count"] += 1
+            if status == "proposed":
+                group["proposed_count"] += 1
+            if item["recommended_action"] == "configure_tools":
+                group["blocked_count"] += 1
+            if item["approval"]["state"] in {"pending", "approved"}:
+                group["approval_count"] += 1
+            if item["approval"]["state"] == "expired":
+                group["expired_approval_count"] += 1
+            group["risk_levels"] = self._unique([*group["risk_levels"], risk])
+            group["requested_tools"] = self._unique(
+                [*group["requested_tools"], *item["requested_tools"]]
+            )
+            group["items"].append(item["gap_id"])
+
+        groups = sorted(
+            groups_by_function.values(),
+            key=lambda group: (group["business_function"].lower(), group["count"]),
+        )
+        return {
+            "items": items,
+            "groups": groups,
+            "counts": counts,
+            "blocking_count": sum(
+                1 for item in items if item["recommended_action"] == "configure_tools"
+            ),
+            "approval_count": sum(
+                1 for item in items if item["approval"]["state"] in {"pending", "approved"}
+            ),
+            "expired_approval_count": sum(
+                1 for item in items if item["approval"]["state"] == "expired"
+            ),
+        }
+
+    async def regenerate_role_gap_approval(
+        self,
+        gap_id: str,
+        company_profile: dict | None = None,
+        requested_by: str = "owner",
+    ) -> dict:
+        gap = await self.get_role_gap(gap_id)
+        if not gap:
+            raise ValueError(f"Role gap {gap_id} not found")
+        if gap["status"] not in self.ACTIVE_ROLE_GAP_STATUSES:
+            raise ValueError(f"Role gap {gap_id} is {gap['status']}")
+        if not gap["proposed_role"]:
+            gap = await self.propose_role_for_gap(gap_id, company_profile)
+        manifest_payload = gap["proposed_role"]["manifest_payload"]
+        high_risk_tools = self._role_gap_high_risk_tools(
+            manifest_payload.get("default_tools", [])
+        )
+        if not high_risk_tools:
+            raise ValueError(f"Role gap {gap_id} does not require approval")
+
+        existing_approval = await self._latest_role_gap_tool_grant_approval(gap_id)
+        if existing_approval and existing_approval["state"] == "approved":
+            raise ValueError(
+                f"Role gap {gap_id} already has executable approval "
+                f"{existing_approval['approval_id']}"
+            )
+        if existing_approval and existing_approval["state"] == "pending":
+            approval_id = existing_approval["approval_id"]
+        else:
+            approval_id = await self._request_role_gap_tool_grant_approval(
+                gap,
+                manifest_payload,
+                high_risk_tools,
+                requested_by=requested_by,
+            )
+        await self._mark_role_gap_approval_required(gap_id, approval_id, high_risk_tools)
+        summary = await self.summarize_role_backlog(statuses=None, limit=500)
+        item = next(
+            (candidate for candidate in summary["items"] if candidate["gap_id"] == gap_id),
+            None,
+        )
+        return {"approval_id": approval_id, "item": item}
+
     async def propose_role_for_gap(
         self,
         gap_id: str,
@@ -803,10 +1020,23 @@ Propose a new role to fill this gap. Return JSON with:
         gap = await self.get_role_gap(gap_id)
         if not gap:
             raise ValueError(f"Role gap {gap_id} not found")
+        if gap["status"] not in self.ACTIVE_ROLE_GAP_STATUSES:
+            raise ValueError(f"Role gap {gap_id} is {gap['status']}")
         if not gap["proposed_role"]:
             gap = await self.propose_role_for_gap(gap_id, company_profile)
         proposal = gap["proposed_role"]
         manifest_payload = proposal["manifest_payload"]
+        readiness = self._role_gap_tool_readiness(
+            manifest_payload.get("default_tools", [])
+        )
+        if not readiness["all_ready"]:
+            blocking = ", ".join(
+                item["tool_name"] for item in readiness["blocking_tools"]
+            )
+            raise ValueError(
+                "Requested tools are not ready for role creation"
+                + (f": {blocking}" if blocking else "")
+            )
         high_risk_tools = self._role_gap_high_risk_tools(
             manifest_payload.get("default_tools", [])
         )
@@ -815,13 +1045,13 @@ Propose a new role to fill this gap. Return JSON with:
             if approval_id:
                 approval_to_consume = approval_id
             else:
-                existing_approval = await self._find_role_gap_tool_grant_approval(gap_id)
-                if existing_approval and existing_approval["status"] == "approved":
-                    approval_to_consume = existing_approval["id"]
-                elif existing_approval:
+                existing_approval = await self._latest_role_gap_tool_grant_approval(gap_id)
+                if existing_approval and existing_approval["state"] == "approved":
+                    approval_to_consume = existing_approval["approval_id"]
+                elif existing_approval and existing_approval["state"] == "pending":
                     return await self._role_gap_approval_required_response(
                         gap,
-                        existing_approval["id"],
+                        existing_approval["approval_id"],
                         high_risk_tools,
                     )
                 else:
@@ -837,6 +1067,12 @@ Propose a new role to fill this gap. Return JSON with:
                         high_risk_tools,
                     )
 
+            await self._validate_role_gap_tool_grant_approval(
+                approval_to_consume,
+                gap,
+                manifest_payload,
+                high_risk_tools,
+            )
             await self.consume_approval(
                 approval_to_consume,
                 consumer="role_gap.apply",
@@ -893,7 +1129,7 @@ Propose a new role to fill this gap. Return JSON with:
         note: str = "",
         resolver: str = "owner",
     ) -> dict:
-        allowed_statuses = {"dismissed", "resolved"}
+        allowed_statuses = {"deferred", "dismissed", "resolved"}
         if status not in allowed_statuses:
             raise ValueError(f"Status must be one of: {', '.join(sorted(allowed_statuses))}")
         async with async_session() as session:
@@ -1326,6 +1562,255 @@ Propose a new role to fill this gap. Return JSON with:
             })
         return report
 
+    def _role_gap_tool_readiness(self, tool_names: list[str]) -> dict:
+        resolved_tools, unsupported_tools = self._resolve_tool_names(tool_names)
+        items = []
+        if self._tool_registry:
+            get_readiness = getattr(self._tool_registry, "get_tool_readiness", None)
+            for tool_name in resolved_tools:
+                if get_readiness:
+                    readiness = get_readiness(tool_name)
+                    items.append(
+                        {
+                            "tool_name": tool_name,
+                            "state": readiness["state"],
+                            "reason": readiness["readiness_reason"],
+                            "side_effects": readiness["side_effects"],
+                            "requires_configuration": readiness["requires_configuration"],
+                            "executable": readiness["executable"],
+                        }
+                    )
+                else:
+                    items.append(
+                        {
+                            "tool_name": tool_name,
+                            "state": "unknown",
+                            "reason": "Tool registry does not expose readiness checks.",
+                            "side_effects": False,
+                            "requires_configuration": False,
+                            "executable": False,
+                        }
+                    )
+        else:
+            for tool_name in resolved_tools:
+                items.append(
+                    {
+                        "tool_name": tool_name,
+                        "state": "unknown",
+                        "reason": "Tool registry is unavailable.",
+                        "side_effects": False,
+                        "requires_configuration": False,
+                        "executable": False,
+                    }
+                )
+        for tool_name in unsupported_tools:
+            items.append(
+                {
+                    "tool_name": tool_name,
+                    "state": "unavailable",
+                    "reason": f"Tool not found: {tool_name}",
+                    "side_effects": False,
+                    "requires_configuration": False,
+                    "executable": False,
+                }
+            )
+        blocking_tools = [item for item in items if not item["executable"]]
+        return {
+            "items": items,
+            "all_ready": not blocking_tools,
+            "blocking_tools": blocking_tools,
+            "requested_count": len(tool_names),
+            "ready_count": len(items) - len(blocking_tools),
+        }
+
+    def _role_gap_summary_item(
+        self,
+        gap: dict,
+        approvals: list[ApprovalRequest],
+        snapshots: dict[str, CompanyContextSnapshot],
+        plan_by_snapshot: dict[str, AutonomousPlan],
+    ) -> dict:
+        proposed_manifest = (gap.get("proposed_role") or {}).get("manifest_payload") or {}
+        requested_tools = self._unique(
+            [
+                *list(gap.get("requested_tools") or []),
+                *list(proposed_manifest.get("default_tools") or []),
+            ]
+        )
+        high_risk_tools = self._role_gap_high_risk_tools(requested_tools)
+        tool_readiness = self._role_gap_tool_readiness(requested_tools)
+        approval = self._role_gap_approval_summary(
+            gap["id"],
+            approvals,
+            high_risk_tools,
+        )
+        snapshot = self._role_gap_snapshot(gap, snapshots)
+        plan = plan_by_snapshot.get(snapshot.id) if snapshot else None
+        source_task = self._role_gap_source_task(plan)
+        business_function = self._role_gap_business_function(gap, proposed_manifest)
+        risk_level = self._role_gap_summary_risk(gap, high_risk_tools)
+        recommended_action = self._role_gap_recommended_action(
+            gap,
+            high_risk_tools,
+            tool_readiness,
+            approval,
+        )
+        return {
+            "gap_id": gap["id"],
+            "title": gap["title"],
+            "description": gap["description"],
+            "business_function": business_function,
+            "status": gap["status"],
+            "severity": gap["severity"],
+            "risk_level": risk_level,
+            "requested_tools": requested_tools,
+            "tool_readiness": tool_readiness,
+            "source_type": gap.get("source_type"),
+            "source_snapshot_id": (
+                snapshot.id if snapshot else gap.get("context", {}).get("snapshot_id")
+            ),
+            "source_plan_id": plan.id if plan else None,
+            "source_task_id": source_task.id if source_task else None,
+            "source_hash": (
+                snapshot.source_hash if snapshot else gap.get("context", {}).get("source_hash")
+            ),
+            "dedupe_key": (gap.get("context") or {}).get("dedupe_key"),
+            "proposed_role": gap.get("proposed_role") or {},
+            "approval": approval,
+            "recommended_action": recommended_action,
+            "resolution": gap.get("resolution") or {},
+            "created_at": gap.get("created_at"),
+            "updated_at": gap.get("updated_at"),
+        }
+
+    @staticmethod
+    def _role_gap_snapshot(
+        gap: dict,
+        snapshots: dict[str, CompanyContextSnapshot],
+    ) -> CompanyContextSnapshot | None:
+        context = gap.get("context") or {}
+        return snapshots.get(str(context.get("snapshot_id"))) or snapshots.get(
+            str(context.get("source_hash"))
+        )
+
+    @staticmethod
+    def _role_gap_source_task(plan: AutonomousPlan | None):
+        if not plan:
+            return None
+        tasks = list(plan.tasks or [])
+        for task in tasks:
+            if task.task_type == "plan.owner_review":
+                return task
+        for task in tasks:
+            if task.task_type == "company_context.report_risky_roles":
+                return task
+        return tasks[-1] if tasks else None
+
+    def _role_gap_approval_summary(
+        self,
+        gap_id: str,
+        approvals: list[ApprovalRequest],
+        high_risk_tools: list[str],
+    ) -> dict:
+        approval = approvals[0] if approvals else None
+        if not approval:
+            state = "none"
+            approval_id = None
+            expires_at = None
+            consumed_at = None
+            created_at = None
+        else:
+            state = self._approval_state(approval)
+            approval_id = approval.id
+            expires_at = approval.expires_at.isoformat() if approval.expires_at else None
+            consumed_at = approval.consumed_at.isoformat() if approval.consumed_at else None
+            created_at = approval.created_at.isoformat()
+        return {
+            "state": state,
+            "approval_id": approval_id,
+            "required": bool(high_risk_tools),
+            "high_risk_tools": high_risk_tools,
+            "expires_at": expires_at,
+            "consumed_at": consumed_at,
+            "created_at": created_at,
+            "apply_instruction": (
+                {
+                    "method": "POST",
+                    "path": f"/api/roles/role-gaps/{gap_id}/apply",
+                    "body": {"approval_id": approval_id},
+                }
+                if approval_id and state == "approved"
+                else None
+            ),
+            "regenerate_instruction": {
+                "method": "POST",
+                "path": f"/api/roles/role-gaps/{gap_id}/approval/regenerate",
+                "body": {},
+            },
+        }
+
+    @staticmethod
+    def _approval_state(approval: ApprovalRequest) -> str:
+        if approval.consumed_at is not None:
+            return "consumed"
+        if (
+            approval.status == "pending"
+            and approval.expires_at is not None
+            and approval.expires_at < utc_now()
+        ):
+            return "expired"
+        return approval.status or "none"
+
+    @staticmethod
+    def _role_gap_business_function(gap: dict, proposed_manifest: dict) -> str:
+        raw = (
+            gap.get("capability")
+            or proposed_manifest.get("family")
+            or (gap.get("context") or {}).get("role_family")
+            or "Unclassified"
+        )
+        return str(raw).replace("_", " ").replace("-", " ").strip().title() or "Unclassified"
+
+    @staticmethod
+    def _role_gap_summary_risk(gap: dict, high_risk_tools: list[str]) -> str:
+        severity = gap.get("severity") or "medium"
+        if severity == "critical":
+            return "critical"
+        if severity == "high" or high_risk_tools:
+            return "high"
+        if severity == "low":
+            return "low"
+        return "medium"
+
+    @staticmethod
+    def _role_gap_recommended_action(
+        gap: dict,
+        high_risk_tools: list[str],
+        tool_readiness: dict,
+        approval: dict,
+    ) -> str:
+        status = gap.get("status")
+        if status == "resolved":
+            return "completed"
+        if status == "deferred":
+            return "deferred"
+        if status == "dismissed":
+            return "dismissed"
+        if not tool_readiness["all_ready"]:
+            return "configure_tools"
+        if not gap.get("proposed_role"):
+            return "propose_role"
+        if not high_risk_tools:
+            return "create_role"
+        approval_state = approval["state"]
+        if approval_state == "approved":
+            return "create_after_approval"
+        if approval_state == "pending":
+            return "await_approval"
+        if approval_state in {"expired", "consumed", "rejected"}:
+            return "regenerate_approval"
+        return "request_approval"
+
     def _find_manifest_for_role_spec(
         self,
         role_spec: dict,
@@ -1462,7 +1947,7 @@ Propose a new role to fill this gap. Return JSON with:
             if self.TOOL_ALIASES.get(tool_name, tool_name) in self.HIGH_RISK_ROLE_TOOLS
         )
 
-    async def _find_role_gap_tool_grant_approval(self, gap_id: str) -> dict | None:
+    async def _latest_role_gap_tool_grant_approval(self, gap_id: str) -> dict | None:
         async with async_session() as session:
             result = await session.execute(
                 select(ApprovalRequest)
@@ -1470,21 +1955,77 @@ Propose a new role to fill this gap. Return JSON with:
                     ApprovalRequest.action_type == "role_gap.tool_grant",
                     ApprovalRequest.target_type == "role_gap",
                     ApprovalRequest.target_id == gap_id,
-                    ApprovalRequest.status.in_(["pending", "approved"]),
-                    ApprovalRequest.consumed_at.is_(None),
                 )
                 .order_by(ApprovalRequest.created_at.desc())
             )
             approval = result.scalars().first()
             if not approval:
                 return None
+            if (
+                approval.status == "pending"
+                and approval.expires_at is not None
+                and approval.expires_at < utc_now()
+            ):
+                approval.status = "expired"
+                approval.resolved_at = utc_now()
+                await session.commit()
             return {
-                "id": approval.id,
-                "status": approval.status,
+                "approval_id": approval.id,
+                "state": self._approval_state(approval),
                 "risk_level": approval.risk_level,
                 "action_payload": approval.action_payload,
+                "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
+                "consumed_at": (
+                    approval.consumed_at.isoformat() if approval.consumed_at else None
+                ),
                 "created_at": approval.created_at.isoformat(),
             }
+
+    async def _validate_role_gap_tool_grant_approval(
+        self,
+        approval_id: str,
+        gap: dict,
+        manifest_payload: dict,
+        high_risk_tools: list[str],
+    ) -> None:
+        async with async_session() as session:
+            result = await session.execute(
+                select(ApprovalRequest).where(ApprovalRequest.id == approval_id)
+            )
+            approval = result.scalar_one_or_none()
+            if not approval:
+                raise ValueError(f"Approval request {approval_id} not found")
+            if approval.action_type != "role_gap.tool_grant":
+                raise ValueError(f"Approval request {approval_id} is not a role grant")
+            if approval.target_type != "role_gap" or approval.target_id != gap["id"]:
+                raise ValueError(
+                    f"Approval request {approval_id} is not valid for role gap {gap['id']}"
+                )
+            if approval.status != "approved":
+                raise ValueError(f"Approval request {approval_id} is {approval.status}")
+            if approval.consumed_at is not None:
+                raise ValueError(f"Approval request {approval_id} was already consumed")
+            if approval.expires_at and approval.expires_at < utc_now():
+                approval.status = "expired"
+                approval.resolved_at = utc_now()
+                await session.commit()
+                raise ValueError(f"Approval request {approval_id} has expired")
+            payload = approval.action_payload or {}
+            if payload.get("role_gap_id") != gap["id"]:
+                raise ValueError(
+                    f"Approval request {approval_id} payload does not match role gap {gap['id']}"
+                )
+            approved_tools = set(payload.get("high_risk_tools") or [])
+            requested_tools = set(high_risk_tools)
+            if requested_tools - approved_tools:
+                raise ValueError(
+                    f"Approval request {approval_id} does not cover requested tools: "
+                    + ", ".join(sorted(requested_tools - approved_tools))
+                )
+            if payload.get("role_name") != manifest_payload.get("name"):
+                raise ValueError(
+                    f"Approval request {approval_id} role name does not match current proposal"
+                )
 
     async def _request_role_gap_tool_grant_approval(
         self,

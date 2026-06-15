@@ -411,6 +411,11 @@ describe('ApiClient', () => {
   it('manages role gaps through the authenticated API client', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'gap-1' }]))
+      .mockResolvedValueOnce(jsonResponse({
+        items: [{ gap_id: 'gap-1', recommended_action: 'regenerate_approval' }],
+        groups: [],
+        counts: { total: 1 },
+      }))
       .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'open' }))
       .mockResolvedValueOnce(jsonResponse({
         role_gaps_reviewed: 1,
@@ -419,34 +424,50 @@ describe('ApiClient', () => {
       }))
       .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'proposed' }))
       .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'resolved' }))
+      .mockResolvedValueOnce(jsonResponse({ approval_id: 'approval-2' }))
       .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'dismissed' }))
     vi.stubGlobal('fetch', fetchMock)
     const client = new ApiClient('http://api.test')
 
     client.setTokens('access-1')
     await client.listRoleGaps('open')
+    await client.getRoleGapSummary({
+      status: 'open,proposed',
+      source_type: 'company_context_snapshot',
+      limit: 25,
+    })
     await client.reportRoleGap({ title: 'Gap', description: 'Blocked work' })
     await client.runSupervisorRoleGapReview()
     await client.proposeRoleGap('gap-1', { name: 'Acme' })
     await client.applyRoleGap('gap-1', { name: 'Acme' }, 'approval-1')
+    await client.regenerateRoleGapApproval('gap-1', { name: 'Acme' })
     await client.resolveRoleGap('gap-1', 'dismissed', 'Not needed')
 
     expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/roles/role-gaps?status=open')
-    expect(fetchMock.mock.calls[1][0]).toBe('http://api.test/api/roles/role-gaps')
-    expect(fetchMock.mock.calls[2][0]).toBe(
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/roles/role-gaps/summary?status=open%2Cproposed&limit=25&source_type=company_context_snapshot',
+    )
+    expect(fetchMock.mock.calls[2][0]).toBe('http://api.test/api/roles/role-gaps')
+    expect(fetchMock.mock.calls[3][0]).toBe(
       'http://api.test/api/roles/role-gaps/supervisor-review',
     )
-    expect(fetchMock.mock.calls[3][0]).toBe(
+    expect(fetchMock.mock.calls[4][0]).toBe(
       'http://api.test/api/roles/role-gaps/gap-1/proposal',
     )
-    expect(fetchMock.mock.calls[4][0]).toBe(
+    expect(fetchMock.mock.calls[5][0]).toBe(
       'http://api.test/api/roles/role-gaps/gap-1/apply',
     )
-    expect(JSON.parse(fetchMock.mock.calls[4][1]?.body as string)).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[5][1]?.body as string)).toEqual({
       company_profile: { name: 'Acme' },
       approval_id: 'approval-1',
     })
-    expect(fetchMock.mock.calls[5][0]).toBe(
+    expect(fetchMock.mock.calls[6][0]).toBe(
+      'http://api.test/api/roles/role-gaps/gap-1/approval/regenerate',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[6][1]?.body as string)).toEqual({
+      company_profile: { name: 'Acme' },
+    })
+    expect(fetchMock.mock.calls[7][0]).toBe(
       'http://api.test/api/roles/role-gaps/gap-1/resolve',
     )
   })

@@ -55,8 +55,12 @@ class RoleGapProposalRequest(BaseModel):
     approval_id: str | None = None
 
 
+class RoleGapApprovalRegenerateRequest(BaseModel):
+    company_profile: dict = Field(default_factory=dict)
+
+
 class RoleGapResolveRequest(BaseModel):
-    status: str = Field(default="dismissed", pattern="^(dismissed|resolved)$")
+    status: str = Field(default="dismissed", pattern="^(deferred|dismissed|resolved)$")
     note: str = ""
 
 
@@ -68,6 +72,16 @@ class SupervisorReviewResponse(BaseModel):
     role_gap_recommendations: list[dict]
     stale_approvals: list[dict]
     workflow_failure_gaps: list[dict]
+
+
+def _status_filter(value: str | None) -> list[str] | None:
+    if not value or value.strip().lower() == "all":
+        return None
+    return [
+        item.strip()
+        for item in value.split(",")
+        if item.strip()
+    ]
 
 
 @router.get("/catalog", response_model=list[RoleManifestResponse])
@@ -191,6 +205,34 @@ async def list_role_gaps(
     return await mgr.list_role_gaps(status)
 
 
+@router.get("/role-gaps/summary")
+async def role_gap_summary(
+    request: Request,
+    status: str | None = "open,proposed",
+    source_type: str | None = None,
+    limit: int = 200,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "role_gap",
+        context={
+            "status": status,
+            "source_type": source_type,
+            "limit": limit,
+            "view": "summary",
+        },
+    )
+    mgr = request.app.state.agent_manager
+    return await mgr.summarize_role_backlog(
+        statuses=_status_filter(status),
+        source_type=source_type,
+        limit=limit,
+    )
+
+
 @router.post("/role-gaps", status_code=201)
 async def report_role_gap(
     data: RoleGapReport,
@@ -250,6 +292,25 @@ async def propose_role_gap(
         return await mgr.propose_role_for_gap(gap_id, data.company_profile)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/role-gaps/{gap_id}/approval/regenerate")
+async def regenerate_role_gap_approval(
+    gap_id: str,
+    data: RoleGapApprovalRegenerateRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "approve", "role_gap", gap_id)
+    mgr = request.app.state.agent_manager
+    try:
+        return await mgr.regenerate_role_gap_approval(
+            gap_id,
+            data.company_profile,
+            requested_by=principal.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.post("/role-gaps/{gap_id}/apply")

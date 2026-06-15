@@ -7,9 +7,10 @@ import { ShieldCheck, CheckCircle, XCircle, Clock } from 'lucide-react'
 interface ApprovalsViewProps {
   approvals: any[]
   onRefresh: () => void
+  onNavigate?: (view: 'agents' | 'approvals' | 'operations') => void
 }
 
-export default function ApprovalsView({ approvals, onRefresh }: ApprovalsViewProps) {
+export default function ApprovalsView({ approvals, onRefresh, onNavigate }: ApprovalsViewProps) {
   const [runningApprovalId, setRunningApprovalId] = useState<string | null>(null)
 
   const isExpired = (approval: any) => {
@@ -91,6 +92,12 @@ export default function ApprovalsView({ approvals, onRefresh }: ApprovalsViewPro
     return rows.slice(0, 8)
   }
 
+  const roleGapId = (approval: any) => {
+    const payload = approval.action_payload || {}
+    if (approval.target_type === 'role_gap' && approval.target_id) return approval.target_id
+    return payload.role_gap_id || null
+  }
+
   return (
     <div className="space-y-8">
       <div>
@@ -150,15 +157,23 @@ export default function ApprovalsView({ approvals, onRefresh }: ApprovalsViewPro
                       ))}
                     </div>
                   )}
-                  {approval.action_payload && (
+                {approval.action_payload && (
                     <details className="mt-3 text-xs text-slate-400">
                       <summary className="cursor-pointer text-slate-300">Payload</summary>
                       <pre className="mt-2 max-h-56 overflow-auto rounded-lg border border-slate-700 bg-slate-950 p-3">
                         {JSON.stringify(approval.action_payload, null, 2)}
                       </pre>
                     </details>
-                  )}
-                </div>
+                )}
+                {roleGapId(approval) && onNavigate && (
+                  <button
+                    onClick={() => onNavigate('agents')}
+                    className="mt-3 btn-secondary text-xs"
+                  >
+                    Open Recommended Roles
+                  </button>
+                )}
+              </div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => handleAction(approval.id, 'approve')}

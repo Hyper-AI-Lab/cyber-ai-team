@@ -671,3 +671,79 @@
   - `frontend/src/components/ApprovalsView.tsx`
 - Next step:
   - Commit, push, deploy the approval expiry guard to staging, and watch GitHub CI.
+
+## 2026-06-15T06:42:39Z - STEP-024 - Role backlog review v1 implementation
+
+- Files/services changed:
+  - `backend/src/cyber_team/agents/manager.py`
+  - `backend/src/cyber_team/api/routes/roles.py`
+  - `backend/tests/test_api_roles.py`
+  - `backend/tests/test_operating_model.py`
+  - `backend/tests/test_role_backlog_review.py`
+  - `frontend/src/app/page.tsx`
+  - `frontend/src/components/AgentsView.tsx`
+  - `frontend/src/components/ApprovalsView.tsx`
+  - `frontend/src/components/OperationsView.tsx`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+- Commands run:
+  - Implementation patching only so far; verification commands are the next step.
+- Result:
+  - Added the role backlog summary service over existing role gaps, approvals, company-context snapshots, and autonomous plans.
+  - Added `GET /api/roles/role-gaps/summary` and `POST /api/roles/role-gaps/{gap_id}/approval/regenerate`.
+  - Hardened role-gap apply checks for active gap state, tool readiness, approval target, expiry, consumed state, payload role, and requested high-risk tools.
+  - Extended the owner console from a flat role-gap inbox to grouped Recommended Roles with filters, trace metadata, readiness, approval state, and owner actions for propose/create/regenerate/defer/dismiss.
+  - Added Operations and Approvals cross-links so company-context owner-review plans and role-gap approvals can route back to Recommended Roles without raw ID hunting.
+- Evidence path/link:
+  - Verification evidence pending the next command pass.
+- Next step:
+  - Run focused backend/frontend tests, Ruff, typecheck/build, full backend tests, and diff hygiene before staging deployment.
+
+## 2026-06-15T06:49:17Z - STEP-025 - Role backlog review v1 local verification
+
+- Files/services changed:
+  - No additional service changes; fixed one Ruff line-length issue and one React hook dependency warning in the implemented role backlog review files.
+- Commands run:
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_role_backlog_review.py backend/tests/test_api_roles.py backend/tests/test_operating_model.py -q`
+  - `npx -y node@20 node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/agents/manager.py backend/src/cyber_team/api/routes/roles.py backend/tests/test_role_backlog_review.py backend/tests/test_api_roles.py backend/tests/test_operating_model.py`
+  - `python3 -m compileall -q backend/src backend/tests`
+  - `npx tsc --noEmit`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `npm run build`
+  - `git diff --check`
+  - `python3 scripts/secret-scan.py`
+- Result:
+  - Focused backend role backlog/API/operating-model tests passed: `22 passed`.
+  - Frontend API client tests passed: `16 passed`.
+  - Full backend tests passed: `142 passed`.
+  - Ruff, Python compileall, TypeScript, Next production build, diff hygiene, and secret scan passed.
+  - React hook dependency warning in `AgentsView` was removed and the production build completed without that warning.
+- Evidence path/link:
+  - `backend/tests/test_role_backlog_review.py`
+  - `backend/tests/test_api_roles.py`
+  - `frontend/src/lib/api.test.ts`
+- Next step:
+  - Commit the role backlog review milestone, deploy it to staging, run live summary/regeneration/smoke checks, then push and watch GitHub CI.
+
+## 2026-06-15T07:01:30Z - STEP-026 - Role backlog review v1 staging deployment and live check
+
+- Files/services changed:
+  - Rebuilt `cyber-team-core:latest` and `cyber-team-ui:latest` from commit `98e6df9d98e73ba69e53c9aa53213b5365b9626c`.
+  - Restarted staging `core`, `worker`, and `ui`; ERPNext, PostgreSQL, Redis, Qdrant, Temporal, and OPA remained running.
+- Commands run:
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env build core ui`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env up -d core worker ui`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env ./scripts/compose-smoke.sh`
+  - Live owner-authenticated role backlog summary check against `https://cyberteam.hyperailab.com/api/roles/role-gaps/summary?status=open,proposed&source_type=company_context_snapshot&limit=50`
+- Result:
+  - Staging `core` became healthy and `ui` started successfully.
+  - Compose smoke passed: health, readiness, UI, owner login, dashboard KPIs, integration status, WebSocket ticket, tool readiness, and approval queue behavior.
+  - `/health` reports build SHA `98e6df9d98e73ba69e53c9aa53213b5365b9626c` and version `98e6df9`.
+  - Role backlog summary returned 16 proposed company-context role gaps grouped across 13 business functions.
+  - No expired role-gap approval was present, so no approval regeneration was needed.
+  - Live summary recommended actions are explicit: `configure_tools`, `create_role`, and `request_approval`.
+- Evidence path/link:
+  - `dist/role-backlog/role-backlog-staging-check-20260615T070058Z.json`
+- Next step:
+  - Amend the milestone commit with this staging evidence entry, push to GitHub, and watch CI.

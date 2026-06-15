@@ -23,6 +23,25 @@ class FakeToolRegistry:
             return FakeTool(name)
         return None
 
+    def get_tool_readiness(self, name: str):
+        if name in self._tool_names:
+            return {
+                "state": "live",
+                "readiness_reason": "test tool is ready",
+                "side_effects": name in AgentManager.HIGH_RISK_ROLE_TOOLS,
+                "executor_kind": "live",
+                "requires_configuration": False,
+                "executable": True,
+            }
+        return {
+            "state": "unavailable",
+            "readiness_reason": f"Tool not found: {name}",
+            "side_effects": False,
+            "executor_kind": "unavailable",
+            "requires_configuration": False,
+            "executable": False,
+        }
+
 
 class FakeMemoryService:
     def __init__(self):
@@ -433,10 +452,10 @@ async def test_chat_blocked_language_reports_autonomous_role_gap():
 
 @pytest.mark.asyncio
 async def test_apply_role_gap_requests_approval_for_high_risk_generated_tools():
-    manager = AgentManager()
+    manager = AgentManager(tool_registry=FakeToolRegistry({"make_call", "memory_recall"}))
     gap = role_gap_with_proposal(["make_call", "memory_recall"])
     manager.get_role_gap = AsyncMock(return_value=gap)
-    manager._find_role_gap_tool_grant_approval = AsyncMock(return_value=None)
+    manager._latest_role_gap_tool_grant_approval = AsyncMock(return_value=None)
     manager._request_role_gap_tool_grant_approval = AsyncMock(return_value="approval-1")
     manager._mark_role_gap_approval_required = AsyncMock(
         return_value={
@@ -466,7 +485,7 @@ async def test_apply_role_gap_requests_approval_for_high_risk_generated_tools():
 
 @pytest.mark.asyncio
 async def test_apply_role_gap_consumes_approved_tool_grant_before_creating_role():
-    manager = AgentManager()
+    manager = AgentManager(tool_registry=FakeToolRegistry({"make_call", "memory_recall"}))
     gap = role_gap_with_proposal(["make_call", "memory_recall"])
     manifest = {
         "id": "outbound_calling_specialist",
@@ -482,9 +501,10 @@ async def test_apply_role_gap_consumes_approved_tool_grant_before_creating_role(
         "role_name": "Outbound Calling Specialist",
     }
     manager.get_role_gap = AsyncMock(return_value=gap)
-    manager._find_role_gap_tool_grant_approval = AsyncMock(
-        return_value={"id": "approval-1", "status": "approved"}
+    manager._latest_role_gap_tool_grant_approval = AsyncMock(
+        return_value={"approval_id": "approval-1", "state": "approved"}
     )
+    manager._validate_role_gap_tool_grant_approval = AsyncMock()
     manager.consume_approval = AsyncMock()
     manager.get_role_manifest = AsyncMock(return_value=None)
     manager.create_role_manifest = AsyncMock(return_value=manifest)
@@ -503,6 +523,7 @@ async def test_apply_role_gap_consumes_approved_tool_grant_before_creating_role(
     result = await manager.apply_role_gap_proposal("gap_123", {"name": "Acme"})
 
     assert result["status"] == "resolved"
+    manager._validate_role_gap_tool_grant_approval.assert_awaited_once()
     manager.consume_approval.assert_awaited_once_with(
         "approval-1",
         consumer="role_gap.apply",

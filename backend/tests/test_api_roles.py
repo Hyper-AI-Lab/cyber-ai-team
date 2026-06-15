@@ -110,6 +110,30 @@ def test_report_role_gap_endpoint_success(test_app_client, mock_agent_manager):
     mock_agent_manager.report_role_gap.assert_called_once()
 
 
+def test_role_gap_summary_endpoint_success(test_app_client, mock_agent_manager):
+    mock_agent_manager.summarize_role_backlog.return_value = {
+        "items": [{"gap_id": "gap_123", "business_function": "Communications"}],
+        "groups": [{"business_function": "Communications", "count": 1}],
+        "counts": {"total": 1},
+        "blocking_count": 0,
+        "approval_count": 1,
+        "expired_approval_count": 0,
+    }
+
+    response = test_app_client.get(
+        "/api/roles/role-gaps/summary"
+        "?status=open,proposed&source_type=company_context_snapshot&limit=25"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["counts"]["total"] == 1
+    mock_agent_manager.summarize_role_backlog.assert_called_once_with(
+        statuses=["open", "proposed"],
+        source_type="company_context_snapshot",
+        limit=25,
+    )
+
+
 def test_role_gap_proposal_endpoint_success(test_app_client, mock_agent_manager):
     mock_agent_manager.propose_role_for_gap.return_value = {
         "id": "gap_123",
@@ -133,6 +157,26 @@ def test_role_gap_proposal_endpoint_success(test_app_client, mock_agent_manager)
     mock_agent_manager.propose_role_for_gap.assert_called_once_with(
         "gap_123",
         {"name": "Acme"},
+    )
+
+
+def test_role_gap_regenerate_approval_endpoint_success(test_app_client, mock_agent_manager):
+    mock_agent_manager.regenerate_role_gap_approval.return_value = {
+        "approval_id": "approval_123",
+        "item": {"gap_id": "gap_123", "approval": {"state": "pending"}},
+    }
+
+    response = test_app_client.post(
+        "/api/roles/role-gaps/gap_123/approval/regenerate",
+        json={"company_profile": {"name": "Acme"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["approval_id"] == "approval_123"
+    mock_agent_manager.regenerate_role_gap_approval.assert_called_once_with(
+        "gap_123",
+        {"name": "Acme"},
+        requested_by="owner@example.com",
     )
 
 

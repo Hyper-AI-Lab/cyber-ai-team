@@ -197,13 +197,25 @@ export default function Home() {
       case 'workflows':
         return <WorkflowsView />
       case 'operations':
-        return <OperationsView cycles={autonomousCycles} onRefresh={refreshData} />
+        return (
+          <OperationsView
+            cycles={autonomousCycles}
+            onRefresh={refreshData}
+            onNavigate={setActiveView}
+          />
+        )
       case 'inbox':
         return <InboxView />
       case 'chat':
         return <ChatView agents={agents} />
       case 'approvals':
-        return <ApprovalsView approvals={approvals} onRefresh={refreshData} />
+        return (
+          <ApprovalsView
+            approvals={approvals}
+            onRefresh={refreshData}
+            onNavigate={setActiveView}
+          />
+        )
       case 'audit':
         return <AuditView />
       case 'integrations':

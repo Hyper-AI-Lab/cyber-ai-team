@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { Bot, Play, Plus, Cpu, Shield, HelpCircle, Check, X, RefreshCw, Database } from 'lucide-react'
 
@@ -30,8 +30,11 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
   const [builderResult, setBuilderResult] = useState<any | null>(null)
   const [building, setBuilding] = useState(false)
   const [roleGaps, setRoleGaps] = useState<any[]>([])
+  const [roleBacklog, setRoleBacklog] = useState<any | null>(null)
   const [loadingRoleGaps, setLoadingRoleGaps] = useState(false)
   const [reviewingRoleGaps, setReviewingRoleGaps] = useState(false)
+  const [roleGapStatusFilter, setRoleGapStatusFilter] = useState('open,proposed')
+  const [roleGapSourceFilter, setRoleGapSourceFilter] = useState('company_context_snapshot')
   const [companyContext, setCompanyContext] = useState<any | null>(null)
   const [syncingCompanyContext, setSyncingCompanyContext] = useState(false)
   const [companyContextError, setCompanyContextError] = useState<string | null>(null)
@@ -48,40 +51,9 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
   const inputClassName = 'w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500'
   const textareaClassName = 'h-32 w-full resize-none rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500'
   const selectClassName = 'w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-white focus:outline-none focus:border-blue-500'
+  const roleBacklogItems = roleBacklog?.items || roleGaps
 
-  useEffect(() => {
-    loadRoleGaps()
-    loadCompanyContext()
-  }, [])
-
-  const loadRoleGaps = async () => {
-    setLoadingRoleGaps(true)
-    try {
-      const gaps = await api.listRoleGaps()
-      setRoleGaps(gaps)
-    } catch {
-      setRoleGaps([])
-    } finally {
-      setLoadingRoleGaps(false)
-    }
-  }
-
-  const handleSupervisorReview = async () => {
-    setReviewingRoleGaps(true)
-    try {
-      const review = await api.runSupervisorRoleGapReview()
-      await loadRoleGaps()
-      alert(
-        `Supervisor review complete: ${review.role_gaps_reviewed} gaps reviewed, ${review.role_gaps_proposed.length} proposals generated, ${review.workflow_failure_gaps.length} workflow failure gaps surfaced.`
-      )
-    } catch (e: any) {
-      alert(`Error: ${e.message}`)
-    } finally {
-      setReviewingRoleGaps(false)
-    }
-  }
-
-  const loadCompanyContext = async () => {
+  const loadCompanyContext = useCallback(async () => {
     setCompanyContextError(null)
     try {
       const context = await api.getCompanyContext()
@@ -100,6 +72,53 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
     } catch (e: any) {
       setCompanyContext(null)
       setCompanyContextError(e.message || 'Failed to load company context')
+    }
+  }, [])
+
+  useEffect(() => {
+    loadCompanyContext()
+  }, [loadCompanyContext])
+
+  const loadRoleGaps = useCallback(async () => {
+    setLoadingRoleGaps(true)
+    try {
+      const summary = await api.getRoleGapSummary({
+        status: roleGapStatusFilter,
+        source_type: roleGapSourceFilter || undefined,
+        limit: 200,
+      })
+      setRoleBacklog(summary)
+      setRoleGaps(summary.items || [])
+    } catch {
+      try {
+        const gaps = await api.listRoleGaps()
+        setRoleBacklog(null)
+        setRoleGaps(gaps)
+      } catch {
+        setRoleBacklog(null)
+        setRoleGaps([])
+      }
+    } finally {
+      setLoadingRoleGaps(false)
+    }
+  }, [roleGapSourceFilter, roleGapStatusFilter])
+
+  useEffect(() => {
+    loadRoleGaps()
+  }, [loadRoleGaps])
+
+  const handleSupervisorReview = async () => {
+    setReviewingRoleGaps(true)
+    try {
+      const review = await api.runSupervisorRoleGapReview()
+      await loadRoleGaps()
+      alert(
+        `Supervisor review complete: ${review.role_gaps_reviewed} gaps reviewed, ${review.role_gaps_proposed.length} proposals generated, ${review.workflow_failure_gaps.length} workflow failure gaps surfaced.`
+      )
+    } catch (e: any) {
+      alert(`Error: ${e.message}`)
+    } finally {
+      setReviewingRoleGaps(false)
     }
   }
 
@@ -212,12 +231,43 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
     }
   }
 
-  const handleRoleGapAction = async (gapId: string, action: 'propose' | 'apply' | 'dismiss') => {
+  const companyProfileForRoleGap = () => ({
+    name: companyName || companyContext?.normalized_company_profile?.name || '',
+    company_name: companyName || companyContext?.normalized_company_profile?.name || '',
+    company_namespace: companyContext?.snapshot?.company_namespace,
+  })
+
+  const recommendedActionLabel = (action: string) => {
+    const labels: Record<string, string> = {
+      propose_role: 'Propose Role',
+      create_role: 'Create Role',
+      request_approval: 'Request Approval',
+      await_approval: 'Awaiting Approval',
+      regenerate_approval: 'Regenerate Approval',
+      create_after_approval: 'Create After Approval',
+      configure_tools: 'Setup Required',
+      completed: 'Completed',
+      deferred: 'Deferred',
+      dismissed: 'Dismissed',
+    }
+    return labels[action] || action
+  }
+
+  const readinessBadgeClass = (item: any) => {
+    if (item?.tool_readiness?.all_ready) return 'badge-success'
+    if (item?.recommended_action === 'configure_tools') return 'badge-danger'
+    return 'badge-warning'
+  }
+
+  const handleRoleGapAction = async (
+    gapId: string,
+    action: 'propose' | 'apply' | 'regenerate' | 'defer' | 'dismiss'
+  ) => {
     try {
       if (action === 'propose') {
-        await api.proposeRoleGap(gapId, { name: companyName })
+        await api.proposeRoleGap(gapId, companyProfileForRoleGap())
       } else if (action === 'apply') {
-        const res = await api.applyRoleGap(gapId, { name: companyName })
+        const res = await api.applyRoleGap(gapId, companyProfileForRoleGap())
         if (res.approval_required) {
           alert(
             `Approval required before creating this role. Review approval ${res.approval_id} in Approvals, then click Create Role again.`
@@ -225,6 +275,11 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
         } else {
           onRefresh()
         }
+      } else if (action === 'regenerate') {
+        const res = await api.regenerateRoleGapApproval(gapId, companyProfileForRoleGap())
+        alert(`Approval ${res.approval_id} is ready for review in Approvals.`)
+      } else if (action === 'defer') {
+        await api.resolveRoleGap(gapId, 'deferred', 'Deferred from owner console')
       } else {
         await api.resolveRoleGap(gapId, 'dismissed', 'Dismissed from owner console')
       }
@@ -596,110 +651,215 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
       )}
 
       <div className="card">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h3 className="text-lg font-semibold text-white">Role Gap Inbox</h3>
+            <h3 className="text-lg font-semibold text-white">Recommended Roles</h3>
             <p className="text-sm text-slate-400 mt-1">
-              Missing roles, tools, or skills reported by agents and operating loops
+              Owner-reviewed role backlog from company context, supervisors, and operating loops
             </p>
           </div>
-          <button onClick={loadRoleGaps} className="btn-secondary text-sm">
-            {loadingRoleGaps ? 'Refreshing...' : 'Refresh'}
-          </button>
-          <button
-            onClick={handleSupervisorReview}
-            disabled={reviewingRoleGaps}
-            className="btn-primary text-sm"
-          >
-            {reviewingRoleGaps ? 'Reviewing...' : 'Supervisor Review'}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={loadRoleGaps} className="btn-secondary text-sm">
+              {loadingRoleGaps ? 'Refreshing...' : 'Refresh'}
+            </button>
+            <button
+              onClick={handleSupervisorReview}
+              disabled={reviewingRoleGaps}
+              className="btn-primary text-sm"
+            >
+              {reviewingRoleGaps ? 'Reviewing...' : 'Supervisor Review'}
+            </button>
+          </div>
         </div>
-        <div className="mt-4 space-y-3">
-          {roleGaps.map((gap: any) => (
-            <div key={gap.id} className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="font-medium text-white">{gap.title}</h4>
-                    <span className="badge badge-info">{gap.status}</span>
-                    <span className="badge-warning">{gap.severity}</span>
-                  </div>
-                  <p className="mt-2 text-sm text-slate-400">{gap.description}</p>
-                  <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
-                    {gap.capability && <span>Capability: {gap.capability}</span>}
-                    {gap.source_agent_id && <span>Reporter: {gap.source_agent_id}</span>}
-                    {gap.requested_tools?.length > 0 && (
-                      <span>Tools: {gap.requested_tools.join(', ')}</span>
-                    )}
-                  </div>
-                  {gap.proposed_role?.manifest_payload && (
-                    <div className="mt-3 rounded border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-300">
-                      <span className="font-semibold text-slate-100">Proposal:</span>
-                      {' '}
-                      {gap.proposed_role.manifest_payload.name}
-                      {' '}
-                      ({gap.proposed_role.manifest_payload.family})
-                    </div>
-                  )}
-                  {gap.resolution?.approval_required && (
-                    <div className="mt-3 rounded border border-amber-900/70 bg-amber-950/30 p-3 text-xs text-amber-100">
-                      <span className="font-semibold">Approval required:</span>
-                      {' '}
-                      {gap.resolution.high_risk_tools?.join(', ') || 'high-risk tool grant'}
-                      {gap.resolution.pending_approval_id && (
-                        <span className="ml-1 text-amber-200/80">
-                          ({gap.resolution.pending_approval_id})
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {gap.context?.supervisor_review && (
-                    <div className="mt-3 rounded border border-blue-900/70 bg-blue-950/30 p-3 text-xs text-blue-100">
-                      <span className="font-semibold">Supervisor:</span>
-                      {' '}
-                      {gap.context.supervisor_review.recommendation}
-                      {' '}
-                      <span className="text-blue-200/80">
-                        ({gap.context.supervisor_review.priority})
-                      </span>
-                      <p className="mt-1 text-blue-100/80">
-                        {gap.context.supervisor_review.reason}
-                      </p>
-                    </div>
-                  )}
+
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Status</label>
+            <select
+              value={roleGapStatusFilter}
+              onChange={(event) => setRoleGapStatusFilter(event.target.value)}
+              className={selectClassName}
+            >
+              <option value="open,proposed">Active</option>
+              <option value="open">Open</option>
+              <option value="proposed">Proposed</option>
+              <option value="deferred">Deferred</option>
+              <option value="resolved">Resolved</option>
+              <option value="dismissed">Dismissed</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Source</label>
+            <select
+              value={roleGapSourceFilter}
+              onChange={(event) => setRoleGapSourceFilter(event.target.value)}
+              className={selectClassName}
+            >
+              <option value="company_context_snapshot">ERPNext context</option>
+              <option value="">All sources</option>
+              <option value="agent">Agents</option>
+              <option value="system">System</option>
+              <option value="owner">Owner</option>
+            </select>
+          </div>
+          <div className="rounded border border-slate-700 bg-slate-900/60 px-3 py-2">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Review Items</p>
+            <p className="mt-1 text-xl font-semibold text-white">
+              {roleBacklog?.counts?.total ?? roleBacklogItems.length}
+            </p>
+          </div>
+          <div className="rounded border border-slate-700 bg-slate-900/60 px-3 py-2">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Needs Approval</p>
+            <p className="mt-1 text-xl font-semibold text-white">
+              {roleBacklog?.approval_count ?? 0}
+            </p>
+          </div>
+        </div>
+
+        {roleBacklog?.groups?.length > 0 && (
+          <div className="mt-4 grid gap-2 md:grid-cols-3">
+            {roleBacklog.groups.map((group: any) => (
+              <div
+                key={group.business_function}
+                className="rounded border border-slate-700 bg-slate-900/50 px-3 py-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium text-white">{group.business_function}</span>
+                  <span className="text-xs text-slate-400">{group.count}</span>
                 </div>
-                <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                  {gap.status === 'open' && (
-                    <button
-                      onClick={() => handleRoleGapAction(gap.id, 'propose')}
-                      className="btn-secondary text-sm"
-                    >
-                      Propose Role
-                    </button>
-                  )}
-                  {gap.status === 'proposed' && (
-                    <button
-                      onClick={() => handleRoleGapAction(gap.id, 'apply')}
-                      className="btn-primary text-sm"
-                    >
-                      {gap.resolution?.approval_required ? 'Create After Approval' : 'Create Role'}
-                    </button>
-                  )}
-                  {['open', 'proposed'].includes(gap.status) && (
-                    <button
-                      onClick={() => handleRoleGapAction(gap.id, 'dismiss')}
-                      className="btn-danger text-sm"
-                    >
-                      Dismiss
-                    </button>
-                  )}
+                <div className="mt-1 flex flex-wrap gap-1 text-xs text-slate-500">
+                  {group.requested_tools.slice(0, 4).map((tool: string) => (
+                    <span key={`${group.business_function}-${tool}`}>{tool}</span>
+                  ))}
                 </div>
               </div>
-            </div>
-          ))}
-          {!loadingRoleGaps && roleGaps.length === 0 && (
+            ))}
+          </div>
+        )}
+
+        <div className="mt-4 space-y-3">
+          {roleBacklogItems.map((item: any) => {
+            const gapId = item.gap_id || item.id
+            const proposal = item.proposed_role?.manifest_payload || item.proposed_role?.manifest_payload
+            const readinessItems = item.tool_readiness?.items || []
+            const action = item.recommended_action || (item.status === 'open' ? 'propose_role' : 'create_role')
+            return (
+              <div key={gapId} className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="font-medium text-white">{item.title}</h4>
+                      <span className="badge badge-info">{item.status}</span>
+                      <span className="badge-warning">{item.risk_level || item.severity}</span>
+                      <span className={readinessBadgeClass(item)}>
+                        {recommendedActionLabel(action)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-400">{item.description}</p>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                      {item.business_function && <span>Function: {item.business_function}</span>}
+                      {item.source_snapshot_id && <span>Snapshot: {item.source_snapshot_id}</span>}
+                      {item.source_plan_id && <span>Plan: {item.source_plan_id}</span>}
+                      {item.source_task_id && <span>Task: {item.source_task_id}</span>}
+                    </div>
+                    {proposal && (
+                      <div className="mt-3 rounded border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-300">
+                        <span className="font-semibold text-slate-100">Proposal:</span>{' '}
+                        {proposal.name} ({proposal.family}) ·{' '}
+                        {(proposal.default_tools || []).join(', ') || 'no tools'}
+                      </div>
+                    )}
+                    {readinessItems.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                        {readinessItems.map((tool: any) => (
+                          <span
+                            key={`${gapId}-${tool.tool_name}`}
+                            title={tool.reason}
+                            className={`rounded-full px-2 py-1 ${
+                              tool.executable
+                                ? 'bg-emerald-600/20 text-emerald-300'
+                                : 'bg-red-600/20 text-red-300'
+                            }`}
+                          >
+                            {tool.tool_name}: {tool.state}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {item.approval?.required && (
+                      <div className="mt-3 rounded border border-amber-900/70 bg-amber-950/30 p-3 text-xs text-amber-100">
+                        <span className="font-semibold">Approval:</span>{' '}
+                        {item.approval.state}
+                        {item.approval.approval_id && (
+                          <span className="ml-1 text-amber-200/80">
+                            ({item.approval.approval_id})
+                          </span>
+                        )}
+                        {item.approval.expires_at && (
+                          <span className="ml-2 text-amber-200/70">
+                            Expires {new Date(item.approval.expires_at).toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                    {action === 'propose_role' && (
+                      <button
+                        onClick={() => handleRoleGapAction(gapId, 'propose')}
+                        className="btn-secondary text-sm"
+                      >
+                        Propose
+                      </button>
+                    )}
+                    {['create_role', 'create_after_approval'].includes(action) && (
+                      <button
+                        onClick={() => handleRoleGapAction(gapId, 'apply')}
+                        className="btn-primary text-sm"
+                      >
+                        Create
+                      </button>
+                    )}
+                    {['request_approval', 'regenerate_approval'].includes(action) && (
+                      <button
+                        onClick={() => handleRoleGapAction(gapId, 'regenerate')}
+                        className="btn-primary text-sm"
+                      >
+                        Regenerate Approval
+                      </button>
+                    )}
+                    {action === 'await_approval' && (
+                      <button disabled className="btn-secondary text-sm opacity-60">
+                        Awaiting Approval
+                      </button>
+                    )}
+                    {['open', 'proposed'].includes(item.status) && (
+                      <button
+                        onClick={() => handleRoleGapAction(gapId, 'defer')}
+                        className="btn-secondary text-sm"
+                      >
+                        Defer
+                      </button>
+                    )}
+                    {['open', 'proposed', 'deferred'].includes(item.status) && (
+                      <button
+                        onClick={() => handleRoleGapAction(gapId, 'dismiss')}
+                        className="btn-danger text-sm"
+                      >
+                        Dismiss
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+          {!loadingRoleGaps && roleBacklogItems.length === 0 && (
             <div className="rounded-lg border border-dashed border-slate-700 p-6 text-center text-sm text-slate-500">
-              No role gaps reported yet.
+              {roleGapStatusFilter === 'open,proposed'
+                ? 'No active role recommendations for this source.'
+                : 'No role recommendations match the selected filters.'}
             </div>
           )}
         </div>
