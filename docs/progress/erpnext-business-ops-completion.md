@@ -747,3 +747,24 @@
   - `dist/role-backlog/role-backlog-staging-check-20260615T070058Z.json`
 - Next step:
   - Amend the milestone commit with this staging evidence entry, push to GitHub, and watch CI.
+
+## 2026-06-15T07:13:43Z - STEP-027 - Role backlog review v1 final build metadata redeploy
+
+- Files/services changed:
+  - Rebuilt and restarted staging `core`, `worker`, and `ui` after the milestone commit was amended with the staging evidence entry.
+  - No application code changed between the prior staging check and this redeploy; the rebuild aligned live `/health` metadata with commit `3812c67fc145dbe5f95eac18dd928e7551212651`.
+- Commands run:
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env build core ui`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env up -d core worker ui`
+  - `curl -fsS https://cyberteam.hyperailab.com/health`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env ./scripts/compose-smoke.sh`
+  - Live owner-authenticated role backlog summary check against the final build.
+- Result:
+  - `/health` reports version `3812c67` and build SHA `3812c67fc145dbe5f95eac18dd928e7551212651`.
+  - Compose smoke passed again after the final metadata redeploy.
+  - Role backlog summary remained healthy: 16 proposed role gaps across 13 business-function groups, with recommended actions `configure_tools`, `create_role`, and `request_approval`.
+  - GitHub CI for pushed commit `3812c67fc145dbe5f95eac18dd928e7551212651` passed.
+- Evidence path/link:
+  - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/27530018287`
+- Next step:
+  - Commit and push this progress-log correction.
