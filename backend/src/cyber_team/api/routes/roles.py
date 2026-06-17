@@ -64,6 +64,16 @@ class RoleGapResolveRequest(BaseModel):
     note: str = ""
 
 
+class RoleGapBatchActionRequest(BaseModel):
+    gap_ids: list[str] = Field(min_length=1, max_length=100)
+    action: str = Field(
+        pattern="^(propose|apply|regenerate_approval|defer|dismiss)$",
+    )
+    company_profile: dict = Field(default_factory=dict)
+    approval_ids: dict[str, str] = Field(default_factory=dict)
+    note: str = ""
+
+
 class SupervisorReviewResponse(BaseModel):
     reviewed_at: str
     actor: str
@@ -233,6 +243,23 @@ async def role_gap_summary(
     )
 
 
+@router.get("/operating-cadence")
+async def role_operating_cadence(
+    request: Request,
+    company_namespace: str | None = None,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "role_operating_cadence",
+        context={"company_namespace": company_namespace},
+    )
+    mgr = request.app.state.agent_manager
+    return await mgr.role_operating_cadence(company_namespace=company_namespace)
+
+
 @router.post("/role-gaps", status_code=201)
 async def report_role_gap(
     data: RoleGapReport,
@@ -311,6 +338,33 @@ async def regenerate_role_gap_approval(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/role-gaps/batch")
+async def role_gap_batch_action(
+    data: RoleGapBatchActionRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        data.action,
+        "role_gap_batch",
+        context={
+            "gap_ids": data.gap_ids,
+            "action": data.action,
+        },
+    )
+    mgr = request.app.state.agent_manager
+    return await mgr.batch_role_gap_action(
+        data.gap_ids,
+        action=data.action,
+        company_profile=data.company_profile,
+        approval_ids=data.approval_ids,
+        note=data.note,
+        requested_by=principal.email,
+    )
 
 
 @router.post("/role-gaps/{gap_id}/apply")

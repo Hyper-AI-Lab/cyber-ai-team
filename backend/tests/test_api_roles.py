@@ -134,6 +134,25 @@ def test_role_gap_summary_endpoint_success(test_app_client, mock_agent_manager):
     )
 
 
+def test_role_operating_cadence_endpoint_success(test_app_client, mock_agent_manager):
+    mock_agent_manager.role_operating_cadence.return_value = {
+        "generated_at": "2026-06-17T00:00:00",
+        "counts": {"cadences": 2},
+        "cadences": [],
+        "recommended_owner_actions": [],
+    }
+
+    response = test_app_client.get(
+        "/api/roles/operating-cadence?company_namespace=company:acme"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["counts"]["cadences"] == 2
+    mock_agent_manager.role_operating_cadence.assert_called_once_with(
+        company_namespace="company:acme"
+    )
+
+
 def test_role_gap_proposal_endpoint_success(test_app_client, mock_agent_manager):
     mock_agent_manager.propose_role_for_gap.return_value = {
         "id": "gap_123",
@@ -176,6 +195,40 @@ def test_role_gap_regenerate_approval_endpoint_success(test_app_client, mock_age
     mock_agent_manager.regenerate_role_gap_approval.assert_called_once_with(
         "gap_123",
         {"name": "Acme"},
+        requested_by="owner@example.com",
+    )
+
+
+def test_role_gap_batch_endpoint_success(test_app_client, mock_agent_manager):
+    mock_agent_manager.batch_role_gap_action.return_value = {
+        "action": "regenerate_approval",
+        "requested_count": 2,
+        "succeeded_count": 2,
+        "failed_count": 0,
+        "results": [],
+        "errors": [],
+        "summary": {"counts": {"total": 2}},
+    }
+
+    response = test_app_client.post(
+        "/api/roles/role-gaps/batch",
+        json={
+            "gap_ids": ["gap_1", "gap_2"],
+            "action": "regenerate_approval",
+            "company_profile": {"name": "Acme"},
+            "approval_ids": {"gap_1": "approval_1"},
+            "note": "Batch approval request",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["succeeded_count"] == 2
+    mock_agent_manager.batch_role_gap_action.assert_called_once_with(
+        ["gap_1", "gap_2"],
+        action="regenerate_approval",
+        company_profile={"name": "Acme"},
+        approval_ids={"gap_1": "approval_1"},
+        note="Batch approval request",
         requested_by="owner@example.com",
     )
 

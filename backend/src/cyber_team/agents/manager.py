@@ -932,6 +932,186 @@ Propose a new role to fill this gap. Return JSON with:
             ),
         }
 
+    async def batch_role_gap_action(
+        self,
+        gap_ids: list[str],
+        *,
+        action: str,
+        company_profile: dict | None = None,
+        approval_ids: dict[str, str] | None = None,
+        note: str = "",
+        requested_by: str = "owner",
+    ) -> dict:
+        allowed_actions = {
+            "propose",
+            "apply",
+            "regenerate_approval",
+            "defer",
+            "dismiss",
+        }
+        if action not in allowed_actions:
+            raise ValueError(
+                "Action must be one of: " + ", ".join(sorted(allowed_actions))
+            )
+        unique_gap_ids = self._unique(gap_ids)
+        results = []
+        errors = []
+        profile = company_profile or {}
+        approval_map = approval_ids or {}
+
+        for gap_id in unique_gap_ids:
+            try:
+                if action == "propose":
+                    result = await self.propose_role_for_gap(gap_id, profile)
+                elif action == "apply":
+                    result = await self.apply_role_gap_proposal(
+                        gap_id,
+                        profile,
+                        approval_id=approval_map.get(gap_id),
+                        requested_by=requested_by,
+                    )
+                elif action == "regenerate_approval":
+                    result = await self.regenerate_role_gap_approval(
+                        gap_id,
+                        profile,
+                        requested_by=requested_by,
+                    )
+                else:
+                    result = await self.resolve_role_gap(
+                        gap_id,
+                        status="deferred" if action == "defer" else "dismissed",
+                        note=note or f"Batch {action} from owner console",
+                        resolver=requested_by,
+                    )
+                results.append(
+                    {
+                        "gap_id": gap_id,
+                        "status": "success",
+                        "result": result,
+                    }
+                )
+            except Exception as exc:
+                errors.append(
+                    {
+                        "gap_id": gap_id,
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                )
+
+        summary = await self.summarize_role_backlog(
+            statuses=["open", "proposed"],
+            source_type="company_context_snapshot",
+            limit=500,
+        )
+        response = {
+            "action": action,
+            "requested_count": len(unique_gap_ids),
+            "succeeded_count": len(results),
+            "failed_count": len(errors),
+            "results": results,
+            "errors": errors,
+            "summary": summary,
+        }
+        if self._audit:
+            await self._audit.record(
+                event_type="role_gap.batch_action",
+                actor=requested_by,
+                actor_type="user",
+                resource_type="role_gap_batch",
+                resource_id=None,
+                action=action,
+                outcome="degraded" if errors else "success",
+                metadata={
+                    "gap_ids": unique_gap_ids,
+                    "succeeded_count": len(results),
+                    "failed_count": len(errors),
+                    "errors": errors,
+                },
+            )
+        return response
+
+    async def role_operating_cadence(
+        self,
+        *,
+        company_namespace: str | None = None,
+    ) -> dict:
+        async with async_session() as session:
+            agent_result = await session.execute(
+                select(Agent)
+                .where(Agent.status != "deleted")
+                .order_by(Agent.role_family.asc(), Agent.role_name.asc())
+            )
+            agents = list(agent_result.scalars().all())
+
+        cadences = []
+        for agent in agents:
+            agent_dict = self._agent_to_dict(agent)
+            config = agent_dict.get("config") or {}
+            agent_namespace = (
+                config.get("company_namespace")
+                or self._company_namespace_from_memory_namespace(
+                    agent_dict.get("memory_namespace")
+                )
+            )
+            if company_namespace and agent_namespace != company_namespace:
+                continue
+            cadence = config.get("activation_cadence") or self._default_operating_cadence(
+                agent_dict,
+                company_namespace=agent_namespace,
+            )
+            cadences.append(
+                {
+                    "agent_id": agent_dict["id"],
+                    "role_name": agent_dict["role_name"],
+                    "role_family": agent_dict["role_family"],
+                    "status": agent_dict["status"],
+                    "memory_namespace": agent_dict["memory_namespace"],
+                    "company_namespace": agent_namespace,
+                    "cadence": cadence,
+                    "source_role_gap_id": config.get("role_gap_id"),
+                    "source_snapshot_id": config.get("source_snapshot_id"),
+                }
+            )
+
+        active_backlog = await self.summarize_role_backlog(
+            statuses=["open", "proposed"],
+            source_type="company_context_snapshot",
+            limit=500,
+        )
+        stale_backlog = await self.summarize_role_backlog(
+            statuses=["stale"],
+            source_type="company_context_snapshot",
+            limit=500,
+        )
+        owner_actions = self._operating_cadence_owner_actions(
+            active_backlog=active_backlog,
+            stale_backlog=stale_backlog,
+            cadence_count=len(cadences),
+        )
+        return {
+            "generated_at": utc_now().isoformat(),
+            "company_namespace": company_namespace,
+            "cadences": cadences,
+            "counts": {
+                "active_agents": len([item for item in cadences if item["status"] == "active"]),
+                "cadences": len(cadences),
+                "active_role_gaps": active_backlog["counts"]["total"],
+                "stale_role_gaps": stale_backlog["counts"]["total"],
+            },
+            "backlog": {
+                "active": {
+                    "counts": active_backlog["counts"],
+                    "groups": active_backlog["groups"],
+                },
+                "stale": {
+                    "counts": stale_backlog["counts"],
+                    "groups": stale_backlog["groups"],
+                },
+            },
+            "recommended_owner_actions": owner_actions,
+        }
+
     async def regenerate_role_gap_approval(
         self,
         gap_id: str,
@@ -1098,6 +1278,12 @@ Propose a new role to fill this gap. Return JSON with:
                 "role_gap_id": gap_id,
                 "role_gap_title": gap["title"],
                 "company_namespace": gap["company_namespace"],
+                "source_snapshot_id": (gap.get("context") or {}).get("snapshot_id"),
+                "source_hash": (gap.get("context") or {}).get("source_hash"),
+                "activation_cadence": self._activation_cadence_for_role_gap(
+                    gap,
+                    manifest_payload,
+                ),
             },
         )
         resolution = {
@@ -1105,6 +1291,10 @@ Propose a new role to fill this gap. Return JSON with:
             "agent_id": agent["id"],
             "role_name": agent["role_name"],
             "applied_at": utc_now().isoformat(),
+            "activation_cadence": self._activation_cadence_for_role_gap(
+                gap,
+                manifest_payload,
+            ),
         }
         if approval_to_consume:
             resolution["approval_id"] = approval_to_consume
@@ -2131,6 +2321,221 @@ Propose a new role to fill this gap. Return JSON with:
         if gap.get("source_agent_id"):
             rationale.append(f"Reported by agent {gap['source_agent_id']}.")
         return rationale
+
+    def _activation_cadence_for_role_gap(
+        self,
+        gap: dict,
+        manifest_payload: dict,
+    ) -> dict:
+        family = manifest_payload.get("family") or self._role_gap_family(gap)
+        default = self._cadence_profile_for_family(str(family))
+        high_risk_tools = self._role_gap_high_risk_tools(
+            manifest_payload.get("default_tools", [])
+        )
+        frequency = "daily" if gap.get("severity") in {"high", "critical"} else default["frequency"]
+        if high_risk_tools:
+            frequency = "daily"
+        return {
+            "cadence_id": f"cadence:{gap['id']}",
+            "source": "role_gap_activation",
+            "source_role_gap_id": gap["id"],
+            "source_snapshot_id": (gap.get("context") or {}).get("snapshot_id"),
+            "source_hash": (gap.get("context") or {}).get("source_hash"),
+            "frequency": frequency,
+            "review_window": default["review_window"],
+            "signals": self._unique(
+                [
+                    *default["signals"],
+                    gap.get("capability"),
+                    *list(gap.get("requested_tools") or []),
+                ]
+            ),
+            "checklist": default["checklist"],
+            "owner_review": {
+                "required_for_external_side_effects": True,
+                "approval_mode": "manual_only",
+                "high_risk_tools": high_risk_tools,
+            },
+            "evidence": {
+                "role_gap_id": gap["id"],
+                "role_gap_title": gap["title"],
+                "business_function": self._role_gap_business_function(
+                    gap,
+                    manifest_payload,
+                ),
+            },
+        }
+
+    def _default_operating_cadence(
+        self,
+        agent: dict,
+        *,
+        company_namespace: str | None,
+    ) -> dict:
+        profile = self._cadence_profile_for_family(agent.get("role_family") or "operations")
+        return {
+            "cadence_id": f"cadence:agent:{agent['id']}",
+            "source": "agent_registry",
+            "source_role_gap_id": None,
+            "source_snapshot_id": None,
+            "source_hash": None,
+            "frequency": profile["frequency"],
+            "review_window": profile["review_window"],
+            "signals": profile["signals"],
+            "checklist": profile["checklist"],
+            "owner_review": {
+                "required_for_external_side_effects": True,
+                "approval_mode": "manual_only",
+                "high_risk_tools": [],
+            },
+            "evidence": {
+                "agent_id": agent["id"],
+                "role_name": agent["role_name"],
+                "business_function": str(agent.get("role_family") or "operations")
+                .replace("_", " ")
+                .title(),
+                "company_namespace": company_namespace,
+            },
+        }
+
+    @staticmethod
+    def _cadence_profile_for_family(family: str) -> dict:
+        normalized = str(family or "operations").lower()
+        profiles = {
+            "finance": {
+                "frequency": "weekly",
+                "review_window": "Monday finance review",
+                "signals": ["sales_invoice", "material_request", "cash_risk"],
+                "checklist": [
+                    "Review ERPNext invoices, payables, and finance exceptions.",
+                    "Summarize risks requiring owner approval.",
+                    "Propose accounting tasks without external mutation.",
+                ],
+            },
+            "legal": {
+                "frequency": "weekly",
+                "review_window": "Legal/compliance review",
+                "signals": ["contract", "policy", "jurisdiction", "compliance_risk"],
+                "checklist": [
+                    "Review new legal/compliance signals from memory and ERPNext context.",
+                    "Prepare advisory drafts only.",
+                    "Escalate legal decisions to the owner.",
+                ],
+            },
+            "sales": {
+                "frequency": "daily",
+                "review_window": "Daily pipeline review",
+                "signals": ["lead", "opportunity", "customer", "follow_up"],
+                "checklist": [
+                    "Review new leads and open opportunities.",
+                    "Identify blocked follow-ups and missing CRM data.",
+                    "Request approval for any external outreach.",
+                ],
+            },
+            "marketing": {
+                "frequency": "weekly",
+                "review_window": "Growth planning review",
+                "signals": ["campaign", "content", "analytics", "positioning"],
+                "checklist": [
+                    "Review positioning, channels, and recent market-facing tasks.",
+                    "Draft content or campaign plans as advisory outputs.",
+                    "Escalate publication or spend decisions.",
+                ],
+            },
+            "support": {
+                "frequency": "daily",
+                "review_window": "Support queue review",
+                "signals": ["issue", "ticket", "customer", "sla"],
+                "checklist": [
+                    "Review open support issues and stale customer responses.",
+                    "Summarize blockers and proposed replies.",
+                    "Request approval before sending customer communications.",
+                ],
+            },
+            "security": {
+                "frequency": "weekly",
+                "review_window": "Security and control review",
+                "signals": ["audit_event", "auth_failure", "tool_misuse", "secret"],
+                "checklist": [
+                    "Review audit/control evidence and security findings.",
+                    "Identify policy drift and risky tool requests.",
+                    "Escalate remediations with operational impact.",
+                ],
+            },
+            "communications": {
+                "frequency": "daily",
+                "review_window": "Communications readiness review",
+                "signals": ["email", "call", "message", "owner_notification"],
+                "checklist": [
+                    "Review inbound/outbound communication readiness.",
+                    "Draft responses or outreach plans.",
+                    "Require owner approval for live external messages.",
+                ],
+            },
+            "knowledge": {
+                "frequency": "weekly",
+                "review_window": "Memory quality review",
+                "signals": ["memory_trace", "empty_recall", "stale_memory", "namespace"],
+                "checklist": [
+                    "Review memory coverage and steward findings.",
+                    "Propose memory consolidation or namespace fixes.",
+                    "Avoid deleting audit-preserving records.",
+                ],
+            },
+        }
+        return profiles.get(
+            normalized,
+            {
+                "frequency": "weekly",
+                "review_window": "Operating review",
+                "signals": ["workflow", "task", "approval", "role_gap"],
+                "checklist": [
+                    "Review relevant ERPNext, memory, workflow, and approval signals.",
+                    "Produce an actionable plan with evidence links.",
+                    "Escalate side effects and high-risk changes to the owner.",
+                ],
+            },
+        )
+
+    @staticmethod
+    def _operating_cadence_owner_actions(
+        *,
+        active_backlog: dict,
+        stale_backlog: dict,
+        cadence_count: int,
+    ) -> list[dict]:
+        actions = []
+        if active_backlog["counts"]["total"]:
+            actions.append(
+                {
+                    "action": "review_active_role_backlog",
+                    "priority": "high",
+                    "reason": (
+                        f"{active_backlog['counts']['total']} current role recommendations "
+                        "are waiting for owner review."
+                    ),
+                }
+            )
+        if stale_backlog["counts"]["total"]:
+            actions.append(
+                {
+                    "action": "archive_or_filter_stale_role_gaps",
+                    "priority": "low",
+                    "reason": (
+                        f"{stale_backlog['counts']['total']} role recommendations came "
+                        "from superseded company-context snapshots."
+                    ),
+                }
+            )
+        if cadence_count == 0:
+            actions.append(
+                {
+                    "action": "activate_first_roles",
+                    "priority": "medium",
+                    "reason": "No active agent operating cadences are available yet.",
+                }
+            )
+        return actions
 
     async def _report_missing_agent_gap(self, agent_id: str, task: str) -> dict | None:
         role_name = agent_id.replace("_", " ").replace("-", " ").strip().title()

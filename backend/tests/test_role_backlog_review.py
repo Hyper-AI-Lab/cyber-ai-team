@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -9,6 +10,7 @@ from cyber_team.agents.manager import AgentManager
 from cyber_team.clock import utc_now
 from cyber_team.db import Base
 from cyber_team.db.models import (
+    Agent,
     ApprovalRequest,
     AutonomousPlan,
     AutonomousTask,
@@ -230,3 +232,85 @@ async def test_apply_role_gap_rejects_approval_that_does_not_cover_requested_too
 
     with pytest.raises(ValueError, match="does not cover requested tools"):
         await manager.apply_role_gap_proposal("gap_1", {"name": "Acme"}, "approval_1")
+
+
+@pytest.mark.asyncio
+async def test_batch_role_gap_action_reports_partial_failures():
+    manager = AgentManager()
+    manager.propose_role_for_gap = AsyncMock(
+        side_effect=[
+            {"id": "gap_1", "status": "proposed"},
+            ValueError("Role gap gap_2 is stale"),
+        ]
+    )
+    manager.summarize_role_backlog = AsyncMock(return_value={"counts": {"total": 1}})
+
+    result = await manager.batch_role_gap_action(
+        ["gap_1", "gap_2", "gap_1"],
+        action="propose",
+        company_profile={"name": "Acme"},
+        requested_by="owner@example.com",
+    )
+
+    assert result["requested_count"] == 2
+    assert result["succeeded_count"] == 1
+    assert result["failed_count"] == 1
+    assert result["errors"][0]["gap_id"] == "gap_2"
+    manager.propose_role_for_gap.assert_any_await("gap_1", {"name": "Acme"})
+    manager.propose_role_for_gap.assert_any_await("gap_2", {"name": "Acme"})
+
+
+@pytest.mark.asyncio
+async def test_role_operating_cadence_reports_activated_agent_and_backlog_counts(
+    session_factory,
+):
+    async with session_factory() as session:
+        session.add(
+            Agent(
+                id="sales_specialist",
+                role_family="sales",
+                role_name="Sales Specialist",
+                instructions="Review pipeline.",
+                tools=["memory_recall"],
+                memory_namespace="company:acme:gap:sales",
+                approval_policy="sensitive",
+                status="active",
+                config={
+                    "company_namespace": "company:acme",
+                    "role_gap_id": "gap_sales",
+                    "source_snapshot_id": "ctx_1",
+                    "activation_cadence": {
+                        "cadence_id": "cadence:gap_sales",
+                        "frequency": "daily",
+                        "review_window": "Daily pipeline review",
+                    },
+                },
+            )
+        )
+        session.add(
+            RoleGap(
+                id="gap_active",
+                title="Need finance role",
+                description="Finance review is needed.",
+                status="proposed",
+                severity="medium",
+                source_type="company_context_snapshot",
+                company_namespace="company:acme",
+                capability="finance",
+                requested_tools=["memory_recall"],
+                context={},
+                proposed_role=proposed_role(["memory_recall"]),
+                resolution={},
+            )
+        )
+        await session.commit()
+    manager = AgentManager(tool_registry=FakeToolRegistry({"memory_recall"}))
+
+    result = await manager.role_operating_cadence(company_namespace="company:acme")
+
+    assert result["counts"]["active_agents"] == 1
+    assert result["counts"]["cadences"] == 1
+    assert result["counts"]["active_role_gaps"] == 1
+    assert result["cadences"][0]["agent_id"] == "sales_specialist"
+    assert result["cadences"][0]["cadence"]["frequency"] == "daily"
+    assert result["recommended_owner_actions"][0]["action"] == "review_active_role_backlog"

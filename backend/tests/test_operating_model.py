@@ -531,16 +531,16 @@ async def test_apply_role_gap_consumes_approved_tool_grant_before_creating_role(
         target_id="gap_123",
     )
     manager.create_role_manifest.assert_awaited_once()
-    manager.instantiate_role.assert_awaited_once_with(
-        "outbound_calling_specialist",
-        {
-            "name": "Acme",
-            "provisioned_by": "role_gap_loop",
-            "role_gap_id": "gap_123",
-            "role_gap_title": "Need outbound calls",
-            "company_namespace": "company:acme",
-        },
-    )
+    manager.instantiate_role.assert_awaited_once()
+    manifest_id, overrides = manager.instantiate_role.await_args.args
+    assert manifest_id == "outbound_calling_specialist"
+    assert overrides["name"] == "Acme"
+    assert overrides["provisioned_by"] == "role_gap_loop"
+    assert overrides["role_gap_id"] == "gap_123"
+    assert overrides["role_gap_title"] == "Need outbound calls"
+    assert overrides["company_namespace"] == "company:acme"
+    assert overrides["activation_cadence"]["cadence_id"] == "cadence:gap_123"
+    assert overrides["activation_cadence"]["owner_review"]["approval_mode"] == "manual_only"
 
 
 @pytest.mark.asyncio

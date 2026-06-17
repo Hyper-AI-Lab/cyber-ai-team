@@ -432,6 +432,10 @@ describe('ApiClient', () => {
         groups: [],
         counts: { total: 1 },
       }))
+      .mockResolvedValueOnce(jsonResponse({
+        counts: { cadences: 1 },
+        cadences: [{ agent_id: 'agent-1' }],
+      }))
       .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'open' }))
       .mockResolvedValueOnce(jsonResponse({
         role_gaps_reviewed: 1,
@@ -442,6 +446,7 @@ describe('ApiClient', () => {
       .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'resolved' }))
       .mockResolvedValueOnce(jsonResponse({ approval_id: 'approval-2' }))
       .mockResolvedValueOnce(jsonResponse({ id: 'gap-1', status: 'dismissed' }))
+      .mockResolvedValueOnce(jsonResponse({ succeeded_count: 1, failed_count: 0 }))
     vi.stubGlobal('fetch', fetchMock)
     const client = new ApiClient('http://api.test')
 
@@ -452,39 +457,60 @@ describe('ApiClient', () => {
       source_type: 'company_context_snapshot',
       limit: 25,
     })
+    await client.getRoleOperatingCadence('company:acme')
     await client.reportRoleGap({ title: 'Gap', description: 'Blocked work' })
     await client.runSupervisorRoleGapReview()
     await client.proposeRoleGap('gap-1', { name: 'Acme' })
     await client.applyRoleGap('gap-1', { name: 'Acme' }, 'approval-1')
     await client.regenerateRoleGapApproval('gap-1', { name: 'Acme' })
     await client.resolveRoleGap('gap-1', 'dismissed', 'Not needed')
+    await client.batchRoleGapAction({
+      gap_ids: ['gap-1'],
+      action: 'regenerate_approval',
+      company_profile: { name: 'Acme' },
+      approval_ids: { 'gap-1': 'approval-1' },
+      note: 'Batch request',
+    })
 
     expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/roles/role-gaps?status=open')
     expect(fetchMock.mock.calls[1][0]).toBe(
       'http://api.test/api/roles/role-gaps/summary?status=open%2Cproposed&limit=25&source_type=company_context_snapshot',
     )
-    expect(fetchMock.mock.calls[2][0]).toBe('http://api.test/api/roles/role-gaps')
-    expect(fetchMock.mock.calls[3][0]).toBe(
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/roles/operating-cadence?company_namespace=company%3Aacme',
+    )
+    expect(fetchMock.mock.calls[3][0]).toBe('http://api.test/api/roles/role-gaps')
+    expect(fetchMock.mock.calls[4][0]).toBe(
       'http://api.test/api/roles/role-gaps/supervisor-review',
     )
-    expect(fetchMock.mock.calls[4][0]).toBe(
+    expect(fetchMock.mock.calls[5][0]).toBe(
       'http://api.test/api/roles/role-gaps/gap-1/proposal',
     )
-    expect(fetchMock.mock.calls[5][0]).toBe(
-      'http://api.test/api/roles/role-gaps/gap-1/apply',
-    )
-    expect(JSON.parse(fetchMock.mock.calls[5][1]?.body as string)).toEqual({
-      company_profile: { name: 'Acme' },
-      approval_id: 'approval-1',
-    })
     expect(fetchMock.mock.calls[6][0]).toBe(
-      'http://api.test/api/roles/role-gaps/gap-1/approval/regenerate',
+      'http://api.test/api/roles/role-gaps/gap-1/apply',
     )
     expect(JSON.parse(fetchMock.mock.calls[6][1]?.body as string)).toEqual({
       company_profile: { name: 'Acme' },
+      approval_id: 'approval-1',
     })
     expect(fetchMock.mock.calls[7][0]).toBe(
+      'http://api.test/api/roles/role-gaps/gap-1/approval/regenerate',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[7][1]?.body as string)).toEqual({
+      company_profile: { name: 'Acme' },
+    })
+    expect(fetchMock.mock.calls[8][0]).toBe(
       'http://api.test/api/roles/role-gaps/gap-1/resolve',
     )
+    expect(fetchMock.mock.calls[9][0]).toBe(
+      'http://api.test/api/roles/role-gaps/batch',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[9][1]?.body as string)).toEqual({
+      gap_ids: ['gap-1'],
+      action: 'regenerate_approval',
+      company_profile: { name: 'Acme' },
+      approval_ids: { 'gap-1': 'approval-1' },
+      note: 'Batch request',
+    })
   })
 })

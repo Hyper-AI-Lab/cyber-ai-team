@@ -281,6 +281,15 @@ class ApiClient {
     return this.request(`/api/roles/role-gaps/summary?${params.toString()}`);
   }
 
+  async getRoleOperatingCadence(companyNamespace?: string) {
+    const params = new URLSearchParams();
+    if (companyNamespace) {
+      params.set('company_namespace', companyNamespace);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return this.request(`/api/roles/operating-cadence${suffix}`);
+  }
+
   async reportRoleGap(data: Record<string, any>) {
     return this.request('/api/roles/role-gaps', {
       method: 'POST',
@@ -326,6 +335,19 @@ class ApiClient {
     return this.request(`/api/roles/role-gaps/${gapId}/resolve`, {
       method: 'POST',
       body: JSON.stringify({ status, note }),
+    });
+  }
+
+  async batchRoleGapAction(data: {
+    gap_ids: string[];
+    action: 'propose' | 'apply' | 'regenerate_approval' | 'defer' | 'dismiss';
+    company_profile?: Record<string, any>;
+    approval_ids?: Record<string, string>;
+    note?: string;
+  }) {
+    return this.request('/api/roles/role-gaps/batch', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 

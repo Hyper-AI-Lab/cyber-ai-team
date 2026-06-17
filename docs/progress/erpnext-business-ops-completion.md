@@ -870,3 +870,49 @@
   - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/27666973659`
 - Next step:
   - Commit and push the audit remediation, then watch the new GitHub CI run to completion.
+
+## 2026-06-17T06:56:12Z - STEP-031 - Role activation batch review and operating cadence v1
+
+- Files/services changed:
+  - `backend/src/cyber_team/agents/manager.py`
+  - `backend/src/cyber_team/api/routes/roles.py`
+  - `backend/tests/test_api_roles.py`
+  - `backend/tests/test_operating_model.py`
+  - `backend/tests/test_role_backlog_review.py`
+  - `frontend/src/components/AgentsView.tsx`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - Staging `core`, `worker`, and `ui` were first redeployed to previously pushed commit `b1f5ca8a981c0a3d121213bca80ca0bab043849c` to align `/health` with GitHub head before new development.
+- Commands run:
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env build core ui`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env up -d core worker ui`
+  - `curl -fsS https://cyberteam.hyperailab.com/health`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env ./scripts/compose-smoke.sh`
+  - `python3 -m py_compile backend/src/cyber_team/agents/manager.py backend/src/cyber_team/api/routes/roles.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_api_roles.py backend/tests/test_role_backlog_review.py -q`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/agents/manager.py backend/src/cyber_team/api/routes/roles.py backend/tests/test_api_roles.py backend/tests/test_role_backlog_review.py backend/tests/test_operating_model.py`
+  - `npx -y node@20 node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `npx -y node@20 node_modules/typescript/bin/tsc --noEmit`
+  - `npx -y node@20 node_modules/next/dist/bin/next build`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `python3 -m compileall -q backend/src backend/tests`
+  - `python3 scripts/secret-scan.py`
+  - `git diff --check`
+- Result:
+  - Staging metadata alignment completed first: `/health` reports version `b1f5ca8` and build SHA `b1f5ca8a981c0a3d121213bca80ca0bab043849c`; compose smoke passed.
+  - Added `POST /api/roles/role-gaps/batch` for owner batch actions: propose, apply, regenerate approval, defer, and dismiss.
+  - Batch apply delegates to the existing single-gap apply path, so tool readiness, approval target matching, expiry, consumed approval, and replay protections remain centralized.
+  - Added `GET /api/roles/operating-cadence` to summarize active agent cadences, active/stale company-context backlog, and recommended owner actions.
+  - Role-gap activation now stores `activation_cadence`, snapshot/source hash trace metadata, and manual-only owner-review policy in agent config and role-gap resolution.
+  - Owner console Recommended Roles now supports visible selection, batch role actions, and an Operating Cadence panel.
+  - Backend targeted role tests passed: `16 passed`.
+  - Full backend tests passed: `148 passed`.
+  - Frontend API tests passed: `16 passed`.
+  - Ruff, Python compile, TypeScript, Next production build, secret scan, and diff hygiene passed.
+- Evidence path/link:
+  - `backend/tests/test_api_roles.py`
+  - `backend/tests/test_role_backlog_review.py`
+  - `backend/tests/test_operating_model.py`
+  - `frontend/src/lib/api.test.ts`
+- Next step:
+  - Commit, deploy this role activation/cadence slice to staging, smoke test, verify the new live endpoints, push to GitHub, and watch CI.
