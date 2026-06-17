@@ -109,6 +109,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   const [readinessLoading, setReadinessLoading] = useState(false)
   const [timelineLoading, setTimelineLoading] = useState(false)
   const [running, setRunning] = useState(false)
+  const [driftScanning, setDriftScanning] = useState(false)
   const [planAction, setPlanAction] = useState<string | null>(null)
   const [runMemorySteward, setRunMemorySteward] = useState(true)
   const [runSupervisorReview, setRunSupervisorReview] = useState(true)
@@ -235,6 +236,26 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
     }
   }
 
+  const scanCompanyContextDrift = async () => {
+    setDriftScanning(true)
+    setError(null)
+    try {
+      await api.scanCompanyContextDrift({
+        dry_run: false,
+        apply_low_risk: true,
+        run_planner: true,
+      })
+      await onRefresh()
+      await loadPlans()
+      await loadReadiness()
+      await loadTimeline()
+    } catch (e: any) {
+      setError(e.message || 'ERPNext drift scan failed')
+    } finally {
+      setDriftScanning(false)
+    }
+  }
+
   const executePlan = async (planId: string) => {
     setPlanAction(planId)
     setError(null)
@@ -291,14 +312,24 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
               Tool readiness, autonomy policy, evidence, and integration blockers.
             </p>
           </div>
-          <button
-            onClick={loadReadiness}
-            disabled={readinessLoading}
-            className="btn-secondary flex items-center gap-2 text-sm"
-          >
-            <RefreshCw className={`h-4 w-4 ${readinessLoading ? 'animate-spin' : ''}`} />
-            Refresh Readiness
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={loadReadiness}
+              disabled={readinessLoading}
+              className="btn-secondary flex items-center gap-2 text-sm"
+            >
+              <RefreshCw className={`h-4 w-4 ${readinessLoading ? 'animate-spin' : ''}`} />
+              Refresh Readiness
+            </button>
+            <button
+              onClick={scanCompanyContextDrift}
+              disabled={driftScanning}
+              className="btn-primary flex items-center gap-2 text-sm"
+            >
+              <GitBranch className={`h-4 w-4 ${driftScanning ? 'animate-pulse' : ''}`} />
+              {driftScanning ? 'Scanning Drift...' : 'Run Drift Scan'}
+            </button>
+          </div>
         </div>
 
         {readiness ? (
@@ -340,7 +371,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                 build: {readiness.version?.build_sha}
               </span>
             </div>
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-5">
               <ReadinessPanel
                 title="Required Providers"
                 value={(readiness.integrations?.required_providers || []).join(', ') || 'none'}
@@ -378,6 +409,22 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                   readiness.company_context?.last_sync_at
                     ? `last sync ${formatDate(readiness.company_context.last_sync_at)}`
                     : readiness.company_context?.detail || 'no ERPNext context sync recorded'
+                }
+              />
+              <ReadinessPanel
+                title="ERPNext Drift"
+                value={
+                  readiness.company_context?.drift_detection?.latest_drift?.status
+                  || (readiness.company_context?.drift_detection?.enabled ? 'waiting' : 'disabled')
+                }
+                detail={
+                  readiness.company_context?.drift_detection?.latest_drift?.checked_at
+                    ? `last scan ${formatDate(
+                        readiness.company_context.drift_detection.latest_drift.checked_at,
+                      )}`
+                    : readiness.company_context?.drift_detection?.enabled
+                      ? `every ${readiness.company_context.drift_detection.interval_seconds}s`
+                      : 'scheduled scans are disabled'
                 }
               />
             </div>

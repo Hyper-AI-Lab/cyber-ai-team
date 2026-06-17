@@ -249,6 +249,7 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
       completed: 'Completed',
       deferred: 'Deferred',
       dismissed: 'Dismissed',
+      stale: 'Stale Snapshot',
     }
     return labels[action] || action
   }
@@ -683,6 +684,7 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
               <option value="open,proposed">Active</option>
               <option value="open">Open</option>
               <option value="proposed">Proposed</option>
+              <option value="stale">Stale</option>
               <option value="deferred">Deferred</option>
               <option value="resolved">Resolved</option>
               <option value="dismissed">Dismissed</option>

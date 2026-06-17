@@ -1,10 +1,13 @@
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from cyber_team.clock import utc_now
 from cyber_team.company.context_sync import CompanyContextSyncService
 from cyber_team.db import Base
+from cyber_team.db.models import RoleGap
 
 
 async def build_session_factory():
@@ -15,6 +18,9 @@ async def build_session_factory():
 
 
 class FakeERPNext:
+    def __init__(self):
+        self.customer_name = "Acme"
+
     async def validate(self):
         return {
             "status": "ready",
@@ -48,7 +54,7 @@ class FakeERPNext:
                     "abbr": "HAL",
                 }
             ],
-            "Customer": [{"name": "CUST-1", "customer_name": "Acme"}],
+            "Customer": [{"name": "CUST-1", "customer_name": self.customer_name}],
             "Supplier": [{"name": "SUP-1", "supplier_name": "Cloud Vendor"}],
             "Project": [{"name": "PROJ-1", "project_name": "Cyber-Team"}],
             "Task": [{"name": "TASK-1", "subject": "Ship context sync", "status": "Open"}],
@@ -165,5 +171,101 @@ async def test_dry_run_records_sync_run_without_snapshot_or_memory():
         assert latest["freshness"]["status"] == "missing"
         assert runs[0]["status"] == "dry_run"
         memory.remember.assert_not_awaited()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_drift_scan_noops_when_erpnext_hash_is_unchanged():
+    engine, session_factory = await build_session_factory()
+    memory = FakeMemory()
+    try:
+        service = CompanyContextSyncService(
+            erpnext=FakeERPNext(),
+            agent_manager=FakeAgentManager(),
+            memory_service=memory,
+            tool_registry=FakeToolRegistry(),
+            session_factory=session_factory,
+        )
+
+        first = await service.sync_from_erpnext(actor="owner@example.com", run_planner=False)
+        scan = await service.scan_for_erpnext_drift(
+            actor="scheduler",
+            apply_low_risk=False,
+            run_planner=False,
+        )
+        runs = await service.list_sync_runs()
+
+        assert scan["status"] == "unchanged"
+        assert scan["drift"]["detected"] is False
+        assert scan["drift"]["previous_snapshot_id"] == first["snapshot"]["id"]
+        assert scan["drift"]["stale_role_gaps"]["count"] == 0
+        assert runs[0]["result"]["drift"]["status"] == "unchanged"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_drift_scan_stales_previous_company_context_role_gaps_on_new_hash():
+    engine, session_factory = await build_session_factory()
+    erpnext = FakeERPNext()
+    memory = FakeMemory()
+    try:
+        service = CompanyContextSyncService(
+            erpnext=erpnext,
+            agent_manager=FakeAgentManager(),
+            memory_service=memory,
+            tool_registry=FakeToolRegistry(),
+            session_factory=session_factory,
+        )
+        first = await service.sync_from_erpnext(actor="owner@example.com", run_planner=False)
+        old_snapshot = first["snapshot"]
+        async with session_factory() as session:
+            session.add(
+                RoleGap(
+                    id="gap_old_sales",
+                    title="Review ERPNext-derived role: Sales",
+                    description="Old context role gap.",
+                    status="proposed",
+                    severity="medium",
+                    source_agent_id=None,
+                    source_type="company_context_snapshot",
+                    company_namespace=old_snapshot["company_namespace"],
+                    capability="sales",
+                    requested_tools=["erpnext_create_lead"],
+                    context={
+                        "snapshot_id": old_snapshot["id"],
+                        "source_hash": old_snapshot["source_hash"],
+                    },
+                    proposed_role={},
+                    resolution={},
+                    created_at=utc_now(),
+                    updated_at=utc_now(),
+                )
+            )
+            await session.commit()
+
+        erpnext.customer_name = "Globex"
+        scan = await service.scan_for_erpnext_drift(
+            actor="scheduler",
+            apply_low_risk=False,
+            run_planner=False,
+        )
+
+        async with session_factory() as session:
+            gap = (
+                await session.execute(
+                    select(RoleGap).where(RoleGap.id == "gap_old_sales")
+                )
+            ).scalar_one()
+
+        assert scan["status"] == "changed"
+        assert scan["drift"]["detected"] is True
+        assert scan["drift"]["previous_snapshot_id"] == old_snapshot["id"]
+        assert scan["drift"]["current_snapshot_id"] != old_snapshot["id"]
+        assert scan["drift"]["stale_role_gaps"]["role_gap_ids"] == ["gap_old_sales"]
+        assert gap.status == "stale"
+        assert gap.context["superseded_by_snapshot_id"] == scan["drift"]["current_snapshot_id"]
+        assert gap.resolution["reason"] == "superseded_by_company_context_drift"
     finally:
         await engine.dispose()

@@ -118,6 +118,12 @@ class Settings(BaseSettings):
     erpnext_integration_user: str = "cyberteam.integration@example.local"
     erpnext_api_key: str = ""
     erpnext_api_secret: str = ""
+    erpnext_drift_detection_enabled: bool = False
+    erpnext_drift_initial_delay_seconds: int = 300
+    erpnext_drift_interval_seconds: int = 3600
+    erpnext_drift_stale_after_hours: int = 24
+    erpnext_drift_apply_low_risk: bool = True
+    erpnext_drift_run_planner: bool = True
     required_communication_providers: str = "smtp,imap,erpnext"
     github_token: str = ""
     github_repository: str = ""

@@ -52,6 +52,12 @@ class CompanyContextSyncRequest(BaseModel):
     source: str = Field(default="erpnext", pattern="^erpnext$")
 
 
+class CompanyContextDriftScanRequest(BaseModel):
+    dry_run: bool = False
+    apply_low_risk: bool = True
+    run_planner: bool = True
+
+
 class RetentionCleanupRequest(BaseModel):
     dry_run: bool = True
 
@@ -244,6 +250,45 @@ async def list_company_context_sync_runs(
     return await service.list_sync_runs(limit=safe_limit)
 
 
+@router.post("/company-context/drift-scan")
+async def scan_company_context_drift(
+    data: CompanyContextDriftScanRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "scan",
+        "company_context_drift",
+        "erpnext",
+        context=data.model_dump(),
+    )
+    service = request.app.state.company_context_sync_service
+    return await service.scan_for_erpnext_drift(
+        actor=principal.email,
+        dry_run=data.dry_run,
+        apply_low_risk=data.apply_low_risk,
+        run_planner=data.run_planner,
+    )
+
+
+@router.get("/company-context/drift-status")
+async def get_company_context_drift_status(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "company_context_drift",
+        "erpnext",
+    )
+    service = request.app.state.company_context_sync_service
+    return await service.drift_status()
+
+
 @router.get("/readiness")
 async def operations_readiness(
     request: Request,
@@ -335,6 +380,7 @@ async def operations_readiness(
             latest_snapshot,
             latest_run=latest_runs[0] if latest_runs else None,
         )
+        company_context_status["drift_detection"] = await company_context_service.drift_status()
     company_context_blockers = []
     if company_context_status.get("blocking"):
         company_context_blockers.append(

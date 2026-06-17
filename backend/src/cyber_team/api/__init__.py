@@ -151,8 +151,13 @@ async def lifespan(app: FastAPI):
     app.state.supervisor_review_task = None
     app.state.memory_steward_task = None
     app.state.inbound_email_task = None
+    app.state.company_context_drift_task = None
     if settings.inbound_email_enabled:
         app.state.inbound_email_task = asyncio.create_task(_inbound_email_loop(app))
+    if settings.erpnext_drift_detection_enabled and settings.erpnext_configured:
+        app.state.company_context_drift_task = asyncio.create_task(
+            _company_context_drift_loop(app)
+        )
     if settings.autonomous_operations_enabled:
         app.state.autonomous_operations_task = asyncio.create_task(
             _autonomous_operations_loop(app)
@@ -174,6 +179,7 @@ async def lifespan(app: FastAPI):
             "supervisor_review_task",
             "memory_steward_task",
             "inbound_email_task",
+            "company_context_drift_task",
         ):
             task = getattr(app.state, task_name, None)
             if task:
@@ -242,6 +248,26 @@ async def _inbound_email_loop(app: FastAPI) -> None:
             raise
         except Exception:
             logger.exception("Inbound email polling loop failed")
+        await asyncio.sleep(interval)
+
+
+async def _company_context_drift_loop(app: FastAPI) -> None:
+    initial_delay = max(0, settings.erpnext_drift_initial_delay_seconds)
+    interval = max(300, settings.erpnext_drift_interval_seconds)
+    if initial_delay:
+        await asyncio.sleep(initial_delay)
+    while True:
+        try:
+            await app.state.company_context_sync_service.scan_for_erpnext_drift(
+                actor="company_context_drift_scheduler",
+                dry_run=False,
+                apply_low_risk=settings.erpnext_drift_apply_low_risk,
+                run_planner=settings.erpnext_drift_run_planner,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("ERPNext company-context drift loop failed")
         await asyncio.sleep(interval)
 
 

@@ -22,10 +22,10 @@ from cyber_team.clock import utc_now
 from cyber_team.company.operating_model import OperatingModelBuilder
 from cyber_team.config import settings
 from cyber_team.db import async_session
-from cyber_team.db.models import CompanyContextSnapshot, CompanyContextSyncRun
+from cyber_team.db.models import CompanyContextSnapshot, CompanyContextSyncRun, RoleGap
 
 SOURCE = "erpnext"
-SNAPSHOT_STALE_AFTER = timedelta(hours=24)
+SNAPSHOT_STALE_AFTER = timedelta(hours=settings.erpnext_drift_stale_after_hours)
 
 SENSITIVE_FIELD_RE = re.compile(
     r"(password|secret|token|api_key|api_secret|authorization|email|phone|mobile|fax)",
@@ -133,6 +133,92 @@ class CompanyContextSyncService:
     def set_planner(self, planner) -> None:
         self._planner = planner
 
+    async def scan_for_erpnext_drift(
+        self,
+        *,
+        actor: str = "company_context_drift_scheduler",
+        dry_run: bool = False,
+        apply_low_risk: bool = True,
+        run_planner: bool = True,
+    ) -> dict[str, Any]:
+        """Check ERPNext for changed company context and maintain stale role gaps.
+
+        A drift scan intentionally reuses the existing sync pipeline so the
+        source hash, redaction, idempotency, memory seeding, and low-risk role
+        policy all stay centralized. The extra work here is comparison against
+        the previous active snapshot and marking superseded role gaps stale.
+        """
+        previous_snapshot = await self.latest_snapshot()
+        sync_result = await self.sync_from_erpnext(
+            actor=actor,
+            dry_run=dry_run,
+            apply_low_risk=apply_low_risk and not dry_run,
+            run_planner=run_planner and not dry_run,
+        )
+        candidate_snapshot = sync_result.get("snapshot") or {}
+        candidate_hash = candidate_snapshot.get("source_hash") or sync_result.get("source_hash")
+        previous_hash = (previous_snapshot or {}).get("source_hash")
+        initial_baseline = previous_snapshot is None and bool(candidate_hash)
+        drift_detected = bool(candidate_hash and candidate_hash != previous_hash)
+        stale_result = {
+            "count": 0,
+            "role_gap_ids": [],
+        }
+
+        if (
+            drift_detected
+            and not initial_baseline
+            and not dry_run
+            and sync_result.get("status") == "synced"
+            and previous_snapshot
+        ):
+            stale_result = await self.mark_superseded_role_gaps_stale(
+                previous_snapshot_id=previous_snapshot["id"],
+                previous_source_hash=previous_snapshot["source_hash"],
+                new_snapshot_id=candidate_snapshot.get("id"),
+                new_source_hash=candidate_hash,
+                actor=actor,
+            )
+
+        drift_status = (
+            "dry_run"
+            if dry_run
+            else "initial_baseline"
+            if initial_baseline
+            else "changed"
+            if drift_detected
+            else "unchanged"
+        )
+        drift = {
+            "status": drift_status,
+            "detected": drift_detected,
+            "initial_baseline": initial_baseline,
+            "previous_snapshot_id": (previous_snapshot or {}).get("id"),
+            "previous_source_hash": previous_hash,
+            "current_snapshot_id": candidate_snapshot.get("id"),
+            "current_source_hash": candidate_hash,
+            "sync_run_id": sync_result.get("sync_run_id"),
+            "sync_status": sync_result.get("status"),
+            "stale_role_gaps": stale_result,
+            "checked_at": utc_now().isoformat(),
+            "dry_run": dry_run,
+            "apply_low_risk": apply_low_risk and not dry_run,
+            "run_planner": run_planner and not dry_run,
+        }
+        if sync_result.get("sync_run_id"):
+            await self._annotate_sync_run_result(sync_result["sync_run_id"], {"drift": drift})
+        await self._record_drift_evidence(
+            actor=actor,
+            outcome="success" if sync_result.get("status") != "failed" else "failed",
+            drift=drift,
+            errors=sync_result.get("errors", []),
+        )
+        return {
+            "status": drift_status,
+            "drift": drift,
+            "sync": sync_result,
+        }
+
     async def sync_from_erpnext(
         self,
         *,
@@ -196,6 +282,7 @@ class CompanyContextSyncService:
                     result=result,
                     errors=fetched["errors"],
                 )
+                result["sync_run_id"] = run_id
                 return result
 
             existing = await self._get_snapshot_by_hash(source_hash)
@@ -231,6 +318,7 @@ class CompanyContextSyncService:
                     result=result,
                     errors=fetched["errors"],
                 )
+                result["sync_run_id"] = run_id
                 return result
 
             snapshot = await self._create_snapshot(candidate, actor=actor)
@@ -295,6 +383,7 @@ class CompanyContextSyncService:
                 result=result,
                 errors=fetched["errors"],
             )
+            result["sync_run_id"] = run_id
             return result
         except Exception as exc:
             error = {
@@ -318,6 +407,7 @@ class CompanyContextSyncService:
                 counts={},
                 errors=[error],
             )
+            result["sync_run_id"] = run_id
             return result
 
     async def get_latest_context(self) -> dict[str, Any]:
@@ -377,6 +467,40 @@ class CompanyContextSyncService:
             )
             return [self._sync_run_to_dict(run) for run in result.scalars().all()]
 
+    async def drift_status(self) -> dict[str, Any]:
+        snapshot = await self.latest_snapshot()
+        runs = await self.list_sync_runs(limit=20)
+        latest_drift = None
+        for run in runs:
+            drift = (run.get("result") or {}).get("drift")
+            if drift:
+                latest_drift = {
+                    **drift,
+                    "run_id": run["id"],
+                    "run_status": run["status"],
+                    "completed_at": run.get("completed_at"),
+                }
+                break
+        stale_summary = None
+        if self._agent_manager:
+            stale_summary = await self._agent_manager.summarize_role_backlog(
+                statuses=["stale"],
+                source_type="company_context_snapshot",
+                limit=200,
+            )
+        return {
+            "enabled": settings.erpnext_drift_detection_enabled,
+            "interval_seconds": settings.erpnext_drift_interval_seconds,
+            "initial_delay_seconds": settings.erpnext_drift_initial_delay_seconds,
+            "stale_after_hours": settings.erpnext_drift_stale_after_hours,
+            "apply_low_risk": settings.erpnext_drift_apply_low_risk,
+            "run_planner": settings.erpnext_drift_run_planner,
+            "latest_drift": latest_drift,
+            "latest_snapshot_id": (snapshot or {}).get("id"),
+            "latest_source_hash": (snapshot or {}).get("source_hash"),
+            "stale_role_gap_count": (stale_summary or {}).get("counts", {}).get("total", 0),
+        }
+
     def readiness_from_snapshot(
         self,
         snapshot: dict[str, Any] | None,
@@ -411,6 +535,7 @@ class CompanyContextSyncService:
             "source_hash": snapshot["source_hash"],
             "company_namespace": snapshot["company_namespace"],
             "latest_run_status": (latest_run or {}).get("status"),
+            "latest_drift": ((latest_run or {}).get("result") or {}).get("drift"),
             "detail": (
                 "ERPNext company context is fresh."
                 if not stale
@@ -433,6 +558,68 @@ class CompanyContextSyncService:
                 (snapshot["operating_model"] or {}).get("capability_gaps") or []
             ),
             "errors": snapshot.get("errors", []),
+        }
+
+    async def mark_superseded_role_gaps_stale(
+        self,
+        *,
+        previous_snapshot_id: str,
+        previous_source_hash: str,
+        new_snapshot_id: str | None,
+        new_source_hash: str | None,
+        actor: str,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        stale_ids: list[str] = []
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(RoleGap).where(
+                    RoleGap.source_type == "company_context_snapshot",
+                    RoleGap.status.in_(("open", "proposed")),
+                )
+            )
+            for gap in result.scalars().all():
+                context = gap.context or {}
+                if (
+                    context.get("snapshot_id") != previous_snapshot_id
+                    and context.get("source_hash") != previous_source_hash
+                ):
+                    continue
+                gap.status = "stale"
+                gap.context = {
+                    **context,
+                    "stale_at": now.isoformat(),
+                    "stale_reason": "ERPNext company-context snapshot was superseded.",
+                    "superseded_by_snapshot_id": new_snapshot_id,
+                    "superseded_by_source_hash": new_source_hash,
+                }
+                gap.resolution = {
+                    **(gap.resolution or {}),
+                    "resolver": actor,
+                    "resolved_at": now.isoformat(),
+                    "reason": "superseded_by_company_context_drift",
+                    "superseded_by_snapshot_id": new_snapshot_id,
+                    "superseded_by_source_hash": new_source_hash,
+                }
+                gap.resolved_at = now
+                gap.updated_at = now
+                stale_ids.append(gap.id)
+            await session.commit()
+        if stale_ids:
+            await self._record(
+                "company_context.role_gaps_staled",
+                actor=actor,
+                resource_id=previous_snapshot_id,
+                metadata={
+                    "role_gap_ids": stale_ids,
+                    "previous_source_hash": previous_source_hash,
+                    "new_snapshot_id": new_snapshot_id,
+                    "new_source_hash": new_source_hash,
+                },
+            )
+        return {
+            "count": len(stale_ids),
+            "role_gap_ids": stale_ids,
         }
 
     async def seed_snapshot_memory(
@@ -911,6 +1098,25 @@ class CompanyContextSyncService:
             run.completed_at = utc_now()
             await session.commit()
 
+    async def _annotate_sync_run_result(
+        self,
+        run_id: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        async with self._session_factory() as session:
+            run = (
+                await session.execute(
+                    select(CompanyContextSyncRun).where(CompanyContextSyncRun.id == run_id)
+                )
+            ).scalar_one_or_none()
+            if not run:
+                return
+            run.result = {
+                **(run.result or {}),
+                **metadata,
+            }
+            await session.commit()
+
     async def _create_snapshot(self, data: dict[str, Any], *, actor: str) -> dict[str, Any]:
         snapshot_id = f"ctx_{uuid.uuid4().hex[:12]}"
         now = utc_now()
@@ -1032,6 +1238,37 @@ class CompanyContextSyncService:
                 "company_namespace": (snapshot or {}).get("company_namespace"),
                 "counts": counts,
                 "errors": errors or (snapshot or {}).get("errors", []),
+            },
+        )
+
+    async def _record_drift_evidence(
+        self,
+        *,
+        actor: str,
+        outcome: str,
+        drift: dict[str, Any],
+        errors: list[dict[str, Any]] | None = None,
+    ) -> None:
+        if not self._audit:
+            return
+        await self._audit.record(
+            event_type="company_context.drift_scan",
+            actor=actor,
+            actor_type="system",
+            resource_type="company_context_snapshot",
+            resource_id=drift.get("current_snapshot_id") or drift.get("previous_snapshot_id"),
+            action="drift_scan",
+            outcome=outcome,
+            metadata=drift,
+        )
+        await self._audit.record_control_evidence(
+            control_id="erpnext.company_context_drift_detection",
+            control_area="soc2_availability",
+            actor=actor,
+            outcome=outcome,
+            evidence={
+                **drift,
+                "errors": errors or [],
             },
         )
 

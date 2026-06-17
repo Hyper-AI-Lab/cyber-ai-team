@@ -575,6 +575,22 @@ class ApiClient {
     return this.request(`/api/operations/company-context/sync-runs?limit=${limit}`);
   }
 
+  async scanCompanyContextDrift(options: Record<string, any> = {}) {
+    return this.request('/api/operations/company-context/drift-scan', {
+      method: 'POST',
+      body: JSON.stringify({
+        dry_run: false,
+        apply_low_risk: true,
+        run_planner: true,
+        ...options,
+      }),
+    });
+  }
+
+  async getCompanyContextDriftStatus() {
+    return this.request('/api/operations/company-context/drift-status');
+  }
+
   async getDecisionTimeline(limit: number = 50) {
     return this.request(`/api/operations/decision-timeline?limit=${limit}`);
   }

@@ -137,6 +137,8 @@ describe('ApiClient', () => {
       .mockResolvedValueOnce(jsonResponse({ status: 'synced', snapshot: { id: 'ctx-1' } }))
       .mockResolvedValueOnce(jsonResponse({ snapshot: { id: 'ctx-1' } }))
       .mockResolvedValueOnce(jsonResponse([{ id: 'run-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ status: 'unchanged', drift: { detected: false } }))
+      .mockResolvedValueOnce(jsonResponse({ enabled: true }))
     vi.stubGlobal('fetch', fetchMock)
     const client = new ApiClient('http://api.test')
 
@@ -144,6 +146,8 @@ describe('ApiClient', () => {
     await client.syncCompanyContext({ dry_run: true, apply_low_risk: false })
     await client.getCompanyContext()
     await client.listCompanyContextSyncRuns(5)
+    await client.scanCompanyContextDrift({ dry_run: true })
+    await client.getCompanyContextDriftStatus()
 
     expect(fetchMock.mock.calls[0][0]).toBe(
       'http://api.test/api/operations/company-context/sync',
@@ -160,6 +164,18 @@ describe('ApiClient', () => {
     )
     expect(fetchMock.mock.calls[2][0]).toBe(
       'http://api.test/api/operations/company-context/sync-runs?limit=5',
+    )
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      'http://api.test/api/operations/company-context/drift-scan',
+    )
+    expect(fetchMock.mock.calls[3][1]?.method).toBe('POST')
+    expect(JSON.parse(fetchMock.mock.calls[3][1]?.body as string)).toEqual({
+      dry_run: true,
+      apply_low_risk: true,
+      run_planner: true,
+    })
+    expect(fetchMock.mock.calls[4][0]).toBe(
+      'http://api.test/api/operations/company-context/drift-status',
     )
   })
 

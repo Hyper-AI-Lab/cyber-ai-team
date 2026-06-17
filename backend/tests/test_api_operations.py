@@ -229,6 +229,13 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
                 "source_hash": "hash-1",
             }
 
+        async def drift_status(self):
+            return {
+                "enabled": True,
+                "latest_drift": {"status": "unchanged"},
+                "stale_role_gap_count": 0,
+            }
+
     app.state.company_context_sync_service = FakeCompanyContext()
     app.state.audit_service = AsyncMock()
     app.state.audit_service.list_events.return_value = []
@@ -314,6 +321,14 @@ def test_company_context_sync_routes(monkeypatch):
         "status": "synced",
         "snapshot": {"id": "ctx_1"},
     }
+    app.state.company_context_sync_service.scan_for_erpnext_drift.return_value = {
+        "status": "unchanged",
+        "drift": {"detected": False},
+    }
+    app.state.company_context_sync_service.drift_status.return_value = {
+        "enabled": True,
+        "latest_drift": {"status": "unchanged"},
+    }
     app.state.company_context_sync_service.get_latest_context.return_value = {
         "snapshot": {"id": "ctx_1"},
         "freshness": {"status": "ready"},
@@ -346,6 +361,15 @@ def test_company_context_sync_routes(monkeypatch):
     )
     latest_response = client.get("/api/operations/company-context")
     runs_response = client.get("/api/operations/company-context/sync-runs?limit=5")
+    drift_response = client.post(
+        "/api/operations/company-context/drift-scan",
+        json={
+            "dry_run": False,
+            "apply_low_risk": True,
+            "run_planner": True,
+        },
+    )
+    drift_status_response = client.get("/api/operations/company-context/drift-status")
 
     assert sync_response.status_code == 200
     assert sync_response.json()["snapshot"]["id"] == "ctx_1"
@@ -353,7 +377,17 @@ def test_company_context_sync_routes(monkeypatch):
     assert latest_response.json()["freshness"]["status"] == "ready"
     assert runs_response.status_code == 200
     assert runs_response.json()[0]["status"] == "synced"
+    assert drift_response.status_code == 200
+    assert drift_response.json()["status"] == "unchanged"
+    assert drift_status_response.status_code == 200
+    assert drift_status_response.json()["latest_drift"]["status"] == "unchanged"
     app.state.company_context_sync_service.sync_from_erpnext.assert_awaited_once_with(
+        actor="owner@example.com",
+        dry_run=False,
+        apply_low_risk=True,
+        run_planner=True,
+    )
+    app.state.company_context_sync_service.scan_for_erpnext_drift.assert_awaited_once_with(
         actor="owner@example.com",
         dry_run=False,
         apply_low_risk=True,

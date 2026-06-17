@@ -768,3 +768,51 @@
   - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/27530018287`
 - Next step:
   - Commit and push this progress-log correction.
+
+## 2026-06-17T04:53:37Z - STEP-028 - ERPNext drift detection and role backlog maintenance v1
+
+- Files/services changed:
+  - `backend/src/cyber_team/company/context_sync.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/src/cyber_team/api/__init__.py`
+  - `backend/src/cyber_team/agents/manager.py`
+  - `backend/src/cyber_team/config.py`
+  - `.env.example`
+  - `deploy/environments/staging.env.example`
+  - `deploy/environments/production.env.example`
+  - `deploy/environments/staging.env` (ignored local staging env; non-secret drift scheduler settings only)
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/OperationsView.tsx`
+  - `frontend/src/components/AgentsView.tsx`
+  - `backend/tests/test_company_context_sync.py`
+  - `backend/tests/test_api_operations.py`
+- Commands run:
+  - `python3 -m py_compile backend/src/cyber_team/company/context_sync.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/api/__init__.py backend/src/cyber_team/agents/manager.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_company_context_sync.py backend/tests/test_api_operations.py -q`
+  - `npx -y node@20 node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `npx tsc --noEmit`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/company/context_sync.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/api/__init__.py backend/src/cyber_team/agents/manager.py backend/tests/test_company_context_sync.py backend/tests/test_api_operations.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `npm run build`
+  - `git diff --check`
+  - `python3 -m compileall -q backend/src backend/tests`
+  - `python3 scripts/secret-scan.py`
+- Result:
+  - Added ERPNext drift scans that reuse the canonical company-context sync pipeline, compare source hashes, record drift evidence, and annotate sync-run results.
+  - Added scheduled drift loop support in the FastAPI lifespan, gated by `ERPNEXT_DRIFT_DETECTION_ENABLED` and ERPNext credentials.
+  - Added manual owner APIs: `POST /api/operations/company-context/drift-scan` and `GET /api/operations/company-context/drift-status`.
+  - Added readiness drift status under `company_context.drift_detection`.
+  - Added stale role-gap maintenance: active company-context role gaps from a superseded snapshot become `stale` with trace metadata to the new snapshot.
+  - Added Operations UI manual drift scan control and ERPNext Drift readiness card.
+  - Added Agents UI support for stale role recommendations.
+  - Focused backend drift/route tests passed: `10 passed`.
+  - Frontend API client tests passed: `16 passed`.
+  - Full backend tests passed: `144 passed`.
+  - Ruff, Python compile, TypeScript, Next production build, diff hygiene, and secret scan passed.
+- Evidence path/link:
+  - `backend/tests/test_company_context_sync.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/lib/api.test.ts`
+- Next step:
+  - Commit, deploy to staging, run live drift scan and compose smoke, push to GitHub, and watch CI.

@@ -867,6 +867,7 @@ Propose a new role to fill this gap. Return JSON with:
             "resolved": 0,
             "dismissed": 0,
             "deferred": 0,
+            "stale": 0,
             "by_status": {},
             "by_function": {},
             "by_risk": {},
@@ -1796,6 +1797,8 @@ Propose a new role to fill this gap. Return JSON with:
             return "deferred"
         if status == "dismissed":
             return "dismissed"
+        if status == "stale":
+            return "stale"
         if not tool_readiness["all_ready"]:
             return "configure_tools"
         if not gap.get("proposed_role"):
