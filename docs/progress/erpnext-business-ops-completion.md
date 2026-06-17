@@ -916,3 +916,28 @@
   - `frontend/src/lib/api.test.ts`
 - Next step:
   - Commit, deploy this role activation/cadence slice to staging, smoke test, verify the new live endpoints, push to GitHub, and watch CI.
+
+## 2026-06-17T07:02:20Z - STEP-032 - Role activation cadence staging deploy and route verification
+
+- Files/services changed:
+  - Rebuilt staging Docker images for `core` and `ui` from commit `9acb5a3ed95e92883d90d5423a03dbb5e92e5453`.
+  - Restarted staging `core`, `worker`, and `ui`.
+  - No tracked application files changed during deployment; this entry records deployment evidence after the feature commit.
+- Commands run:
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env build core ui`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env up -d core worker ui`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env ./scripts/compose-smoke.sh`
+  - `curl -fsS https://cyberteam.hyperailab.com/health`
+  - Owner-authenticated `GET /api/roles/operating-cadence`
+  - Owner-authenticated harmless route probe `POST /api/roles/role-gaps/batch` against missing gap id `gap_live_route_probe_missing`
+- Result:
+  - Docker build completed for `cyber-team-core:latest` and `cyber-team-ui:latest`; frontend Docker `npm ci` reported `found 0 vulnerabilities`.
+  - Staging `core` became healthy and `ui` started successfully.
+  - Compose smoke passed: health, readiness, UI, owner login, dashboard KPIs, integration status, WebSocket ticket, tool readiness, and approval queue behavior.
+  - `/health` reports version `9acb5a3` and build SHA `9acb5a3ed95e92883d90d5423a03dbb5e92e5453`.
+  - Live operating cadence endpoint returned 1 active agent cadence, 16 active role gaps, and 16 stale role gaps.
+  - Live batch route probe returned `requested_count=1`, `succeeded_count=0`, `failed_count=1`, with expected error `Role gap gap_live_route_probe_missing not found`; no real backlog item was mutated.
+- Evidence path/link:
+  - `https://cyberteam.hyperailab.com/health`
+- Next step:
+  - Commit this deployment evidence entry, push to GitHub, and watch CI for the pushed head.
