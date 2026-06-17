@@ -842,3 +842,31 @@
   - `dist/company-context/drift-scan-20260617T050119Z.json`
 - Next step:
   - Commit this progress-log entry, push to GitHub, and watch CI for the pushed head.
+
+## 2026-06-17T05:10:22Z - STEP-030 - Frontend dependency audit remediation
+
+- Files/services changed:
+  - `frontend/package-lock.json`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `gh run watch 27666973659 --repo Hyper-AI-Lab/cyber-team --exit-status`
+  - `gh run view 27666973659 --repo Hyper-AI-Lab/cyber-team --job 81822893133 --log`
+  - `npm audit fix --package-lock-only`
+  - `npm ci`
+  - `npm install --no-save @rolldown/binding-linux-x64-gnu@1.0.3`
+  - `npm audit --audit-level=moderate`
+  - `npx -y node@20 node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `npx -y node@20 node_modules/next/dist/bin/next build`
+  - `npx -y node@20 node_modules/typescript/bin/tsc --noEmit`
+- Result:
+  - GitHub CI run `27666973659` failed only in the frontend dependency audit; backend and compose/secrets/diff hygiene jobs passed.
+  - The failing audit identified vulnerable transitive frontend packages: `form-data` `4.0.0 - 4.0.5` and `js-yaml` `<=4.1.1`.
+  - Updated the frontend lockfile to resolve `form-data` to `4.0.6`, `js-yaml` to `4.2.0`, and `hasown` to `2.0.4`.
+  - Local frontend audit now reports `found 0 vulnerabilities`.
+  - Frontend API tests passed: `16 passed`.
+  - Next.js production build and TypeScript typecheck passed under Node 20 execution.
+  - Local npm in this container did not install Rolldown's optional native binding during `npm ci`; installed the already-lockfile-listed binding locally with `--no-save` for verification only.
+- Evidence path/link:
+  - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/27666973659`
+- Next step:
+  - Commit and push the audit remediation, then watch the new GitHub CI run to completion.
