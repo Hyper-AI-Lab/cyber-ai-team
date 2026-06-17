@@ -816,3 +816,29 @@
   - `frontend/src/lib/api.test.ts`
 - Next step:
   - Commit, deploy to staging, run live drift scan and compose smoke, push to GitHub, and watch CI.
+
+## 2026-06-17T05:01:47Z - STEP-029 - ERPNext drift detection staging deploy and live scan
+
+- Files/services changed:
+  - Rebuilt staging Docker images for `core` and `ui` from commit `ceeae0a485e14b3fd9c9dd987ae5e4d4b0f9bd03`.
+  - Restarted staging `core`, `worker`, and `ui`.
+  - No tracked application files changed during deployment; live drift-scan evidence was written under ignored `dist/company-context/`.
+- Commands run:
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env build core ui`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env up -d core worker ui`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env ./scripts/compose-smoke.sh`
+  - `curl -fsS https://cyberteam.hyperailab.com/health`
+  - Owner-authenticated `POST /api/operations/company-context/drift-scan` with `dry_run=false`, `apply_low_risk=true`, and `run_planner=true`.
+  - Owner-authenticated `GET /api/operations/company-context/drift-status`.
+  - Owner-authenticated `GET /api/roles/role-gaps/summary?status=stale&source_type=company_context_snapshot&limit=50`.
+- Result:
+  - Docker build completed for `cyber-team-core:latest` and `cyber-team-ui:latest`.
+  - Staging `core` became healthy and `ui` started successfully.
+  - Compose smoke passed: health, readiness, UI, owner login, dashboard KPIs, integration status, WebSocket ticket, tool readiness, and approval queue behavior.
+  - `/health` reports version `ceeae0a` and build SHA `ceeae0a485e14b3fd9c9dd987ae5e4d4b0f9bd03`.
+  - Live ERPNext drift scan detected a changed company-context source hash, created snapshot `ctx_eba32890c5da`, recorded sync run `ctxsync_e3019e02cb46`, and marked 16 role gaps from the superseded snapshot as `stale`.
+  - Drift status reports the scheduler enabled with 300-second initial delay, 3600-second interval, 24-hour stale threshold, low-risk application enabled, and planner execution enabled.
+- Evidence path/link:
+  - `dist/company-context/drift-scan-20260617T050119Z.json`
+- Next step:
+  - Commit this progress-log entry, push to GitHub, and watch CI for the pushed head.
