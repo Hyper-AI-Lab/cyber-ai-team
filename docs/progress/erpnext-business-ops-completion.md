@@ -1041,6 +1041,39 @@
 - Next step:
   - Run the full quality gate, deploy to staging, verify the live owner-attention endpoint/readiness/UI bundle, commit, push, and watch GitHub CI.
 
+## 2026-06-18T13:41:47Z - STEP-045 - Owner attention queue staging deploy and verification
+
+- Files/services changed:
+  - Rebuilt staging Docker images for `core` and `ui` from commit `2d721b13486bb9bfbade3ac3cbb5b18b84433cea`.
+  - Restarted staging `core`, `worker`, and `ui`.
+  - Live owner-attention verification evidence was written under ignored `dist/owner-attention/`.
+  - This tracked entry records deployment evidence after the feature commit.
+- Commands run:
+  - `SKIP_BACKEND_INSTALL=1 SKIP_FRONTEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 scripts/quality-gate.sh`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env build core ui`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env up -d core worker ui`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env ./scripts/compose-smoke.sh`
+  - Owner-authenticated `GET /api/operations/readiness`
+  - Owner-authenticated `GET /api/operations/owner-attention?status=active&limit=25`
+- Result:
+  - Full quality gate passed: backend Ruff, full backend tests, compile, Alembic offline SQL, backend dependency audit, frontend production build, frontend typecheck, frontend tests, frontend audit, compose config, script/dashboard syntax, secret scan, and diff hygiene.
+  - Full backend tests passed: `156 passed, 2 warnings`.
+  - Frontend API tests passed under Node 20: `18 passed`.
+  - Docker build completed for `cyber-team-core:latest` and `cyber-team-ui:latest`; frontend Docker `npm ci` reported `found 0 vulnerabilities`.
+  - Staging `core` became healthy and `ui` started successfully.
+  - Compose smoke passed: health, readiness, UI, owner login, dashboard KPIs, integration status, WebSocket ticket, tool readiness, and approval queue behavior.
+  - `/health` reports version `2d721b1` and build SHA `2d721b13486bb9bfbade3ac3cbb5b18b84433cea`.
+  - Live readiness reports `owner_attention.status=ready`.
+  - Live owner-attention endpoint returned the expected `counts` and `items` shape; the active queue is currently empty because no cadence is due in staging at verification time.
+- Evidence path/link:
+  - `https://cyberteam.hyperailab.com/health`
+  - `dist/owner-attention/health-20260618T134131Z.json`
+  - `dist/owner-attention/readiness-20260618T134131Z.json`
+  - `dist/owner-attention/owner-attention-20260618T134131Z.json`
+  - `dist/owner-attention/summary-20260618T134131Z.json`
+- Next step:
+  - Commit this deployment evidence entry, push both owner-attention commits to GitHub, and watch CI for the pushed head.
+
 ## 2026-06-18T08:30:41Z - STEP-040 - Operating cadence follow-up owner resolution v1
 
 - Files/services changed:
