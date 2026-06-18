@@ -972,6 +972,42 @@
 - Next step:
   - Run the full local quality gate, deploy to staging, smoke the live resolution endpoint against the current completed follow-up, commit, push, and watch GitHub CI.
 
+## 2026-06-18T08:41:53Z - STEP-041 - Operating cadence follow-up owner resolution staging deploy and live verification
+
+- Files/services changed:
+  - Rebuilt staging Docker images for `core` and `ui` from commit `1c02f45765c6ec52880b7bba08c9c73985d17ebc`.
+  - Restarted staging `core`, `worker`, and `ui`.
+  - Live verification evidence was written under ignored `dist/operating-cadence-followup-resolution/`.
+  - Live staging follow-up `plan_01c34c218814` was marked `reviewed` through the new owner-resolution endpoint.
+- Commands run:
+  - `SKIP_BACKEND_INSTALL=1 SKIP_FRONTEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 scripts/quality-gate.sh`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env build core ui`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env up -d core worker ui`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env ./scripts/compose-smoke.sh`
+  - Owner-authenticated live checks for:
+    - `GET /health`
+    - `GET /api/operations/operating-cadence/follow-ups?status=all&limit=50`
+    - `POST /api/operations/operating-cadence/follow-ups/{plan_id}/resolve`
+    - `GET /api/operations/readiness`
+- Result:
+  - Full local quality gate passed: backend Ruff, full backend tests, compile, Alembic offline SQL, dependency audit, frontend production build, frontend typecheck, frontend tests, frontend audit, compose config, script/dashboard syntax, secret scan, and diff hygiene.
+  - Full backend tests passed: `153 passed, 2 warnings`.
+  - Docker build completed for `cyber-team-core:latest` and `cyber-team-ui:latest`; frontend Docker `npm ci` reported `found 0 vulnerabilities`.
+  - Staging `core` became healthy and `ui` started successfully.
+  - Compose smoke passed.
+  - `/health` reports version `1c02f45` and build SHA `1c02f45765c6ec52880b7bba08c9c73985d17ebc`.
+  - Live owner-resolution endpoint marked `plan_01c34c218814` as `reviewed` with an owner note.
+  - Live follow-up queue now reports `by_resolution.reviewed=1`, and readiness reports `operating_follow_ups.status=ready`, `active=0`, `completed=1`.
+- Evidence path/link:
+  - `https://cyberteam.hyperailab.com/health`
+  - `dist/operating-cadence-followup-resolution/health-20260618T084142Z.json`
+  - `dist/operating-cadence-followup-resolution/followups-before-20260618T084142Z.json`
+  - `dist/operating-cadence-followup-resolution/followup-resolution-20260618T084142Z.json`
+  - `dist/operating-cadence-followup-resolution/followups-after-20260618T084142Z.json`
+  - `dist/operating-cadence-followup-resolution/readiness-20260618T084142Z.json`
+- Next step:
+  - Commit this deployment evidence entry, push to GitHub, and watch CI for the pushed head.
+
 ## 2026-06-18T03:24:29Z - STEP-037 - Operating cadence follow-up queue v1
 
 - Files/services changed:
