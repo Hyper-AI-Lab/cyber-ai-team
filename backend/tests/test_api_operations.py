@@ -247,6 +247,24 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
         {"counts": {"total": 2, "by_resolution": {"unresolved": 2}}, "items": []},
         {"counts": {"total": 3, "by_resolution": {"reviewed": 2, "dismissed": 1}}, "items": []},
     ]
+    app.state.operating_cadence_scheduler_status = {
+        "enabled": True,
+        "status": "completed",
+        "detail": "Scheduled operating cadence scan completed.",
+        "actor": "operating_cadence_scheduler",
+        "auto_execute": False,
+        "interval_seconds": 900,
+        "limit": 200,
+        "last_started_at": "2026-06-18T00:00:00+00:00",
+        "last_completed_at": "2026-06-18T00:00:01+00:00",
+        "last_result": {
+            "cadences_reviewed": 1,
+            "cadences_due": 0,
+            "plans_created": 0,
+            "plans_existing": 0,
+        },
+        "last_error": None,
+    }
     app.state.audit_service = AsyncMock()
     app.state.audit_service.list_events.return_value = []
     app.state.memory_service = AsyncMock()
@@ -290,6 +308,8 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
         "completed": 3,
         "total_visible": 5,
     }
+    assert body["operating_cadence_scheduler"]["status"] == "completed"
+    assert body["operating_cadence_scheduler"]["last_result"]["cadences_reviewed"] == 1
 
 
 def test_plan_scan_forces_manual_only_autonomy(monkeypatch):

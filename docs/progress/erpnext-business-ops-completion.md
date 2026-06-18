@@ -942,6 +942,43 @@
 - Next step:
   - Commit this deployment evidence entry, push to GitHub, and watch CI for the pushed head.
 
+## 2026-06-18T10:33:14Z - STEP-042 - Scheduled operating cadence runner v1
+
+- Files/services changed:
+  - `backend/src/cyber_team/config.py`
+  - `backend/src/cyber_team/api/__init__.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/tests/test_operating_cadence_scheduler.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/components/OperationsView.tsx`
+  - `deploy/environments/staging.env.example`
+  - `deploy/environments/production.env.example`
+  - Local ignored staging environment received non-secret scheduler knobs for live verification.
+- Commands run:
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_operating_cadence_scheduler.py tests/test_api_operations.py -q`
+  - `../.venv-quality/bin/ruff check src/cyber_team/api/__init__.py src/cyber_team/api/routes/operations.py src/cyber_team/config.py tests/test_operating_cadence_scheduler.py tests/test_api_operations.py`
+  - `npm run typecheck` (not available in this frontend package)
+  - `npm test -- --runInBand` (invalid Vitest flag; rerun with valid command below)
+  - `npm test` (failed under local Node 18 because the current Vitest/Rolldown toolchain requires newer `node:util.styleText`)
+  - `npx -y node@20 ./node_modules/vitest/vitest.mjs run`
+  - `npm run build`
+- Result:
+  - Added a FastAPI lifespan-managed scheduled operating cadence runner that calls the existing idempotent `scan_operating_cadences()` planner path.
+  - Added scheduler config for enablement, initial delay, interval, scan limit, and auto-execution preference.
+  - Preserved production/staging manual-only safety: scheduler auto-execution is forced off whenever `AUTONOMY_SIDE_EFFECT_MODE=manual_only`.
+  - Added audit evidence for successful, degraded, and failed scheduled scans through `operating_cadence.scheduler_run`.
+  - Extended `/api/operations/readiness` and the Operations readiness board with scheduler status, last scan time, interval, and last compact scan result.
+  - Focused backend tests passed: `9 passed, 2 warnings`.
+  - Touched-file Ruff passed.
+  - Frontend Vitest passed under Node 20: `17 passed`.
+  - Frontend production build passed.
+- Evidence path/link:
+  - `backend/tests/test_operating_cadence_scheduler.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/components/OperationsView.tsx`
+- Next step:
+  - Run the full quality gate, deploy scheduler changes to staging, wait for the first automatic scan, verify readiness reports the completed scheduler run, commit, push, and watch GitHub CI.
+
 ## 2026-06-18T08:30:41Z - STEP-040 - Operating cadence follow-up owner resolution v1
 
 - Files/services changed:

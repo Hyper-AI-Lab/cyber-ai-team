@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     autonomous_planner_enabled: bool = True
     autonomous_planner_auto_execute_safe_tasks: bool = True
     autonomous_planner_scan_limit: int = 50
+    operating_cadence_scheduler_enabled: bool = True
+    operating_cadence_scheduler_initial_delay_seconds: int = 120
+    operating_cadence_scheduler_interval_seconds: int = 900
+    operating_cadence_scheduler_limit: int = 200
+    operating_cadence_scheduler_auto_execute: bool = False
     autonomy_side_effect_mode: str = "approval_required"
     require_live_tool_executors: bool = False
     supervisor_review_enabled: bool = True

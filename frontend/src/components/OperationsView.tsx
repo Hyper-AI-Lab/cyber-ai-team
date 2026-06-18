@@ -542,6 +542,19 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                 }
               />
               <ReadinessPanel
+                title="Cadence Scheduler"
+                value={readiness.operating_cadence_scheduler?.status || 'unavailable'}
+                detail={
+                  readiness.operating_cadence_scheduler?.last_completed_at
+                    ? `last scan ${formatDate(
+                        readiness.operating_cadence_scheduler.last_completed_at,
+                      )}`
+                    : readiness.operating_cadence_scheduler?.enabled
+                      ? `every ${readiness.operating_cadence_scheduler.interval_seconds}s`
+                      : readiness.operating_cadence_scheduler?.detail || 'scheduled scans are disabled'
+                }
+              />
+              <ReadinessPanel
                 title="Cadence Follow-Ups"
                 value={`${readiness.operating_follow_ups?.counts?.active || 0} active`}
                 detail={

@@ -34,6 +34,7 @@ from cyber_team.api.routes import (
 from cyber_team.api.security import get_current_principal
 from cyber_team.audit.service import AuditService
 from cyber_team.authorization.service import AuthorizationService
+from cyber_team.clock import utc_now
 from cyber_team.comms.email_triage import EmailTriageService
 from cyber_team.comms.gateway import CommsGateway
 from cyber_team.comms.inbound_email import InboundEmailService
@@ -152,11 +153,20 @@ async def lifespan(app: FastAPI):
     app.state.memory_steward_task = None
     app.state.inbound_email_task = None
     app.state.company_context_drift_task = None
+    app.state.operating_cadence_scheduler_task = None
+    app.state.operating_cadence_scheduler_status = _initial_operating_cadence_scheduler_status()
     if settings.inbound_email_enabled:
         app.state.inbound_email_task = asyncio.create_task(_inbound_email_loop(app))
     if settings.erpnext_drift_detection_enabled and settings.erpnext_configured:
         app.state.company_context_drift_task = asyncio.create_task(
             _company_context_drift_loop(app)
+        )
+    if (
+        settings.operating_cadence_scheduler_enabled
+        and settings.autonomous_planner_enabled
+    ):
+        app.state.operating_cadence_scheduler_task = asyncio.create_task(
+            _operating_cadence_scheduler_loop(app)
         )
     if settings.autonomous_operations_enabled:
         app.state.autonomous_operations_task = asyncio.create_task(
@@ -180,6 +190,7 @@ async def lifespan(app: FastAPI):
             "memory_steward_task",
             "inbound_email_task",
             "company_context_drift_task",
+            "operating_cadence_scheduler_task",
         ):
             task = getattr(app.state, task_name, None)
             if task:
@@ -268,6 +279,145 @@ async def _company_context_drift_loop(app: FastAPI) -> None:
             raise
         except Exception:
             logger.exception("ERPNext company-context drift loop failed")
+        await asyncio.sleep(interval)
+
+
+def _initial_operating_cadence_scheduler_status() -> dict:
+    enabled = (
+        settings.operating_cadence_scheduler_enabled
+        and settings.autonomous_planner_enabled
+    )
+    return {
+        "enabled": enabled,
+        "status": "idle" if enabled else "disabled",
+        "detail": (
+            "Scheduled operating cadence scans are waiting for the next run."
+            if enabled
+            else "Scheduled operating cadence scans are disabled."
+        ),
+        "actor": "operating_cadence_scheduler",
+        "auto_execute": False,
+        "interval_seconds": max(60, settings.operating_cadence_scheduler_interval_seconds),
+        "limit": settings.operating_cadence_scheduler_limit,
+        "last_started_at": None,
+        "last_completed_at": None,
+        "last_result": None,
+        "last_error": None,
+    }
+
+
+async def _run_operating_cadence_scheduler_once(app: FastAPI) -> dict:
+    started_at = utc_now()
+    actor = "operating_cadence_scheduler"
+    auto_execute = (
+        settings.operating_cadence_scheduler_auto_execute
+        and settings.autonomy_side_effect_mode != "manual_only"
+    )
+    status = {
+        "enabled": True,
+        "status": "running",
+        "detail": "Scheduled operating cadence scan is running.",
+        "actor": actor,
+        "auto_execute": auto_execute,
+        "interval_seconds": max(60, settings.operating_cadence_scheduler_interval_seconds),
+        "limit": settings.operating_cadence_scheduler_limit,
+        "last_started_at": started_at.isoformat(),
+        "last_completed_at": None,
+        "last_result": None,
+        "last_error": None,
+    }
+    app.state.operating_cadence_scheduler_status = status
+    try:
+        result = await app.state.autonomous_planning_service.scan_operating_cadences(
+            actor=actor,
+            auto_execute=auto_execute,
+            limit=settings.operating_cadence_scheduler_limit,
+        )
+        completed_at = utc_now()
+        errors = result.get("errors") or []
+        compact_result = {
+            "scanned_at": result.get("scanned_at"),
+            "cadences_reviewed": result.get("cadences_reviewed", 0),
+            "cadences_due": result.get("cadences_due", 0),
+            "plans_created": result.get("plans_created", 0),
+            "plans_existing": result.get("plans_existing", 0),
+            "created_plan_ids": result.get("created_plan_ids", []),
+            "existing_plan_ids": result.get("existing_plan_ids", []),
+            "errors": errors,
+            "execution": result.get("execution"),
+        }
+        final_status = {
+            **status,
+            "status": "degraded" if errors else "completed",
+            "detail": (
+                "Scheduled operating cadence scan completed with errors."
+                if errors
+                else "Scheduled operating cadence scan completed."
+            ),
+            "last_completed_at": completed_at.isoformat(),
+            "last_result": compact_result,
+            "last_error": None,
+        }
+        app.state.operating_cadence_scheduler_status = final_status
+        audit_service = getattr(app.state, "audit_service", None)
+        if audit_service:
+            await audit_service.record(
+                event_type="operating_cadence.scheduler_run",
+                actor=actor,
+                actor_type="system",
+                resource_type="operating_cadence",
+                resource_id=None,
+                action="scan",
+                outcome="degraded" if errors else "success",
+                metadata={
+                    "auto_execute": auto_execute,
+                    "cadences_reviewed": compact_result["cadences_reviewed"],
+                    "cadences_due": compact_result["cadences_due"],
+                    "plans_created": compact_result["plans_created"],
+                    "plans_existing": compact_result["plans_existing"],
+                    "errors": errors,
+                },
+            )
+        return final_status
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        completed_at = utc_now()
+        final_status = {
+            **status,
+            "status": "failed",
+            "detail": "Scheduled operating cadence scan failed.",
+            "last_completed_at": completed_at.isoformat(),
+            "last_result": None,
+            "last_error": str(exc),
+        }
+        app.state.operating_cadence_scheduler_status = final_status
+        audit_service = getattr(app.state, "audit_service", None)
+        if audit_service:
+            await audit_service.record(
+                event_type="operating_cadence.scheduler_run",
+                actor=actor,
+                actor_type="system",
+                resource_type="operating_cadence",
+                resource_id=None,
+                action="scan",
+                outcome="failure",
+                metadata={
+                    "auto_execute": auto_execute,
+                    "error": str(exc),
+                },
+            )
+        logger.exception("Scheduled operating cadence scan failed")
+        return final_status
+
+
+async def _operating_cadence_scheduler_loop(app: FastAPI) -> None:
+    initial_delay = max(0, settings.operating_cadence_scheduler_initial_delay_seconds)
+    interval = max(60, settings.operating_cadence_scheduler_interval_seconds)
+    if initial_delay:
+        await asyncio.sleep(initial_delay)
+    while True:
+        await _run_operating_cadence_scheduler_once(app)
         await asyncio.sleep(interval)
 
 

@@ -587,6 +587,24 @@ async def operations_readiness(
                 "completed": None,
             }
 
+    operating_cadence_scheduler_status = getattr(
+        request.app.state,
+        "operating_cadence_scheduler_status",
+        {
+            "enabled": False,
+            "status": "unavailable",
+            "detail": "Operating cadence scheduler status is not available.",
+            "actor": "operating_cadence_scheduler",
+            "auto_execute": False,
+            "interval_seconds": None,
+            "limit": None,
+            "last_started_at": None,
+            "last_completed_at": None,
+            "last_result": None,
+            "last_error": None,
+        },
+    )
+
     evidence = await request.app.state.audit_service.list_events(
         event_type="control.evidence",
         limit=50,
@@ -630,6 +648,7 @@ async def operations_readiness(
         },
         "company_context": company_context_status,
         "operating_cadence": operating_cadence_status,
+        "operating_cadence_scheduler": operating_cadence_scheduler_status,
         "operating_follow_ups": operating_follow_ups_status,
         "memory": {
             "recent_traces_reviewed": len(traces),
