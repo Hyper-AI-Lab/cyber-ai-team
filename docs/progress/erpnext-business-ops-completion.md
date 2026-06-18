@@ -1009,6 +1009,38 @@
 - Next step:
   - Commit this deployment evidence entry, push both scheduler commits to GitHub, and watch CI for the pushed head.
 
+## 2026-06-18T13:32:50Z - STEP-044 - Owner attention queue for scheduler-created cadence plans v1
+
+- Files/services changed:
+  - `backend/src/cyber_team/operations/planning.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/tests/test_autonomous_planning.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/OperationsView.tsx`
+- Commands run:
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_autonomous_planning.py tests/test_api_operations.py tests/test_operating_cadence_scheduler.py -q`
+  - `../.venv-quality/bin/ruff check src/cyber_team/operations/planning.py src/cyber_team/api/routes/operations.py tests/test_autonomous_planning.py tests/test_api_operations.py tests/test_operating_cadence_scheduler.py`
+  - `npx -y node@20 ./node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `npx -y node@20 ./node_modules/next/dist/bin/next build`
+- Result:
+  - Scheduler-created operating cadence plans now persist `owner_attention` metadata with reason, recommended action, source actor, scheduler-created flag, medium attention priority, and a 24-hour owner-console SLA.
+  - Added audit trace event `owner_attention.created` whenever a cadence plan creates a new owner attention item.
+  - Added `AutonomousPlanningService.list_owner_attention()` as a derived queue over existing autonomous plans; no migration or duplicate persistence table was introduced.
+  - Added owner-authorized `GET /api/operations/owner-attention` and included active owner-attention counts in `/api/operations/readiness`.
+  - Added Operations owner-console `Owner Attention` panel with active, overdue, due-soon, scheduler-created, and executable counts plus direct Run/Open actions.
+  - Focused backend tests passed: `21 passed, 2 warnings`.
+  - Focused frontend API tests passed: `18 passed`.
+  - Touched-file Ruff passed and frontend production build passed.
+- Evidence path/link:
+  - `backend/tests/test_autonomous_planning.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/OperationsView.tsx`
+- Next step:
+  - Run the full quality gate, deploy to staging, verify the live owner-attention endpoint/readiness/UI bundle, commit, push, and watch GitHub CI.
+
 ## 2026-06-18T08:30:41Z - STEP-040 - Operating cadence follow-up owner resolution v1
 
 - Files/services changed:

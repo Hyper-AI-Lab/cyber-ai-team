@@ -178,6 +178,24 @@ async def list_autonomous_plans(
     return await planner.list_plans(status=status, source_type=source_type, limit=limit)
 
 
+@router.get("/owner-attention")
+async def list_owner_attention(
+    request: Request,
+    status: str | None = "active",
+    limit: int = 50,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "owner_attention",
+        context={"status": status, "limit": limit},
+    )
+    planner = request.app.state.autonomous_planning_service
+    return await planner.list_owner_attention(status=status, limit=limit)
+
+
 @router.post("/plans/scan")
 async def scan_autonomous_plans(
     data: PlanScanRequest,
@@ -587,6 +605,38 @@ async def operations_readiness(
                 "completed": None,
             }
 
+    owner_attention_status = {
+        "generated_at": None,
+        "filters": {"status": "active", "limit": 100},
+        "counts": {
+            "total": 0,
+            "active": 0,
+            "completed": 0,
+            "overdue": 0,
+            "due_soon": 0,
+            "scheduler_created": 0,
+            "executable": 0,
+            "waiting_approval": 0,
+        },
+        "items": [],
+        "status": "unavailable",
+        "detail": "Owner attention queue is not available.",
+    }
+    if planner and hasattr(planner, "list_owner_attention"):
+        try:
+            owner_attention_status = await planner.list_owner_attention(
+                status="active",
+                limit=100,
+            )
+            owner_attention_status["status"] = "ready"
+            owner_attention_status["detail"] = "Owner attention queue is available."
+        except Exception as exc:
+            owner_attention_status = {
+                **owner_attention_status,
+                "status": "degraded",
+                "detail": str(exc),
+            }
+
     operating_cadence_scheduler_status = getattr(
         request.app.state,
         "operating_cadence_scheduler_status",
@@ -650,6 +700,7 @@ async def operations_readiness(
         "operating_cadence": operating_cadence_status,
         "operating_cadence_scheduler": operating_cadence_scheduler_status,
         "operating_follow_ups": operating_follow_ups_status,
+        "owner_attention": owner_attention_status,
         "memory": {
             "recent_traces_reviewed": len(traces),
             "recent_trace_errors": len(trace_errors),

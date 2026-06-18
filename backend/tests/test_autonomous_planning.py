@@ -503,6 +503,46 @@ async def test_operating_cadence_scan_skips_fresh_completed_plan():
 
 
 @pytest.mark.asyncio
+async def test_scheduler_created_cadence_plan_enters_owner_attention_queue():
+    engine, session_factory = await build_session_factory()
+    manager = FakeAgentManager(
+        {"status": "resolved"},
+        operating_cadence_result=operating_cadence_summary(),
+    )
+    try:
+        service = AutonomousPlanningService(
+            agent_manager=manager,
+            memory_steward_service=FakeMemorySteward(),
+            tool_registry=low_risk_tool_registry(),
+            session_factory=session_factory,
+        )
+
+        result = await service.scan_operating_cadences(
+            actor="operating_cadence_scheduler",
+            auto_execute=False,
+        )
+
+        assert result["plans_created"] == 1
+        plan = (await service.list_plans(source_type="operating_cadence"))[0]
+        attention = plan["context"]["owner_attention"]
+        assert attention["scheduler_created"] is True
+        assert attention["attention_priority"] == "medium"
+        assert attention["recommended_action"] == "execute_plan"
+        assert attention["sla_due_at"]
+
+        queue = await service.list_owner_attention(status="active", limit=10)
+        assert queue["counts"]["total"] == 1
+        assert queue["counts"]["scheduler_created"] == 1
+        assert queue["counts"]["executable"] == 1
+        assert queue["items"][0]["plan_id"] == plan["id"]
+        assert queue["items"][0]["kind"] == "scheduled_operating_cadence"
+        assert queue["items"][0]["attention_priority"] == "medium"
+        assert queue["items"][0]["sla_state"] in {"open", "due_soon"}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_operating_cadence_follow_up_plan_executes_as_owner_review_ready():
     engine, session_factory = await build_session_factory()
     manager = FakeAgentManager(

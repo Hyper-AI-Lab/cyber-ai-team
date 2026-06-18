@@ -448,6 +448,10 @@ class AutonomousPlanningService:
 
         cadence = refreshed.get("cadence") or cadence_item.get("cadence") or {}
         policy = self._operating_cadence_policy(refreshed)
+        owner_attention = self._operating_cadence_owner_attention(
+            refreshed,
+            actor=actor,
+        )
         task_specs = self._number_task_specs([
             self._task_spec(
                 "Assess operating cadence signals",
@@ -507,6 +511,7 @@ class AutonomousPlanningService:
                 "frequency": cadence.get("frequency"),
                 "review_window": cadence.get("review_window"),
                 "policy": policy,
+                "owner_attention": owner_attention,
             },
             task_specs=task_specs,
         )
@@ -515,6 +520,19 @@ class AutonomousPlanningService:
             actor=actor,
             resource_id=plan["id"],
             metadata={"source_type": "operating_cadence", "source_id": cadence_id},
+        )
+        await self._record(
+            "owner_attention.created",
+            actor=actor,
+            resource_id=plan["id"],
+            metadata={
+                "source_type": "operating_cadence",
+                "source_id": cadence_id,
+                "kind": owner_attention["kind"],
+                "attention_priority": owner_attention["attention_priority"],
+                "recommended_action": owner_attention["recommended_action"],
+                "sla_due_at": owner_attention["sla_due_at"],
+            },
         )
         return {"created": True, "plan": plan}
 
@@ -664,6 +682,63 @@ class AutonomousPlanningService:
                 "limit": safe_limit,
             },
             "counts": self._operating_follow_up_counts(limited_items),
+            "items": limited_items,
+        }
+
+    async def list_owner_attention(
+        self,
+        *,
+        status: str | None = "active",
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Return owner-actionable autonomous plans without adding new state."""
+
+        safe_limit = max(1, min(limit, 200))
+        normalized_status = str(status or "active").lower()
+        now = utc_now()
+        async with self._session_factory() as session:
+            query = (
+                select(AutonomousPlan)
+                .options(selectinload(AutonomousPlan.tasks))
+                .where(
+                    AutonomousPlan.source_type.in_(
+                        ["operating_cadence", "operating_cadence_follow_up"]
+                    )
+                )
+            )
+            if normalized_status == "active":
+                query = query.where(AutonomousPlan.status.in_(self.ACTIVE_PLAN_STATUSES))
+            elif normalized_status in {"completed", "resolved"}:
+                query = query.where(AutonomousPlan.status == "completed")
+            elif normalized_status == "failed":
+                query = query.where(AutonomousPlan.status == "failed")
+            elif normalized_status != "all":
+                query = query.where(AutonomousPlan.status == normalized_status)
+            result = await session.execute(
+                query.order_by(desc(AutonomousPlan.updated_at)).limit(500)
+            )
+            plans = [
+                self._plan_to_dict(plan)
+                for plan in result.scalars().all()
+            ]
+
+        items = [
+            item
+            for item in (
+                self._owner_attention_item(plan, now=now)
+                for plan in plans
+            )
+            if item is not None
+        ]
+        items.sort(key=self._owner_attention_sort_key)
+        limited_items = items[:safe_limit]
+        return {
+            "generated_at": now.isoformat(),
+            "filters": {
+                "status": normalized_status,
+                "limit": safe_limit,
+            },
+            "counts": self._owner_attention_counts(limited_items),
             "items": limited_items,
         }
 
@@ -1763,6 +1838,31 @@ class AutonomousPlanningService:
             ),
         }
 
+    @staticmethod
+    def _operating_cadence_owner_attention(
+        cadence: dict[str, Any],
+        *,
+        actor: str,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        role_name = cadence.get("role_name") or cadence["cadence_id"]
+        scheduler_created = actor == "operating_cadence_scheduler"
+        sla_hours = 24
+        return {
+            "required": True,
+            "kind": "scheduled_operating_cadence",
+            "source_actor": actor,
+            "scheduler_created": scheduler_created,
+            "attention_priority": "medium" if scheduler_created else "low",
+            "reason": f"{role_name} operating cadence is due for owner-visible review.",
+            "recommended_action": "execute_plan",
+            "target_view": "operations",
+            "badge_label": "Cadence review",
+            "created_at": now.isoformat(),
+            "sla_hours": sla_hours,
+            "sla_due_at": (now + timedelta(hours=sla_hours)).isoformat(),
+        }
+
     def _operating_cadence_follow_up_specs(
         self,
         cadence: dict[str, Any],
@@ -2041,6 +2141,189 @@ class AutonomousPlanningService:
         if plan["status"] in {"blocked", "failed"}:
             return "inspect_failure"
         return "no_action"
+
+    def _owner_attention_item(
+        self,
+        plan: dict[str, Any],
+        *,
+        now: datetime,
+    ) -> dict[str, Any] | None:
+        context = plan.get("context") or {}
+        attention = context.get("owner_attention") or {}
+        follow_up = context.get("follow_up") or {}
+        if not attention and not follow_up:
+            return None
+
+        if follow_up:
+            follow_up_item = self._operating_follow_up_item(plan)
+            kind = f"cadence_follow_up:{follow_up_item['kind']}"
+            reason = (
+                f"Review {follow_up_item['kind'].replace('_', ' ')} for "
+                f"{follow_up_item.get('role_name') or 'an operating role'}."
+            )
+            recommended_action = follow_up_item["next_action"]
+            target_view = follow_up_item["target_view"]
+            attention_priority = self._normalize_risk(follow_up_item["risk_level"])
+            sla_due_at = None
+            manual_only_side_effects = follow_up_item["manual_only_side_effects"]
+            scheduler_created = False
+        else:
+            kind = attention.get("kind") or "owner_attention"
+            reason = attention.get("reason") or plan["objective"]
+            recommended_action = attention.get("recommended_action") or "review_plan"
+            target_view = attention.get("target_view") or "operations"
+            attention_priority = self._normalize_risk(
+                attention.get("attention_priority") or plan.get("priority")
+            )
+            sla_due_at = attention.get("sla_due_at")
+            manual_only_side_effects = True
+            scheduler_created = bool(attention.get("scheduler_created"))
+
+        sla_state = self._attention_sla_state(
+            plan_status=plan["status"],
+            sla_due_at=sla_due_at,
+            now=now,
+        )
+        tasks = plan.get("tasks") or []
+        completed_task_count = len(
+            [task for task in tasks if task.get("status") == "completed"]
+        )
+        waiting_task = next(
+            (task for task in tasks if task.get("status") == "waiting_approval"),
+            None,
+        )
+        return {
+            "plan_id": plan["id"],
+            "title": plan["title"],
+            "description": plan["objective"],
+            "source_type": plan["source_type"],
+            "source_id": plan["source_id"],
+            "status": plan["status"],
+            "created_by": plan["created_by"],
+            "created_at": plan["created_at"],
+            "updated_at": plan["updated_at"],
+            "completed_at": plan.get("completed_at"),
+            "kind": kind,
+            "attention_priority": attention_priority,
+            "attention_reason": reason,
+            "recommended_action": recommended_action,
+            "target_view": target_view,
+            "scheduler_created": scheduler_created,
+            "manual_only_side_effects": manual_only_side_effects,
+            "sla_due_at": sla_due_at,
+            "sla_state": sla_state,
+            "can_execute": plan["status"] in self.EXECUTABLE_PLAN_STATUSES,
+            "approval_id": waiting_task.get("approval_id") if waiting_task else None,
+            "task_count": len(tasks),
+            "completed_task_count": completed_task_count,
+            "task_summary": {
+                "total": len(tasks),
+                "completed": completed_task_count,
+                "waiting_approval": len(
+                    [task for task in tasks if task.get("status") == "waiting_approval"]
+                ),
+                "blocked": len(
+                    [task for task in tasks if task.get("status") == "blocked"]
+                ),
+                "failed": len(
+                    [task for task in tasks if task.get("status") == "failed"]
+                ),
+            },
+        }
+
+    @staticmethod
+    def _attention_sla_state(
+        *,
+        plan_status: str,
+        sla_due_at: str | None,
+        now: datetime,
+    ) -> str:
+        if plan_status == "completed":
+            return "resolved"
+        if not sla_due_at:
+            return "open"
+        try:
+            due_at = datetime.fromisoformat(str(sla_due_at))
+        except ValueError:
+            return "open"
+        if due_at.tzinfo is not None:
+            due_at = due_at.replace(tzinfo=None)
+        if due_at <= now:
+            return "overdue"
+        if due_at - now <= timedelta(hours=6):
+            return "due_soon"
+        return "open"
+
+    def _owner_attention_sort_key(self, item: dict[str, Any]) -> tuple:
+        sla_rank = {"overdue": 0, "due_soon": 1, "open": 2, "resolved": 3}
+        priority_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        created_at = self._parse_plan_datetime(item.get("created_at"))
+        created_sort = created_at.timestamp() if created_at else 0.0
+        return (
+            sla_rank.get(item["sla_state"], 4),
+            priority_rank.get(item["attention_priority"], 4),
+            -created_sort,
+        )
+
+    @staticmethod
+    def _parse_plan_datetime(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+        if parsed.tzinfo is not None:
+            parsed = parsed.replace(tzinfo=None)
+        return parsed
+
+    @staticmethod
+    def _owner_attention_counts(items: list[dict[str, Any]]) -> dict[str, Any]:
+        counts: dict[str, Any] = {
+            "total": len(items),
+            "active": 0,
+            "completed": 0,
+            "overdue": 0,
+            "due_soon": 0,
+            "scheduler_created": 0,
+            "executable": 0,
+            "waiting_approval": 0,
+            "by_status": {},
+            "by_kind": {},
+            "by_priority": {},
+            "by_sla_state": {},
+            "by_target_view": {},
+        }
+        for item in items:
+            status = item["status"]
+            kind = item["kind"]
+            priority = item["attention_priority"]
+            sla_state = item["sla_state"]
+            target_view = item["target_view"]
+            if status in AutonomousPlanningService.ACTIVE_PLAN_STATUSES:
+                counts["active"] += 1
+            if status == "completed":
+                counts["completed"] += 1
+            if sla_state == "overdue":
+                counts["overdue"] += 1
+            if sla_state == "due_soon":
+                counts["due_soon"] += 1
+            if item["scheduler_created"]:
+                counts["scheduler_created"] += 1
+            if item["can_execute"]:
+                counts["executable"] += 1
+            if item.get("approval_id"):
+                counts["waiting_approval"] += 1
+            counts["by_status"][status] = counts["by_status"].get(status, 0) + 1
+            counts["by_kind"][kind] = counts["by_kind"].get(kind, 0) + 1
+            counts["by_priority"][priority] = counts["by_priority"].get(priority, 0) + 1
+            counts["by_sla_state"][sla_state] = (
+                counts["by_sla_state"].get(sla_state, 0) + 1
+            )
+            counts["by_target_view"][target_view] = (
+                counts["by_target_view"].get(target_view, 0) + 1
+            )
+        return counts
 
     def _normalize_follow_up_status_filter(self, status: str | None) -> str:
         normalized = str(status or "active").strip().lower()

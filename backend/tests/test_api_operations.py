@@ -247,6 +247,21 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
         {"counts": {"total": 2, "by_resolution": {"unresolved": 2}}, "items": []},
         {"counts": {"total": 3, "by_resolution": {"reviewed": 2, "dismissed": 1}}, "items": []},
     ]
+    app.state.autonomous_planning_service.list_owner_attention.return_value = {
+        "generated_at": "2026-06-18T00:00:02+00:00",
+        "filters": {"status": "active", "limit": 100},
+        "counts": {
+            "total": 1,
+            "active": 1,
+            "completed": 0,
+            "overdue": 0,
+            "due_soon": 0,
+            "scheduler_created": 1,
+            "executable": 1,
+            "waiting_approval": 0,
+        },
+        "items": [{"plan_id": "plan_attention_1"}],
+    }
     app.state.operating_cadence_scheduler_status = {
         "enabled": True,
         "status": "completed",
@@ -310,6 +325,8 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
     }
     assert body["operating_cadence_scheduler"]["status"] == "completed"
     assert body["operating_cadence_scheduler"]["last_result"]["cadences_reviewed"] == 1
+    assert body["owner_attention"]["counts"]["active"] == 1
+    assert body["owner_attention"]["counts"]["scheduler_created"] == 1
 
 
 def test_plan_scan_forces_manual_only_autonomy(monkeypatch):
@@ -380,6 +397,12 @@ def test_operating_cadence_routes(monkeypatch):
         "status": "completed",
         "summary": {"owner_resolution": {"action": "dismissed"}},
     }
+    app.state.autonomous_planning_service.list_owner_attention.return_value = {
+        "generated_at": "2026-06-18T00:00:02",
+        "filters": {"status": "active", "limit": 25},
+        "counts": {"total": 1, "active": 1, "scheduler_created": 1},
+        "items": [{"plan_id": "plan_1", "kind": "scheduled_operating_cadence"}],
+    }
     monkeypatch.setattr(
         "cyber_team.api.routes.operations.settings.autonomy_side_effect_mode",
         "manual_only",
@@ -421,6 +444,9 @@ def test_operating_cadence_routes(monkeypatch):
         "/api/operations/operating-cadence/follow-ups/plan_follow_up_1/resolve",
         json={"action": "dismissed", "note": "No longer relevant."},
     )
+    attention_response = client.get(
+        "/api/operations/owner-attention?status=active&limit=25"
+    )
 
     assert status_response.status_code == 200
     assert status_response.json()["counts"]["due"] == 1
@@ -430,6 +456,8 @@ def test_operating_cadence_routes(monkeypatch):
     assert follow_up_response.json()["items"][0]["plan_id"] == "plan_follow_up_1"
     assert resolve_response.status_code == 200
     assert resolve_response.json()["summary"]["owner_resolution"]["action"] == "dismissed"
+    assert attention_response.status_code == 200
+    assert attention_response.json()["items"][0]["plan_id"] == "plan_1"
     app.state.autonomous_planning_service.operating_cadence_status.assert_awaited_once_with(
         company_namespace="company:acme",
         limit=25,
@@ -453,6 +481,10 @@ def test_operating_cadence_routes(monkeypatch):
         note="No longer relevant.",
         actor="owner@example.com",
         defer_until=None,
+    )
+    app.state.autonomous_planning_service.list_owner_attention.assert_awaited_once_with(
+        status="active",
+        limit=25,
     )
 
 

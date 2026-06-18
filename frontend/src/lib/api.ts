@@ -576,6 +576,19 @@ class ApiClient {
     return this.request('/api/operations/readiness');
   }
 
+  async getOwnerAttention(
+    filters: {
+      status?: string;
+      limit?: number;
+    } = {}
+  ) {
+    const params = new URLSearchParams({
+      status: filters.status ?? 'active',
+      limit: String(filters.limit ?? 50),
+    });
+    return this.request(`/api/operations/owner-attention?${params.toString()}`);
+  }
+
   async syncCompanyContext(options: Record<string, any> = {}) {
     return this.request('/api/operations/company-context/sync', {
       method: 'POST',

@@ -5,6 +5,7 @@ import { api } from '@/lib/api'
 import {
   Activity,
   AlertTriangle,
+  Bell,
   Brain,
   CalendarClock,
   CheckCircle,
@@ -112,10 +113,23 @@ function navigationTarget(targetView?: string): 'agents' | 'approvals' | 'operat
   return null
 }
 
+function attentionSlaClass(state?: string) {
+  if (state === 'overdue') return 'bg-red-600/20 text-red-300'
+  if (state === 'due_soon') return 'bg-amber-600/20 text-amber-300'
+  if (state === 'resolved') return 'bg-green-600/20 text-green-300'
+  return 'bg-blue-600/20 text-blue-300'
+}
+
+function attentionActionLabel(action?: string) {
+  if (!action) return 'Review'
+  return action.replace(/_/g, ' ')
+}
+
 export default function OperationsView({ cycles, onRefresh, onNavigate }: OperationsViewProps) {
   const [localCycles, setLocalCycles] = useState<any[]>(cycles)
   const [plans, setPlans] = useState<any[]>([])
   const [readiness, setReadiness] = useState<any | null>(null)
+  const [ownerAttention, setOwnerAttention] = useState<any | null>(null)
   const [operatingCadence, setOperatingCadence] = useState<any | null>(null)
   const [followUps, setFollowUps] = useState<any | null>(null)
   const [followUpStatus, setFollowUpStatus] = useState('active')
@@ -124,6 +138,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   const [loading, setLoading] = useState(false)
   const [plansLoading, setPlansLoading] = useState(false)
   const [readinessLoading, setReadinessLoading] = useState(false)
+  const [ownerAttentionLoading, setOwnerAttentionLoading] = useState(false)
   const [operatingCadenceLoading, setOperatingCadenceLoading] = useState(false)
   const [followUpsLoading, setFollowUpsLoading] = useState(false)
   const [timelineLoading, setTimelineLoading] = useState(false)
@@ -173,6 +188,19 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       setError(e.message || 'Failed to load production readiness')
     } finally {
       setReadinessLoading(false)
+    }
+  }
+
+  const loadOwnerAttention = async () => {
+    setOwnerAttentionLoading(true)
+    setError(null)
+    try {
+      const result = await api.getOwnerAttention({ status: 'active', limit: 25 })
+      setOwnerAttention(result)
+    } catch (e: any) {
+      setError(e.message || 'Failed to load owner attention queue')
+    } finally {
+      setOwnerAttentionLoading(false)
     }
   }
 
@@ -234,6 +262,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   useEffect(() => {
     loadPlans()
     loadReadiness()
+    loadOwnerAttention()
     loadOperatingCadence()
     loadTimeline()
   }, [])
@@ -260,6 +289,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadCycles()
       await loadPlans()
       await loadReadiness()
+      await loadOwnerAttention()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -285,6 +315,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadCycles()
       await loadPlans()
       await loadReadiness()
+      await loadOwnerAttention()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -307,6 +338,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await onRefresh()
       await loadPlans()
       await loadReadiness()
+      await loadOwnerAttention()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -326,6 +358,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadCycles()
       await loadPlans()
       await loadReadiness()
+      await loadOwnerAttention()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -356,6 +389,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await onRefresh()
       await loadPlans()
       await loadReadiness()
+      await loadOwnerAttention()
       await loadFollowUps()
       await loadTimeline()
     } catch (e: any) {
@@ -377,6 +411,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadCycles()
       await loadPlans()
       await loadReadiness()
+      await loadOwnerAttention()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -555,6 +590,15 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                 }
               />
               <ReadinessPanel
+                title="Owner Attention"
+                value={`${readiness.owner_attention?.counts?.active || 0} active`}
+                detail={
+                  readiness.owner_attention?.counts?.overdue
+                    ? `${readiness.owner_attention.counts.overdue} overdue`
+                    : `${readiness.owner_attention?.counts?.scheduler_created || 0} scheduler-created`
+                }
+              />
+              <ReadinessPanel
                 title="Cadence Follow-Ups"
                 value={`${readiness.operating_follow_ups?.counts?.active || 0} active`}
                 detail={
@@ -593,6 +637,118 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
         ) : (
           <div className="py-8 text-center text-slate-500">
             {readinessLoading ? 'Loading readiness...' : 'Readiness data unavailable.'}
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Bell className="h-5 w-5 text-amber-300" />
+            <div>
+              <h3 className="text-lg font-semibold">Owner Attention</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Scheduler-created operating plans and follow-ups that need owner review.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={loadOwnerAttention}
+            disabled={ownerAttentionLoading}
+            className="btn-secondary flex items-center gap-2 text-sm"
+          >
+            <RefreshCw className={`h-4 w-4 ${ownerAttentionLoading ? 'animate-spin' : ''}`} />
+            Refresh Attention
+          </button>
+        </div>
+
+        {ownerAttention ? (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+              <Metric label="Active" value={ownerAttention.counts?.active || 0} />
+              <Metric label="Overdue" value={ownerAttention.counts?.overdue || 0} />
+              <Metric label="Due soon" value={ownerAttention.counts?.due_soon || 0} />
+              <Metric
+                label="Scheduler"
+                value={ownerAttention.counts?.scheduler_created || 0}
+              />
+              <Metric label="Executable" value={ownerAttention.counts?.executable || 0} />
+            </div>
+
+            {ownerAttention.items?.length ? (
+              <div className="space-y-3">
+                {ownerAttention.items.slice(0, 8).map((item: any) => {
+                  const target = navigationTarget(item.target_view)
+                  return (
+                    <div
+                      key={item.plan_id}
+                      className="rounded-lg border border-slate-800 bg-slate-900/30 p-3"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium text-white">{item.title}</span>
+                            <span
+                              className={`rounded-full px-2 py-1 text-xs ${
+                                attentionSlaClass(item.sla_state)
+                              }`}
+                            >
+                              {item.sla_state}
+                            </span>
+                            <span
+                              className={`rounded-full px-2 py-1 text-xs ${
+                                riskClass[item.attention_priority] || 'bg-slate-700 text-slate-300'
+                              }`}
+                            >
+                              {item.attention_priority}
+                            </span>
+                          </div>
+                          <div className="mt-1 line-clamp-2 text-sm text-slate-400">
+                            {item.attention_reason}
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-slate-500">
+                            <span>{sourceLabel(item)}</span>
+                            <span>{item.kind?.replace(/_/g, ' ')}</span>
+                            <span>{item.completed_task_count}/{item.task_count} tasks</span>
+                            {item.sla_due_at && <span>due {formatDate(item.sla_due_at)}</span>}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 flex-wrap gap-2">
+                          {item.can_execute && (
+                            <button
+                              onClick={() => executePlan(item.plan_id)}
+                              disabled={planAction !== null}
+                              className="btn-primary flex items-center gap-2 px-3 py-1.5 text-xs"
+                            >
+                              <Play className="h-3.5 w-3.5" />
+                              {planAction === item.plan_id
+                                ? 'Running...'
+                                : attentionActionLabel(item.recommended_action)}
+                            </button>
+                          )}
+                          {target && target !== 'operations' && onNavigate && (
+                            <button
+                              onClick={() => onNavigate(target)}
+                              className="btn-secondary px-3 py-1.5 text-xs"
+                            >
+                              Open {target}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">
+                No owner attention items are active. Scheduler-created reviews will appear here.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="py-8 text-center text-slate-500">
+            {ownerAttentionLoading ? 'Loading owner attention...' : 'Owner attention data unavailable.'}
           </div>
         )}
       </section>
