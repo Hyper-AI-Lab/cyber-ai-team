@@ -982,3 +982,36 @@
   - `frontend/src/lib/api.test.ts`
 - Next step:
   - Commit, deploy this operating cadence loop to staging, run compose smoke, verify live cadence status/scan routes, push to GitHub, and watch CI.
+
+## 2026-06-18T01:36:56Z - STEP-034 - Operating cadence loop staging deploy and verification
+
+- Files/services changed:
+  - Rebuilt staging Docker images for `core` and `ui` from commit `f3c80112d5144e5ab3af73a9b78e12081dc6f207`.
+  - Restarted staging `core`, `worker`, and `ui`.
+  - Live verification evidence was written under ignored `dist/operating-cadence/`.
+  - This tracked entry records deployment evidence after the feature commit.
+- Commands run:
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env build core ui`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env up -d core worker ui`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env ./scripts/compose-smoke.sh`
+  - `curl -fsS https://cyberteam.hyperailab.com/health`
+  - Owner-authenticated `GET /api/operations/operating-cadence/status?limit=200`
+  - Owner-authenticated `POST /api/operations/operating-cadence/scan`
+  - Owner-authenticated `GET /api/operations/plans?source_type=operating_cadence&limit=10`
+  - Owner-authenticated second `POST /api/operations/operating-cadence/scan` idempotency check
+- Result:
+  - Docker build completed for `cyber-team-core:latest` and `cyber-team-ui:latest`; frontend Docker `npm ci` reported `found 0 vulnerabilities`.
+  - Staging `core` became healthy and `ui` started successfully.
+  - Compose smoke passed: health, readiness, UI, owner login, dashboard KPIs, integration status, WebSocket ticket, tool readiness, and approval queue behavior.
+  - `/health` reports version `f3c8011` and build SHA `f3c80112d5144e5ab3af73a9b78e12081dc6f207`.
+  - Live operating cadence status reported 1 cadence due with no active cadence plans.
+  - Live cadence scan created planned internal review plan `plan_0d4df8546cf1` for `Compliance Sentinel` and did not auto-execute because staging autonomy is manual-only.
+  - Live second cadence scan reported `cadences_due=0`, `plans_created=0`, and `active_plans=1`, proving duplicate plan prevention while the active cadence plan exists.
+- Evidence path/link:
+  - `https://cyberteam.hyperailab.com/health`
+  - `dist/operating-cadence/status-20260618T013637Z.json`
+  - `dist/operating-cadence/scan-20260618T013637Z.json`
+  - `dist/operating-cadence/plans-20260618T013637Z.json`
+  - `dist/operating-cadence/scan-idempotency-20260618T013650Z.json`
+- Next step:
+  - Commit this deployment evidence entry, push to GitHub, and watch CI for the pushed head.
