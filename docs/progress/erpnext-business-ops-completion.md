@@ -975,6 +975,39 @@
 - Next step:
   - Commit, deploy this follow-up plan slice to staging, smoke test, execute the live cadence plan, verify child follow-up plans, push to GitHub, and watch CI.
 
+## 2026-06-18T02:09:57Z - STEP-036 - Operating cadence follow-up staging deploy and live execution
+
+- Files/services changed:
+  - Rebuilt staging Docker images for `core` and `ui` from commit `cf9f09f266161755aa7e591325c6ed4336a3875c`.
+  - Restarted staging `core`, `worker`, and `ui`.
+  - Live verification evidence was written under ignored `dist/operating-cadence-followups/`.
+  - This tracked entry records deployment evidence after the feature commit.
+- Commands run:
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env build core ui`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env up -d core worker ui`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env ./scripts/compose-smoke.sh`
+  - `curl -fsS https://cyberteam.hyperailab.com/health`
+  - Owner-authenticated `GET /api/operations/plans?source_type=operating_cadence&limit=10`
+  - Owner-authenticated `POST /api/operations/plans/plan_0d4df8546cf1/execute`
+  - Owner-authenticated `GET /api/operations/plans?source_type=operating_cadence_follow_up&limit=20`
+  - Owner-authenticated `POST /api/operations/plans/plan_01c34c218814/execute`
+- Result:
+  - Docker build completed for `cyber-team-core:latest` and `cyber-team-ui:latest`; frontend Docker `npm ci` reported `found 0 vulnerabilities`.
+  - Staging `core` became healthy and `ui` started successfully.
+  - Compose smoke passed: health, readiness, UI, owner login, dashboard KPIs, integration status, WebSocket ticket, tool readiness, and approval queue behavior.
+  - `/health` reports version `cf9f09f` and build SHA `cf9f09f266161755aa7e591325c6ed4336a3875c`.
+  - Live cadence plan `plan_0d4df8546cf1` completed all three internal review tasks.
+  - Cadence completion created child follow-up plan `plan_01c34c218814` with kind `security_control_review`, target view `operations`, and recommended action `review_security_controls`.
+  - Live follow-up plan `plan_01c34c218814` executed successfully and returned `review_status=ready_for_owner` with `manual_only_side_effects=true`.
+- Evidence path/link:
+  - `https://cyberteam.hyperailab.com/health`
+  - `dist/operating-cadence-followups/pre-plans-20260618T020932Z.json`
+  - `dist/operating-cadence-followups/execute-20260618T020932Z.json`
+  - `dist/operating-cadence-followups/followups-20260618T020932Z.json`
+  - `dist/operating-cadence-followups/followup-execute-20260618T020949Z.json`
+- Next step:
+  - Commit this deployment evidence entry, push to GitHub, and watch CI for the pushed head.
+
 ## 2026-06-18T01:32:14Z - STEP-033 - Operating cadence planning loop v1
 
 - Files/services changed:
