@@ -27,6 +27,7 @@ class AutonomousPlanningService:
     ACTIVE_PLAN_STATUSES = {"planned", "running", "waiting_approval", "blocked"}
     EXECUTABLE_PLAN_STATUSES = {"planned", "running", "waiting_approval"}
     EXECUTABLE_TASK_STATUSES = {"planned", "waiting_approval"}
+    FOLLOW_UP_RESOLUTION_ACTIONS = {"reviewed", "deferred", "dismissed"}
     ROLE_GAP_STATUSES = {"open", "proposed"}
     MEMORY_FINDING_STATUSES = {"open", "acknowledged"}
     RISK_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
@@ -665,6 +666,98 @@ class AutonomousPlanningService:
             "counts": self._operating_follow_up_counts(limited_items),
             "items": limited_items,
         }
+
+    async def resolve_operating_follow_up(
+        self,
+        plan_id: str,
+        *,
+        action: str = "reviewed",
+        note: str = "",
+        actor: str = "owner",
+        defer_until: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_action = str(action or "reviewed").strip().lower()
+        if normalized_action not in self.FOLLOW_UP_RESOLUTION_ACTIONS:
+            raise ValueError(
+                "Follow-up action must be one of: "
+                + ", ".join(sorted(self.FOLLOW_UP_RESOLUTION_ACTIONS))
+            )
+        now = utc_now()
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(AutonomousPlan)
+                .options(selectinload(AutonomousPlan.tasks))
+                .where(AutonomousPlan.id == plan_id)
+            )
+            plan = result.scalar_one_or_none()
+            if not plan:
+                raise ValueError(f"Operating cadence follow-up plan {plan_id} not found")
+            if plan.source_type != "operating_cadence_follow_up":
+                raise ValueError(f"Plan {plan_id} is not an operating cadence follow-up")
+
+            context = plan.context or {}
+            follow_up = context.get("follow_up") or {}
+            resolution = {
+                "action": normalized_action,
+                "note": note[:2000],
+                "resolver": actor,
+                "resolved_at": now.isoformat(),
+                "defer_until": defer_until,
+                "plan_id": plan_id,
+                "kind": follow_up.get("kind"),
+                "target_view": follow_up.get("target_view"),
+                "target_type": follow_up.get("target_type"),
+                "target_id": follow_up.get("target_id"),
+                "recommended_action": follow_up.get("recommended_action"),
+            }
+            summary = dict(plan.summary or {})
+            existing_resolution = summary.get("owner_resolution")
+            history = list(summary.get("owner_resolution_history") or [])
+            if existing_resolution:
+                history.append(existing_resolution)
+            summary["owner_resolution"] = resolution
+            summary["owner_resolution_history"] = history[-20:]
+            summary["resolution_status"] = normalized_action
+
+            for task in sorted(plan.tasks, key=lambda item: item.sequence):
+                if task.task_type != "operating_follow_up.review":
+                    continue
+                task_result = dict(task.result or {})
+                task_result["owner_resolution"] = resolution
+                task_result["review_status"] = normalized_action
+                task.result = task_result
+                task.status = "completed"
+                task.error = None
+                task.completed_at = task.completed_at or now
+                task.updated_at = now
+
+            summary.update(self._plan_summary(plan.tasks))
+            plan.status = "completed"
+            plan.summary = summary
+            plan.completed_at = plan.completed_at or now
+            plan.updated_at = now
+            await session.commit()
+            response = self._plan_to_dict(plan)
+
+        if self._audit:
+            await self._audit.record(
+                event_type=f"operating_follow_up.{normalized_action}",
+                actor=actor,
+                actor_type="user",
+                resource_type="autonomous_plan",
+                resource_id=plan_id,
+                action=normalized_action,
+                outcome="success",
+                metadata={
+                    "note": note[:2000],
+                    "defer_until": defer_until,
+                    "kind": resolution.get("kind"),
+                    "target_view": resolution.get("target_view"),
+                    "target_type": resolution.get("target_type"),
+                    "target_id": resolution.get("target_id"),
+                },
+            )
+        return response
 
     async def scan_operating_cadences(
         self,
@@ -1871,6 +1964,8 @@ class AutonomousPlanningService:
         risk_level = self._normalize_risk(
             follow_up.get("risk_level") or plan.get("priority")
         )
+        summary = plan.get("summary") or {}
+        owner_resolution = summary.get("owner_resolution")
         return {
             "plan_id": plan["id"],
             "title": plan["title"],
@@ -1905,6 +2000,10 @@ class AutonomousPlanningService:
                 context.get("manual_only_side_effects")
                 or not follow_up.get("external_side_effects_allowed")
             ),
+            "owner_resolution": owner_resolution,
+            "resolution_action": (
+                owner_resolution.get("action") if owner_resolution else None
+            ),
             "task_count": task_count,
             "completed_task_count": completed_task_count,
             "active_task": (
@@ -1928,6 +2027,9 @@ class AutonomousPlanningService:
         plan: dict[str, Any],
         active_task: dict[str, Any] | None,
     ) -> str:
+        owner_resolution = (plan.get("summary") or {}).get("owner_resolution") or {}
+        if owner_resolution.get("action"):
+            return f"{owner_resolution['action']}_follow_up"
         if plan["status"] == "completed":
             return "review_linked_owner_console_area"
         if plan["status"] == "waiting_approval" or (
@@ -1965,12 +2067,14 @@ class AutonomousPlanningService:
             "by_kind": {},
             "by_target_view": {},
             "by_risk": {},
+            "by_resolution": {},
         }
         for item in items:
             status = item["status"]
             kind = item["kind"]
             target_view = item["target_view"]
             risk = item["risk_level"]
+            resolution = item.get("resolution_action") or "unresolved"
             if status in AutonomousPlanningService.ACTIVE_PLAN_STATUSES:
                 counts["active"] += 1
             if status == "completed":
@@ -1981,6 +2085,9 @@ class AutonomousPlanningService:
                 counts["by_target_view"].get(target_view, 0) + 1
             )
             counts["by_risk"][risk] = counts["by_risk"].get(risk, 0) + 1
+            counts["by_resolution"][resolution] = (
+                counts["by_resolution"].get(resolution, 0) + 1
+            )
         return counts
 
     def _tool_readiness(self, requested_tools: list[str]) -> dict[str, Any]:

@@ -416,6 +416,11 @@ describe('ApiClient', () => {
         counts: { total: 1 },
         items: [{ plan_id: 'plan-follow-up-1' }],
       }))
+      .mockResolvedValueOnce(jsonResponse({
+        id: 'plan-follow-up-1',
+        status: 'completed',
+        summary: { owner_resolution: { action: 'deferred' } },
+      }))
     vi.stubGlobal('fetch', fetchMock)
     const client = new ApiClient('http://api.test')
 
@@ -427,6 +432,12 @@ describe('ApiClient', () => {
       company_namespace: 'company:acme',
       limit: 15,
     })
+    await client.resolveOperatingCadenceFollowUp(
+      'plan-follow-up-1',
+      'deferred',
+      'Wait for owner review.',
+      '2026-06-25T00:00:00Z',
+    )
 
     const followUpsUrl = new URL(fetchMock.mock.calls[0][0] as string)
     expect(followUpsUrl.pathname).toBe('/api/operations/operating-cadence/follow-ups')
@@ -435,6 +446,14 @@ describe('ApiClient', () => {
     expect(followUpsUrl.searchParams.get('target_view')).toBe('integrations')
     expect(followUpsUrl.searchParams.get('company_namespace')).toBe('company:acme')
     expect(followUpsUrl.searchParams.get('limit')).toBe('15')
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/operations/operating-cadence/follow-ups/plan-follow-up-1/resolve',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({
+      action: 'deferred',
+      note: 'Wait for owner review.',
+      defer_until: '2026-06-25T00:00:00Z',
+    })
   })
 
   it('fetches operations readiness, decision timeline, and GDPR workflows', async () => {

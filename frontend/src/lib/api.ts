@@ -651,6 +651,22 @@ class ApiClient {
     return this.request(`/api/operations/operating-cadence/follow-ups?${params.toString()}`);
   }
 
+  async resolveOperatingCadenceFollowUp(
+    planId: string,
+    action: 'reviewed' | 'deferred' | 'dismissed' = 'reviewed',
+    note: string = '',
+    deferUntil?: string
+  ) {
+    return this.request(`/api/operations/operating-cadence/follow-ups/${planId}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({
+        action,
+        note,
+        ...(deferUntil ? { defer_until: deferUntil } : {}),
+      }),
+    });
+  }
+
   async scanOperatingCadences(options: Record<string, any> = {}) {
     return this.request('/api/operations/operating-cadence/scan', {
       method: 'POST',

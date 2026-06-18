@@ -119,6 +119,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   const [operatingCadence, setOperatingCadence] = useState<any | null>(null)
   const [followUps, setFollowUps] = useState<any | null>(null)
   const [followUpStatus, setFollowUpStatus] = useState('active')
+  const [followUpNotes, setFollowUpNotes] = useState<Record<string, string>>({})
   const [timeline, setTimeline] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [plansLoading, setPlansLoading] = useState(false)
@@ -130,6 +131,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   const [driftScanning, setDriftScanning] = useState(false)
   const [cadenceScanning, setCadenceScanning] = useState(false)
   const [planAction, setPlanAction] = useState<string | null>(null)
+  const [followUpAction, setFollowUpAction] = useState<string | null>(null)
   const [runMemorySteward, setRunMemorySteward] = useState(true)
   const [runSupervisorReview, setRunSupervisorReview] = useState(true)
   const [runPlanner, setRunPlanner] = useState(true)
@@ -334,6 +336,35 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
     }
   }
 
+  const resolveFollowUp = async (
+    planId: string,
+    action: 'reviewed' | 'deferred' | 'dismissed'
+  ) => {
+    setFollowUpAction(`${planId}:${action}`)
+    setError(null)
+    try {
+      await api.resolveOperatingCadenceFollowUp(
+        planId,
+        action,
+        followUpNotes[planId] || '',
+      )
+      setFollowUpNotes((current) => {
+        const next = { ...current }
+        delete next[planId]
+        return next
+      })
+      await onRefresh()
+      await loadPlans()
+      await loadReadiness()
+      await loadFollowUps()
+      await loadTimeline()
+    } catch (e: any) {
+      setError(e.message || 'Cadence follow-up update failed')
+    } finally {
+      setFollowUpAction(null)
+    }
+  }
+
   const scanOperatingCadences = async () => {
     setCadenceScanning(true)
     setError(null)
@@ -454,7 +485,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                 build: {readiness.version?.build_sha}
               </span>
             </div>
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-5">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-6">
               <ReadinessPanel
                 title="Required Providers"
                 value={(readiness.integrations?.required_providers || []).join(', ') || 'none'}
@@ -508,6 +539,15 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                     : readiness.company_context?.drift_detection?.enabled
                       ? `every ${readiness.company_context.drift_detection.interval_seconds}s`
                       : 'scheduled scans are disabled'
+                }
+              />
+              <ReadinessPanel
+                title="Cadence Follow-Ups"
+                value={`${readiness.operating_follow_ups?.counts?.active || 0} active`}
+                detail={
+                  readiness.operating_follow_ups?.status === 'ready'
+                    ? `${readiness.operating_follow_ups?.counts?.completed || 0} completed`
+                    : readiness.operating_follow_ups?.detail || 'follow-up queue unavailable'
                 }
               />
             </div>
@@ -945,10 +985,72 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                             manual-only side effects
                           </span>
                         )}
+                        {item.resolution_action && (
+                          <span className="rounded-full border border-green-700/60 px-2 py-0.5 text-green-300">
+                            {String(item.resolution_action).replace(/_/g, ' ')}
+                          </span>
+                        )}
                       </div>
                       {item.active_task?.error && (
                         <div className="mt-3 rounded-lg border border-red-900 bg-red-950/30 px-3 py-2 text-xs text-red-200">
                           {item.active_task.error}
+                        </div>
+                      )}
+                      {item.owner_resolution ? (
+                        <div className="mt-3 rounded-lg border border-green-900/40 bg-green-950/20 px-3 py-2 text-xs text-green-100">
+                          <div className="font-medium">
+                            {String(item.owner_resolution.action || 'reviewed').replace(/_/g, ' ')}
+                            {' '}
+                            by {item.owner_resolution.resolver || 'owner'}
+                          </div>
+                          {item.owner_resolution.note && (
+                            <div className="mt-1 text-green-100/75">
+                              {item.owner_resolution.note}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="mt-3 space-y-2">
+                          <textarea
+                            value={followUpNotes[item.plan_id] || ''}
+                            onChange={(event) => setFollowUpNotes((current) => ({
+                              ...current,
+                              [item.plan_id]: event.target.value,
+                            }))}
+                            rows={2}
+                            maxLength={2000}
+                            placeholder="Owner note"
+                            className="w-full resize-none rounded-lg border border-slate-700 bg-slate-950/50 px-3 py-2 text-sm text-slate-100 outline-none focus:border-blue-500"
+                          />
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => resolveFollowUp(item.plan_id, 'reviewed')}
+                              disabled={followUpAction !== null}
+                              className="btn-secondary px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {followUpAction === `${item.plan_id}:reviewed`
+                                ? 'Saving...'
+                                : 'Mark Reviewed'}
+                            </button>
+                            <button
+                              onClick={() => resolveFollowUp(item.plan_id, 'deferred')}
+                              disabled={followUpAction !== null}
+                              className="btn-secondary px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {followUpAction === `${item.plan_id}:deferred`
+                                ? 'Saving...'
+                                : 'Defer'}
+                            </button>
+                            <button
+                              onClick={() => resolveFollowUp(item.plan_id, 'dismissed')}
+                              disabled={followUpAction !== null}
+                              className="btn-secondary px-3 py-1.5 text-xs text-red-200 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {followUpAction === `${item.plan_id}:dismissed`
+                                ? 'Saving...'
+                                : 'Dismiss'}
+                            </button>
+                          </div>
                         </div>
                       )}
                       <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
@@ -969,6 +1071,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                             disabled={
                               !canExecutePlan({ status: item.status })
                               || planAction !== null
+                              || followUpAction !== null
                             }
                             className="btn-primary flex items-center gap-2 px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                           >

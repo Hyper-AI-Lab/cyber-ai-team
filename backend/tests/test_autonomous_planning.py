@@ -530,6 +530,59 @@ async def test_operating_cadence_follow_up_plan_executes_as_owner_review_ready()
 
 
 @pytest.mark.asyncio
+async def test_operating_cadence_follow_up_resolution_records_owner_decision():
+    engine, session_factory = await build_session_factory()
+    manager = FakeAgentManager(
+        {"status": "resolved"},
+        operating_cadence_result=operating_cadence_summary(),
+    )
+    try:
+        service = AutonomousPlanningService(
+            agent_manager=manager,
+            memory_steward_service=FakeMemorySteward(),
+            tool_registry=low_risk_tool_registry(),
+            session_factory=session_factory,
+        )
+
+        await service.scan_operating_cadences(actor="test", auto_execute=True)
+        follow_ups = await service.list_plans(source_type="operating_cadence_follow_up")
+        follow_up = next(
+            item
+            for item in follow_ups
+            if item["context"]["follow_up"]["kind"] == "role_backlog_review"
+        )
+
+        result = await service.resolve_operating_follow_up(
+            follow_up["id"],
+            action="deferred",
+            note="Wait for the next ERPNext sync.",
+            actor="owner@example.com",
+            defer_until="2026-06-25T00:00:00Z",
+        )
+
+        assert result["status"] == "completed"
+        assert result["summary"]["owner_resolution"]["action"] == "deferred"
+        assert result["summary"]["owner_resolution"]["resolver"] == "owner@example.com"
+        assert result["summary"]["owner_resolution"]["defer_until"] == "2026-06-25T00:00:00Z"
+        assert result["tasks"][0]["status"] == "completed"
+        assert result["tasks"][0]["result"]["review_status"] == "deferred"
+        assert result["tasks"][0]["result"]["owner_resolution"]["note"] == (
+            "Wait for the next ERPNext sync."
+        )
+
+        queue = await service.list_operating_follow_ups(
+            status="completed",
+            kind="role_backlog_review",
+        )
+        assert queue["counts"]["total"] == 1
+        assert queue["counts"]["by_resolution"] == {"deferred": 1}
+        assert queue["items"][0]["resolution_action"] == "deferred"
+        assert queue["items"][0]["next_action"] == "deferred_follow_up"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_owner_approved_role_gap_plan_continues_after_review():
     engine, session_factory = await build_session_factory()
     manager = FakeAgentManager(

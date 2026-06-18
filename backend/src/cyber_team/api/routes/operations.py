@@ -65,6 +65,12 @@ class OperatingCadenceScanRequest(BaseModel):
     limit: int = Field(default=200, ge=1, le=500)
 
 
+class OperatingCadenceFollowUpResolveRequest(BaseModel):
+    action: str = Field(default="reviewed", pattern="^(reviewed|deferred|dismissed)$")
+    note: str = Field(default="", max_length=2000)
+    defer_until: str | None = None
+
+
 class RetentionCleanupRequest(BaseModel):
     dry_run: bool = True
 
@@ -353,6 +359,34 @@ async def list_operating_cadence_follow_ups(
     )
 
 
+@router.post("/operating-cadence/follow-ups/{plan_id}/resolve")
+async def resolve_operating_cadence_follow_up(
+    plan_id: str,
+    data: OperatingCadenceFollowUpResolveRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        data.action,
+        "operating_cadence_follow_up",
+        plan_id,
+        context=data.model_dump(),
+    )
+    planner = request.app.state.autonomous_planning_service
+    try:
+        return await planner.resolve_operating_follow_up(
+            plan_id,
+            action=data.action,
+            note=data.note,
+            actor=principal.email,
+            defer_until=data.defer_until,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.post("/operating-cadence/scan")
 async def scan_operating_cadences(
     data: OperatingCadenceScanRequest,
@@ -505,6 +539,53 @@ async def operations_readiness(
                     "active_plans": 0,
                 },
             }
+    operating_follow_ups_status = {
+        "status": "unavailable",
+        "detail": "Autonomous planner follow-up queue is not available.",
+        "counts": {
+            "active": 0,
+            "completed": 0,
+            "total_visible": 0,
+        },
+        "active": None,
+        "completed": None,
+    }
+    if planner and hasattr(planner, "list_operating_follow_ups"):
+        try:
+            active_follow_ups = await planner.list_operating_follow_ups(
+                status="active",
+                limit=200,
+            )
+            completed_follow_ups = await planner.list_operating_follow_ups(
+                status="completed",
+                limit=200,
+            )
+            operating_follow_ups_status = {
+                "status": "ready",
+                "detail": "Operating cadence follow-up queue is available.",
+                "counts": {
+                    "active": active_follow_ups.get("counts", {}).get("total", 0),
+                    "completed": completed_follow_ups.get("counts", {}).get("total", 0),
+                    "total_visible": (
+                        active_follow_ups.get("counts", {}).get("total", 0)
+                        + completed_follow_ups.get("counts", {}).get("total", 0)
+                    ),
+                },
+                "active": active_follow_ups.get("counts", {}),
+                "completed": completed_follow_ups.get("counts", {}),
+            }
+        except Exception as exc:
+            operating_follow_ups_status = {
+                "status": "degraded",
+                "detail": str(exc),
+                "counts": {
+                    "active": 0,
+                    "completed": 0,
+                    "total_visible": 0,
+                },
+                "active": None,
+                "completed": None,
+            }
 
     evidence = await request.app.state.audit_service.list_events(
         event_type="control.evidence",
@@ -549,6 +630,7 @@ async def operations_readiness(
         },
         "company_context": company_context_status,
         "operating_cadence": operating_cadence_status,
+        "operating_follow_ups": operating_follow_ups_status,
         "memory": {
             "recent_traces_reviewed": len(traces),
             "recent_trace_errors": len(trace_errors),

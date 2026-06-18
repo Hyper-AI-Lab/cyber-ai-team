@@ -243,6 +243,10 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
         "counts": {"cadences": 1, "due": 0, "not_due": 1, "active_plans": 0},
         "items": [],
     }
+    app.state.autonomous_planning_service.list_operating_follow_ups.side_effect = [
+        {"counts": {"total": 2, "by_resolution": {"unresolved": 2}}, "items": []},
+        {"counts": {"total": 3, "by_resolution": {"reviewed": 2, "dismissed": 1}}, "items": []},
+    ]
     app.state.audit_service = AsyncMock()
     app.state.audit_service.list_events.return_value = []
     app.state.memory_service = AsyncMock()
@@ -281,6 +285,11 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
     assert body["integrations"]["optional_disabled"][0]["provider"] == "twilio"
     assert body["company_context"]["status"] == "ready"
     assert body["operating_cadence"]["counts"]["cadences"] == 1
+    assert body["operating_follow_ups"]["counts"] == {
+        "active": 2,
+        "completed": 3,
+        "total_visible": 5,
+    }
 
 
 def test_plan_scan_forces_manual_only_autonomy(monkeypatch):
@@ -346,6 +355,11 @@ def test_operating_cadence_routes(monkeypatch):
         "counts": {"total": 1, "active": 0, "completed": 1},
         "items": [{"plan_id": "plan_follow_up_1", "kind": "erpnext_review"}],
     }
+    app.state.autonomous_planning_service.resolve_operating_follow_up.return_value = {
+        "id": "plan_follow_up_1",
+        "status": "completed",
+        "summary": {"owner_resolution": {"action": "dismissed"}},
+    }
     monkeypatch.setattr(
         "cyber_team.api.routes.operations.settings.autonomy_side_effect_mode",
         "manual_only",
@@ -383,6 +397,10 @@ def test_operating_cadence_routes(monkeypatch):
         "&target_view=integrations"
         "&limit=25"
     )
+    resolve_response = client.post(
+        "/api/operations/operating-cadence/follow-ups/plan_follow_up_1/resolve",
+        json={"action": "dismissed", "note": "No longer relevant."},
+    )
 
     assert status_response.status_code == 200
     assert status_response.json()["counts"]["due"] == 1
@@ -390,6 +408,8 @@ def test_operating_cadence_routes(monkeypatch):
     assert scan_response.json()["plans_created"] == 1
     assert follow_up_response.status_code == 200
     assert follow_up_response.json()["items"][0]["plan_id"] == "plan_follow_up_1"
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["summary"]["owner_resolution"]["action"] == "dismissed"
     app.state.autonomous_planning_service.operating_cadence_status.assert_awaited_once_with(
         company_namespace="company:acme",
         limit=25,
@@ -406,6 +426,13 @@ def test_operating_cadence_routes(monkeypatch):
         target_view="integrations",
         company_namespace="company:acme",
         limit=25,
+    )
+    app.state.autonomous_planning_service.resolve_operating_follow_up.assert_awaited_once_with(
+        "plan_follow_up_1",
+        action="dismissed",
+        note="No longer relevant.",
+        actor="owner@example.com",
+        defer_until=None,
     )
 
 

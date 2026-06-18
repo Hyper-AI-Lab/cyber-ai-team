@@ -942,6 +942,36 @@
 - Next step:
   - Commit this deployment evidence entry, push to GitHub, and watch CI for the pushed head.
 
+## 2026-06-18T08:30:41Z - STEP-040 - Operating cadence follow-up owner resolution v1
+
+- Files/services changed:
+  - `backend/src/cyber_team/operations/planning.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/tests/test_autonomous_planning.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/OperationsView.tsx`
+- Commands run:
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_autonomous_planning.py tests/test_api_operations.py -q`
+  - `npx -y node@20 ./node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `PYTHONPATH=src ../.venv-quality/bin/ruff check src tests`
+- Result:
+  - Added `AutonomousPlanningService.resolve_operating_follow_up()` to record owner follow-up decisions as durable plan summary metadata without a migration.
+  - Added owner-authorized `POST /api/operations/operating-cadence/follow-ups/{plan_id}/resolve` supporting `reviewed`, `deferred`, and `dismissed` decisions with owner notes.
+  - Follow-up resolution completes pending follow-up review tasks safely and records owner resolution details in the task result and plan summary.
+  - Added follow-up queue readiness counts under `GET /api/operations/readiness`.
+  - Updated Operations owner console follow-up cards with owner note input, Mark Reviewed, Defer, Dismiss actions, and resolution display.
+  - Focused backend tests passed: `18 passed, 2 warnings`.
+  - Frontend API tests passed: `17 passed`.
+  - Ruff passed.
+- Evidence path/link:
+  - `backend/tests/test_autonomous_planning.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/lib/api.test.ts`
+- Next step:
+  - Run the full local quality gate, deploy to staging, smoke the live resolution endpoint against the current completed follow-up, commit, push, and watch GitHub CI.
+
 ## 2026-06-18T03:24:29Z - STEP-037 - Operating cadence follow-up queue v1
 
 - Files/services changed:
