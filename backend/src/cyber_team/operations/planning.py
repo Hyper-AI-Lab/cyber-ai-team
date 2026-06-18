@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -784,7 +785,12 @@ class AutonomousPlanningService:
             elif task["task_type"] == "operating_cadence.prepare_review":
                 result = await self._execute_operating_cadence_prepare_review(task)
             elif task["task_type"] == "operating_cadence.record_next_actions":
-                result = await self._execute_operating_cadence_record_next_actions(task)
+                result = await self._execute_operating_cadence_record_next_actions(
+                    task,
+                    actor,
+                )
+            elif task["task_type"] == "operating_follow_up.review":
+                result = await self._execute_operating_follow_up_review(task)
             else:
                 raise ValueError(f"Unsupported autonomous task type: {task['task_type']}")
         except Exception as exc:
@@ -1253,9 +1259,20 @@ class AutonomousPlanningService:
     async def _execute_operating_cadence_record_next_actions(
         self,
         task: dict[str, Any],
+        actor: str,
     ) -> dict[str, Any]:
         cadence = task["action_payload"].get("cadence") or {}
         policy = task["action_payload"].get("policy") or {}
+        follow_up_specs = self._operating_cadence_follow_up_specs(cadence, task)
+        follow_up_plans = []
+        for spec in follow_up_specs:
+            follow_up_plans.append(
+                await self._create_operating_follow_up_plan(
+                    spec,
+                    parent_task=task,
+                    actor=actor,
+                )
+            )
         result = {
             "cadence_id": cadence.get("cadence_id") or task["target_id"],
             "safe_internal_actions": [
@@ -1263,6 +1280,8 @@ class AutonomousPlanningService:
                 "Open related role backlog, memory, or ERPNext context if the brief flags risk.",
                 "Create or approve downstream work only through the existing approval flows.",
             ],
+            "follow_ups": follow_up_specs,
+            "follow_up_plans": follow_up_plans,
             "external_side_effects": {
                 "allowed": False,
                 "reason": policy.get(
@@ -1271,6 +1290,23 @@ class AutonomousPlanningService:
                 ),
             },
             "next_due_hint": cadence.get("next_due_at"),
+        }
+        return await self._finish_task(task["id"], "completed", result=result)
+
+    async def _execute_operating_follow_up_review(
+        self,
+        task: dict[str, Any],
+    ) -> dict[str, Any]:
+        follow_up = task["action_payload"].get("follow_up") or {}
+        result = {
+            "follow_up": follow_up,
+            "review_status": "ready_for_owner",
+            "manual_only_side_effects": True,
+            "owner_guidance": (
+                "Review this follow-up, then use the linked owner-console area for "
+                "any concrete action. External writes, communications, and provider "
+                "mutations still require their dedicated approval flows."
+            ),
         }
         return await self._finish_task(task["id"], "completed", result=result)
 
@@ -1393,6 +1429,63 @@ class AutonomousPlanningService:
             )
             plan = result.scalars().first()
             return self._plan_to_dict(plan, include_tasks=False) if plan else None
+
+    async def _create_operating_follow_up_plan(
+        self,
+        spec: dict[str, Any],
+        *,
+        parent_task: dict[str, Any],
+        actor: str,
+    ) -> dict[str, Any]:
+        source_id = spec["source_id"]
+        existing = await self._find_active_plan("operating_cadence_follow_up", source_id)
+        if existing:
+            return {
+                "status": "existing",
+                "plan_id": existing["id"],
+                "source_id": source_id,
+                "kind": spec["kind"],
+            }
+
+        task_specs = self._number_task_specs([
+            self._task_spec(
+                spec["title"],
+                spec["description"],
+                "operating_follow_up.review",
+                spec["target_type"],
+                spec.get("target_id"),
+                spec["risk_level"],
+                {"follow_up": spec},
+                agent_id=spec.get("agent_id"),
+                autonomous_allowed=False,
+            )
+        ])
+        plan = await self._create_plan(
+            title=spec["title"],
+            objective=spec["description"],
+            source_type="operating_cadence_follow_up",
+            source_id=source_id,
+            priority=spec["risk_level"],
+            created_by=actor,
+            context={
+                "parent_plan_id": parent_task["plan_id"],
+                "parent_task_id": parent_task["id"],
+                "cadence_id": spec["cadence_id"],
+                "agent_id": spec.get("agent_id"),
+                "role_name": spec.get("role_name"),
+                "role_family": spec.get("role_family"),
+                "company_namespace": spec.get("company_namespace"),
+                "follow_up": spec,
+                "manual_only_side_effects": True,
+            },
+            task_specs=task_specs,
+        )
+        return {
+            "status": "created",
+            "plan_id": plan["id"],
+            "source_id": source_id,
+            "kind": spec["kind"],
+        }
 
     async def _create_plan(
         self,
@@ -1519,6 +1612,188 @@ class AutonomousPlanningService:
                 "Cadence reviews may inspect and summarize, but production external "
                 "side effects require explicit owner approval."
             ),
+        }
+
+    def _operating_cadence_follow_up_specs(
+        self,
+        cadence: dict[str, Any],
+        task: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        cadence_id = cadence.get("cadence_id") or task["target_id"]
+        signals = {
+            str(signal).lower()
+            for signal in [
+                *list(cadence.get("signals") or []),
+                *list((cadence.get("cadence") or {}).get("signals") or []),
+            ]
+            if signal
+        }
+        role_family = str(cadence.get("role_family") or "operations").lower()
+        base = {
+            "cadence_id": cadence_id,
+            "agent_id": cadence.get("agent_id") or task.get("agent_id"),
+            "role_name": cadence.get("role_name") or "Operating role",
+            "role_family": cadence.get("role_family") or "operations",
+            "company_namespace": cadence.get("company_namespace"),
+            "source_snapshot_id": cadence.get("source_snapshot_id"),
+            "source_role_gap_id": cadence.get("source_role_gap_id"),
+            "review_window": cadence.get("review_window") or "Operating review",
+            "signals": sorted(signals),
+        }
+        specs: list[dict[str, Any]] = []
+        if base["source_role_gap_id"]:
+            specs.append(
+                self._operating_follow_up_spec(
+                    base,
+                    kind="role_backlog_review",
+                    title=f"Review role backlog linked to {base['role_name']}",
+                    description=(
+                        "Inspect the source role gap and confirm whether the active "
+                        "role still has missing tools, approval needs, or stale context."
+                    ),
+                    target_type="role_gap",
+                    target_id=base["source_role_gap_id"],
+                    target_view="agents",
+                    recommended_action="review_role_gap",
+                    risk_level="low",
+                )
+            )
+        if signals & {"memory_trace", "empty_recall", "stale_memory", "namespace"}:
+            specs.append(
+                self._operating_follow_up_spec(
+                    base,
+                    kind="memory_steward_review",
+                    title=f"Review memory health for {base['role_name']}",
+                    description=(
+                        "Inspect recent memory traces, empty recalls, stale procedural "
+                        "memory, and namespace quality before the next cadence."
+                    ),
+                    target_type="memory",
+                    target_id=base["agent_id"],
+                    target_view="memory",
+                    recommended_action="review_memory_traces",
+                    risk_level="low",
+                )
+            )
+        if signals & {
+            "lead",
+            "opportunity",
+            "customer",
+            "supplier",
+            "sales_invoice",
+            "material_request",
+            "issue",
+            "ticket",
+            "item",
+            "project",
+            "task",
+            "cash_risk",
+            "sla",
+        }:
+            specs.append(
+                self._operating_follow_up_spec(
+                    base,
+                    kind="erpnext_review",
+                    title=f"Review ERPNext signals for {base['role_name']}",
+                    description=(
+                        "Inspect relevant ERPNext records and summarize any business "
+                        "exceptions without mutating ERPNext automatically."
+                    ),
+                    target_type="erpnext",
+                    target_id=base["company_namespace"],
+                    target_view="integrations",
+                    recommended_action="review_erpnext_context",
+                    risk_level="low",
+                )
+            )
+        if signals & {"audit_event", "auth_failure", "tool_misuse", "secret", "compliance_risk"}:
+            specs.append(
+                self._operating_follow_up_spec(
+                    base,
+                    kind="security_control_review",
+                    title=f"Review security controls for {base['role_name']}",
+                    description=(
+                        "Review audit evidence, auth failures, tool-misuse signals, "
+                        "and secret-handling posture before approving operational changes."
+                    ),
+                    target_type="security_control",
+                    target_id=base["agent_id"],
+                    target_view="operations",
+                    recommended_action="review_security_controls",
+                    risk_level="medium",
+                )
+            )
+        if signals & {"email", "call", "message", "owner_notification", "follow_up"}:
+            specs.append(
+                self._operating_follow_up_spec(
+                    base,
+                    kind="owner_approval_watch",
+                    title=f"Review external-action approvals for {base['role_name']}",
+                    description=(
+                        "Check pending approvals before any outreach, provider write, "
+                        "or customer-facing communication is executed."
+                    ),
+                    target_type="approval_queue",
+                    target_id=base["agent_id"],
+                    target_view="approvals",
+                    recommended_action="review_pending_approvals",
+                    risk_level="medium",
+                )
+            )
+        if not specs:
+            specs.append(
+                self._operating_follow_up_spec(
+                    base,
+                    kind=f"{role_family}_operating_review",
+                    title=f"Review operating loop for {base['role_name']}",
+                    description=(
+                        "Review the cadence brief and decide whether any role, memory, "
+                        "workflow, or company-context work should be queued next."
+                    ),
+                    target_type="operating_cadence",
+                    target_id=cadence_id,
+                    target_view="operations",
+                    recommended_action="review_operating_brief",
+                    risk_level="low",
+                )
+            )
+        return specs
+
+    @staticmethod
+    def _operating_follow_up_spec(
+        base: dict[str, Any],
+        *,
+        kind: str,
+        title: str,
+        description: str,
+        target_type: str,
+        target_id: str | None,
+        target_view: str,
+        recommended_action: str,
+        risk_level: str,
+    ) -> dict[str, Any]:
+        dedupe_basis = "|".join(
+            [
+                str(base["cadence_id"]),
+                kind,
+                str(target_type),
+                str(target_id or ""),
+            ]
+        )
+        source_id = f"followup_{hashlib.sha256(dedupe_basis.encode()).hexdigest()[:16]}"
+        return {
+            **base,
+            "kind": kind,
+            "title": title,
+            "description": description,
+            "target_type": target_type,
+            "target_id": target_id,
+            "target_view": target_view,
+            "recommended_action": recommended_action,
+            "risk_level": risk_level,
+            "source_id": source_id,
+            "dedupe_key": dedupe_basis,
+            "external_side_effects_allowed": False,
         }
 
     def _tool_readiness(self, requested_tools: list[str]) -> dict[str, Any]:

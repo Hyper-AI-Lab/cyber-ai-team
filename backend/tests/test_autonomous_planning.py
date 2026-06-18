@@ -435,6 +435,22 @@ async def test_operating_cadence_scan_creates_due_plan_and_executes_safe_tasks()
         assert plan["tasks"][1]["result"]["owner_guidance"].startswith(
             "Use this brief"
         )
+        follow_up_result = plan["tasks"][2]["result"]
+        assert follow_up_result["follow_ups"][0]["kind"] == "role_backlog_review"
+        assert follow_up_result["follow_up_plans"][0]["status"] == "created"
+        follow_ups = await service.list_plans(source_type="operating_cadence_follow_up")
+        assert len(follow_ups) == 2
+        assert {item["context"]["follow_up"]["kind"] for item in follow_ups} == {
+            "role_backlog_review",
+            "erpnext_review",
+        }
+        role_follow_up = next(
+            item
+            for item in follow_ups
+            if item["context"]["follow_up"]["kind"] == "role_backlog_review"
+        )
+        assert role_follow_up["context"]["parent_plan_id"] == plan["id"]
+        assert role_follow_up["context"]["follow_up"]["target_type"] == "role_gap"
     finally:
         await engine.dispose()
 
@@ -463,6 +479,33 @@ async def test_operating_cadence_scan_skips_fresh_completed_plan():
         assert second["status"]["counts"]["not_due"] == 1
         plans = await service.list_plans(source_type="operating_cadence")
         assert len(plans) == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_operating_cadence_follow_up_plan_executes_as_owner_review_ready():
+    engine, session_factory = await build_session_factory()
+    manager = FakeAgentManager(
+        {"status": "resolved"},
+        operating_cadence_result=operating_cadence_summary(),
+    )
+    try:
+        service = AutonomousPlanningService(
+            agent_manager=manager,
+            memory_steward_service=FakeMemorySteward(),
+            tool_registry=low_risk_tool_registry(),
+            session_factory=session_factory,
+        )
+
+        await service.scan_operating_cadences(actor="test", auto_execute=True)
+        follow_up = (await service.list_plans(source_type="operating_cadence_follow_up"))[0]
+        result = await service.execute_plan(follow_up["id"], actor="owner@example.com")
+
+        assert result["status"] == "completed"
+        refreshed = await service.get_plan(follow_up["id"])
+        assert refreshed["tasks"][0]["result"]["review_status"] == "ready_for_owner"
+        assert refreshed["tasks"][0]["result"]["manual_only_side_effects"] is True
     finally:
         await engine.dispose()
 

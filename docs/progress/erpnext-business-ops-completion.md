@@ -942,6 +942,39 @@
 - Next step:
   - Commit this deployment evidence entry, push to GitHub, and watch CI for the pushed head.
 
+## 2026-06-18T02:05:13Z - STEP-035 - Operating cadence follow-up plans v1
+
+- Files/services changed:
+  - `backend/src/cyber_team/operations/planning.py`
+  - `backend/tests/test_autonomous_planning.py`
+  - `frontend/src/components/OperationsView.tsx`
+- Commands run:
+  - `python3 -m py_compile backend/src/cyber_team/operations/planning.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_autonomous_planning.py -q`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/operations/planning.py backend/tests/test_autonomous_planning.py`
+  - `npx -y node@20 node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `npx -y node@20 node_modules/typescript/bin/tsc --noEmit`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `npx -y node@20 node_modules/next/dist/bin/next build`
+  - `python3 -m compileall -q backend/src backend/tests`
+  - `git diff --check`
+  - `python3 scripts/secret-scan.py`
+- Result:
+  - Completed operating-cadence plans now create durable child `operating_cadence_follow_up` plans instead of ending with only checklist text.
+  - Follow-up plans are deduped while active using deterministic source IDs and keep parent plan/task, cadence, agent, role, function, company namespace, target view, recommended action, and manual-only side-effect metadata.
+  - Follow-up categories now include role backlog review, ERPNext review, memory steward review, security control review, owner approval watch, and a safe generic operating review fallback.
+  - Added an `operating_follow_up.review` task executor that marks follow-ups ready for owner review while preserving manual-only external side-effect policy.
+  - Operations plan labels now render `operating_cadence_follow_up` as `Cadence follow-up` and show follow-up kind/action chips.
+  - Focused autonomous planning tests passed: `10 passed`.
+  - Full backend tests passed: `152 passed`.
+  - Frontend API tests passed: `16 passed`.
+  - Ruff, Python compile, TypeScript, Next production build, secret scan, and diff hygiene passed.
+- Evidence path/link:
+  - `backend/tests/test_autonomous_planning.py`
+  - `frontend/src/components/OperationsView.tsx`
+- Next step:
+  - Commit, deploy this follow-up plan slice to staging, smoke test, execute the live cadence plan, verify child follow-up plans, push to GitHub, and watch CI.
+
 ## 2026-06-18T01:32:14Z - STEP-033 - Operating cadence planning loop v1
 
 - Files/services changed:

@@ -63,6 +63,7 @@ function sourceLabel(plan: any) {
   if (plan.source_type === 'memory_steward_finding') return 'Memory'
   if (plan.source_type === 'company_context_snapshot') return 'Company context'
   if (plan.source_type === 'operating_cadence') return 'Operating cadence'
+  if (plan.source_type === 'operating_cadence_follow_up') return 'Cadence follow-up'
   return plan.source_type || 'Unknown'
 }
 
@@ -92,7 +93,10 @@ function planApproval(plan: any) {
 function planSignals(plan: any) {
   const policy = planPolicy(plan)
   const readiness = policy.tool_readiness || {}
+  const followUp = plan.context?.follow_up || {}
   const signals = [
+    ...(followUp.kind ? [`Follow-up: ${followUp.kind}`] : []),
+    ...(followUp.recommended_action ? [`Action: ${followUp.recommended_action}`] : []),
     ...(policy.review_reasons || []),
     ...(readiness.missing_tools?.length
       ? [`Missing tools: ${readiness.missing_tools.join(', ')}`]
