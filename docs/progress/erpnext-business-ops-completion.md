@@ -979,6 +979,36 @@
 - Next step:
   - Run the full quality gate, deploy scheduler changes to staging, wait for the first automatic scan, verify readiness reports the completed scheduler run, commit, push, and watch GitHub CI.
 
+## 2026-06-18T10:41:34Z - STEP-043 - Scheduled operating cadence runner staging deploy and verification
+
+- Files/services changed:
+  - Rebuilt staging Docker images for `core` and `ui` from commit `5c1c4a2d8d8a349381e53f22e16a95f42d8e16ac`.
+  - Restarted staging `core`, `worker`, and `ui`.
+  - Live scheduler verification evidence was written under ignored `dist/operating-cadence-scheduler/`.
+  - This tracked entry records deployment evidence after the feature commit.
+- Commands run:
+  - `SKIP_BACKEND_INSTALL=1 SKIP_FRONTEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 scripts/quality-gate.sh`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env build core ui`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env up -d core worker ui`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env ./scripts/compose-smoke.sh`
+  - Owner-authenticated `GET /api/operations/readiness` polling until `operating_cadence_scheduler.status` reached `completed`.
+- Result:
+  - Full quality gate passed: backend Ruff, full backend tests, compile, Alembic offline SQL, backend dependency audit, frontend production build, frontend typecheck, frontend tests, frontend audit, compose config, script/dashboard syntax, secret scan, and diff hygiene.
+  - Full backend tests passed: `155 passed, 2 warnings`.
+  - Frontend API tests passed under Node 20: `17 passed`.
+  - Docker build completed for `cyber-team-core:latest` and `cyber-team-ui:latest`; frontend Docker `npm ci` reported `found 0 vulnerabilities`.
+  - Staging `core` became healthy and `ui` started successfully.
+  - Compose smoke passed: health, readiness, UI, owner login, dashboard KPIs, integration status, WebSocket ticket, tool readiness, and approval queue behavior.
+  - `/health` reports version `5c1c4a2` and build SHA `5c1c4a2d8d8a349381e53f22e16a95f42d8e16ac`.
+  - Live readiness reports `operating_cadence_scheduler.status=completed`, `enabled=true`, `auto_execute=false`, `cadences_reviewed=1`, `cadences_due=0`, and `plans_created=0`.
+- Evidence path/link:
+  - `https://cyberteam.hyperailab.com/health`
+  - `dist/operating-cadence-scheduler/health-20260618T104125Z.json`
+  - `dist/operating-cadence-scheduler/readiness-20260618T104125Z.json`
+  - `dist/operating-cadence-scheduler/summary-20260618T104125Z.json`
+- Next step:
+  - Commit this deployment evidence entry, push both scheduler commits to GitHub, and watch CI for the pushed head.
+
 ## 2026-06-18T08:30:41Z - STEP-040 - Operating cadence follow-up owner resolution v1
 
 - Files/services changed:
