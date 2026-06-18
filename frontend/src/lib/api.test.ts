@@ -410,6 +410,33 @@ describe('ApiClient', () => {
     )
   })
 
+  it('fetches operating cadence follow-up queues', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        counts: { total: 1 },
+        items: [{ plan_id: 'plan-follow-up-1' }],
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.getOperatingCadenceFollowUps({
+      status: 'completed',
+      kind: 'erpnext_review',
+      target_view: 'integrations',
+      company_namespace: 'company:acme',
+      limit: 15,
+    })
+
+    const followUpsUrl = new URL(fetchMock.mock.calls[0][0] as string)
+    expect(followUpsUrl.pathname).toBe('/api/operations/operating-cadence/follow-ups')
+    expect(followUpsUrl.searchParams.get('status')).toBe('completed')
+    expect(followUpsUrl.searchParams.get('kind')).toBe('erpnext_review')
+    expect(followUpsUrl.searchParams.get('target_view')).toBe('integrations')
+    expect(followUpsUrl.searchParams.get('company_namespace')).toBe('company:acme')
+    expect(followUpsUrl.searchParams.get('limit')).toBe('15')
+  })
+
   it('fetches operations readiness, decision timeline, and GDPR workflows', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ status: 'ready' }))

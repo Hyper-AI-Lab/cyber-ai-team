@@ -942,6 +942,57 @@
 - Next step:
   - Commit this deployment evidence entry, push to GitHub, and watch CI for the pushed head.
 
+## 2026-06-18T03:24:29Z - STEP-037 - Operating cadence follow-up queue v1
+
+- Files/services changed:
+  - `backend/src/cyber_team/operations/planning.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/tests/test_autonomous_planning.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/OperationsView.tsx`
+- Commands run:
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_autonomous_planning.py tests/test_api_operations.py -q`
+  - `npx -y node@20 ./node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+- Result:
+  - Added `AutonomousPlanningService.list_operating_follow_ups()` to summarize cadence-generated follow-up plans by status, kind, target view, risk, and task progress without adding new persistence.
+  - Added owner-authorized `GET /api/operations/operating-cadence/follow-ups` with status/kind/target-view/company filters.
+  - Added Operations owner-console `Cadence Follow-Ups` queue with active/completed/risk counts, status filters, linked owner-console navigation, and explicit `Run Review` actions.
+  - Added frontend API client support for the new follow-up queue endpoint.
+  - Focused backend tests passed: `17 passed, 2 warnings`.
+  - Focused frontend API tests passed: `17 passed`.
+- Evidence path/link:
+  - `backend/tests/test_autonomous_planning.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/lib/api.test.ts`
+- Next step:
+  - Run broader quality gates, deploy to staging, smoke the live follow-up queue endpoint/UI bundle, commit, push, and watch GitHub CI.
+
+## 2026-06-18T03:30:10Z - STEP-038 - Operating cadence follow-up queue local verification
+
+- Files/services changed:
+  - `frontend/src/components/OperationsView.tsx` was tightened after the first full quality run to remove a React hooks warning in the new follow-up loader.
+  - No backend behavior changed after STEP-037.
+- Commands run:
+  - `SKIP_BACKEND_INSTALL=1 SKIP_FRONTEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 scripts/quality-gate.sh`
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_autonomous_planning.py tests/test_api_operations.py -q`
+  - `npx -y node@20 ./node_modules/next/dist/bin/next build && npx -y node@20 ./node_modules/typescript/bin/tsc --noEmit --incremental false && npx -y node@20 ./node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+- Result:
+  - Full local quality gate passed: backend Ruff, full backend tests, compile, Alembic offline SQL, dependency audit, frontend production build, frontend typecheck, frontend tests, frontend audit, compose config, script/dashboard syntax, secret scan, and diff hygiene.
+  - Full backend tests passed: `152 passed, 2 warnings`.
+  - Frontend build, typecheck, and API tests passed after the hook warning cleanup.
+  - Focused backend follow-up tests passed again: `17 passed, 2 warnings`.
+  - Focused frontend API tests passed again: `17 passed`.
+- Evidence path/link:
+  - `scripts/quality-gate.sh`
+  - `frontend/src/components/OperationsView.tsx`
+  - `backend/tests/test_autonomous_planning.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/lib/api.test.ts`
+- Next step:
+  - Deploy the follow-up queue to staging, run compose smoke, verify the live follow-up queue endpoint, commit, push, and watch GitHub CI.
+
 ## 2026-06-18T02:05:13Z - STEP-035 - Operating cadence follow-up plans v1
 
 - Files/services changed:

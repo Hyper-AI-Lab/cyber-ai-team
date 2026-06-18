@@ -451,6 +451,25 @@ async def test_operating_cadence_scan_creates_due_plan_and_executes_safe_tasks()
         )
         assert role_follow_up["context"]["parent_plan_id"] == plan["id"]
         assert role_follow_up["context"]["follow_up"]["target_type"] == "role_gap"
+
+        queue = await service.list_operating_follow_ups(
+            status="planned",
+            kind="role_backlog_review",
+        )
+        assert queue["counts"]["total"] == 1
+        assert queue["counts"]["active"] == 1
+        assert queue["counts"]["by_kind"] == {"role_backlog_review": 1}
+        assert queue["items"][0]["plan_id"] == role_follow_up["id"]
+        assert queue["items"][0]["parent_plan_id"] == plan["id"]
+        assert queue["items"][0]["target_view"] == "agents"
+        assert queue["items"][0]["next_action"] == "execute_follow_up_review"
+
+        erpnext_queue = await service.list_operating_follow_ups(
+            status="active",
+            target_view="integrations",
+        )
+        assert erpnext_queue["counts"]["total"] == 1
+        assert erpnext_queue["items"][0]["kind"] == "erpnext_review"
     finally:
         await engine.dispose()
 

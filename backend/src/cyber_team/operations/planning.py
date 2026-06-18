@@ -610,6 +610,62 @@ class AutonomousPlanningService:
             "recommended_owner_actions": cadence_summary.get("recommended_owner_actions", []),
         }
 
+    async def list_operating_follow_ups(
+        self,
+        *,
+        status: str | None = None,
+        kind: str | None = None,
+        target_view: str | None = None,
+        company_namespace: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Return owner-reviewable follow-up plans created by operating cadences."""
+
+        safe_limit = max(1, min(limit, 500))
+        status_filter = self._normalize_follow_up_status_filter(status)
+        scan_limit = 500 if any([kind, target_view, company_namespace]) else safe_limit
+        async with self._session_factory() as session:
+            query = (
+                select(AutonomousPlan)
+                .options(selectinload(AutonomousPlan.tasks))
+                .where(AutonomousPlan.source_type == "operating_cadence_follow_up")
+            )
+            db_statuses = self._db_statuses_for_follow_up_filter(status_filter)
+            if db_statuses:
+                query = query.where(AutonomousPlan.status.in_(db_statuses))
+            result = await session.execute(
+                query.order_by(desc(AutonomousPlan.updated_at)).limit(scan_limit)
+            )
+            plans = [
+                self._plan_to_dict(plan)
+                for plan in result.scalars().all()
+            ]
+
+        items = []
+        for plan in plans:
+            item = self._operating_follow_up_item(plan)
+            if kind and item["kind"] != kind:
+                continue
+            if target_view and item["target_view"] != target_view:
+                continue
+            if company_namespace and item["company_namespace"] != company_namespace:
+                continue
+            items.append(item)
+
+        limited_items = items[:safe_limit]
+        return {
+            "generated_at": utc_now().isoformat(),
+            "filters": {
+                "status": status_filter,
+                "kind": kind,
+                "target_view": target_view,
+                "company_namespace": company_namespace,
+                "limit": safe_limit,
+            },
+            "counts": self._operating_follow_up_counts(limited_items),
+            "items": limited_items,
+        }
+
     async def scan_operating_cadences(
         self,
         *,
@@ -1795,6 +1851,137 @@ class AutonomousPlanningService:
             "dedupe_key": dedupe_basis,
             "external_side_effects_allowed": False,
         }
+
+    def _operating_follow_up_item(self, plan: dict[str, Any]) -> dict[str, Any]:
+        context = plan.get("context") or {}
+        follow_up = context.get("follow_up") or {}
+        tasks = plan.get("tasks") or []
+        task_count = len(tasks)
+        completed_task_count = len(
+            [task for task in tasks if task.get("status") == "completed"]
+        )
+        active_task = next(
+            (
+                task
+                for task in tasks
+                if task.get("status") in {"planned", "running", "waiting_approval"}
+            ),
+            tasks[-1] if tasks else None,
+        )
+        risk_level = self._normalize_risk(
+            follow_up.get("risk_level") or plan.get("priority")
+        )
+        return {
+            "plan_id": plan["id"],
+            "title": plan["title"],
+            "description": plan["objective"],
+            "status": plan["status"],
+            "priority": plan["priority"],
+            "risk_level": risk_level,
+            "created_at": plan["created_at"],
+            "updated_at": plan["updated_at"],
+            "completed_at": plan.get("completed_at"),
+            "parent_plan_id": context.get("parent_plan_id"),
+            "parent_task_id": context.get("parent_task_id"),
+            "cadence_id": context.get("cadence_id") or follow_up.get("cadence_id"),
+            "agent_id": context.get("agent_id") or follow_up.get("agent_id"),
+            "role_name": context.get("role_name") or follow_up.get("role_name"),
+            "role_family": context.get("role_family") or follow_up.get("role_family"),
+            "company_namespace": (
+                context.get("company_namespace")
+                or follow_up.get("company_namespace")
+            ),
+            "kind": follow_up.get("kind") or "operating_review",
+            "target_type": follow_up.get("target_type"),
+            "target_id": follow_up.get("target_id"),
+            "target_view": follow_up.get("target_view") or "operations",
+            "recommended_action": (
+                follow_up.get("recommended_action") or "review_operating_brief"
+            ),
+            "source_snapshot_id": follow_up.get("source_snapshot_id"),
+            "source_role_gap_id": follow_up.get("source_role_gap_id"),
+            "dedupe_key": follow_up.get("dedupe_key"),
+            "manual_only_side_effects": bool(
+                context.get("manual_only_side_effects")
+                or not follow_up.get("external_side_effects_allowed")
+            ),
+            "task_count": task_count,
+            "completed_task_count": completed_task_count,
+            "active_task": (
+                {
+                    "task_id": active_task.get("id"),
+                    "title": active_task.get("title"),
+                    "status": active_task.get("status"),
+                    "approval_id": active_task.get("approval_id"),
+                    "result": active_task.get("result") or {},
+                    "error": active_task.get("error"),
+                }
+                if active_task
+                else None
+            ),
+            "next_action": self._operating_follow_up_next_action(plan, active_task),
+            "follow_up": follow_up,
+        }
+
+    def _operating_follow_up_next_action(
+        self,
+        plan: dict[str, Any],
+        active_task: dict[str, Any] | None,
+    ) -> str:
+        if plan["status"] == "completed":
+            return "review_linked_owner_console_area"
+        if plan["status"] == "waiting_approval" or (
+            active_task and active_task.get("status") == "waiting_approval"
+        ):
+            return "review_owner_approval"
+        if plan["status"] in self.EXECUTABLE_PLAN_STATUSES:
+            return "execute_follow_up_review"
+        if plan["status"] in {"blocked", "failed"}:
+            return "inspect_failure"
+        return "no_action"
+
+    def _normalize_follow_up_status_filter(self, status: str | None) -> str:
+        normalized = str(status or "active").strip().lower()
+        return normalized or "active"
+
+    def _db_statuses_for_follow_up_filter(self, status: str) -> set[str] | None:
+        if status in {"all", "*"}:
+            return None
+        if status == "active":
+            return set(self.ACTIVE_PLAN_STATUSES)
+        return {
+            item.strip()
+            for item in status.split(",")
+            if item.strip()
+        } or set(self.ACTIVE_PLAN_STATUSES)
+
+    @staticmethod
+    def _operating_follow_up_counts(items: list[dict[str, Any]]) -> dict[str, Any]:
+        counts: dict[str, Any] = {
+            "total": len(items),
+            "active": 0,
+            "completed": 0,
+            "by_status": {},
+            "by_kind": {},
+            "by_target_view": {},
+            "by_risk": {},
+        }
+        for item in items:
+            status = item["status"]
+            kind = item["kind"]
+            target_view = item["target_view"]
+            risk = item["risk_level"]
+            if status in AutonomousPlanningService.ACTIVE_PLAN_STATUSES:
+                counts["active"] += 1
+            if status == "completed":
+                counts["completed"] += 1
+            counts["by_status"][status] = counts["by_status"].get(status, 0) + 1
+            counts["by_kind"][kind] = counts["by_kind"].get(kind, 0) + 1
+            counts["by_target_view"][target_view] = (
+                counts["by_target_view"].get(target_view, 0) + 1
+            )
+            counts["by_risk"][risk] = counts["by_risk"].get(risk, 0) + 1
+        return counts
 
     def _tool_readiness(self, requested_tools: list[str]) -> dict[str, Any]:
         requested = self._unique(requested_tools)

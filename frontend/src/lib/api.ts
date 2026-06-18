@@ -626,6 +626,31 @@ class ApiClient {
     return this.request(`/api/operations/operating-cadence/status?${params.toString()}`);
   }
 
+  async getOperatingCadenceFollowUps(
+    filters: {
+      status?: string;
+      kind?: string;
+      target_view?: string;
+      company_namespace?: string;
+      limit?: number;
+    } = {}
+  ) {
+    const params = new URLSearchParams({
+      status: filters.status ?? 'active',
+      limit: String(filters.limit ?? 100),
+    });
+    if (filters.kind) {
+      params.set('kind', filters.kind);
+    }
+    if (filters.target_view) {
+      params.set('target_view', filters.target_view);
+    }
+    if (filters.company_namespace) {
+      params.set('company_namespace', filters.company_namespace);
+    }
+    return this.request(`/api/operations/operating-cadence/follow-ups?${params.toString()}`);
+  }
+
   async scanOperatingCadences(options: Record<string, any> = {}) {
     return this.request('/api/operations/operating-cadence/scan', {
       method: 'POST',

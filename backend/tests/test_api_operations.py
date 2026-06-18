@@ -334,6 +334,18 @@ def test_operating_cadence_routes(monkeypatch):
         "plans_created": 1,
         "created_plan_ids": ["plan_1"],
     }
+    app.state.autonomous_planning_service.list_operating_follow_ups.return_value = {
+        "generated_at": "2026-06-18T00:00:00",
+        "filters": {
+            "status": "completed",
+            "kind": "erpnext_review",
+            "target_view": "integrations",
+            "company_namespace": "company:acme",
+            "limit": 25,
+        },
+        "counts": {"total": 1, "active": 0, "completed": 1},
+        "items": [{"plan_id": "plan_follow_up_1", "kind": "erpnext_review"}],
+    }
     monkeypatch.setattr(
         "cyber_team.api.routes.operations.settings.autonomy_side_effect_mode",
         "manual_only",
@@ -363,11 +375,21 @@ def test_operating_cadence_routes(monkeypatch):
             "limit": 25,
         },
     )
+    follow_up_response = client.get(
+        "/api/operations/operating-cadence/follow-ups"
+        "?company_namespace=company%3Aacme"
+        "&status=completed"
+        "&kind=erpnext_review"
+        "&target_view=integrations"
+        "&limit=25"
+    )
 
     assert status_response.status_code == 200
     assert status_response.json()["counts"]["due"] == 1
     assert scan_response.status_code == 200
     assert scan_response.json()["plans_created"] == 1
+    assert follow_up_response.status_code == 200
+    assert follow_up_response.json()["items"][0]["plan_id"] == "plan_follow_up_1"
     app.state.autonomous_planning_service.operating_cadence_status.assert_awaited_once_with(
         company_namespace="company:acme",
         limit=25,
@@ -376,6 +398,13 @@ def test_operating_cadence_routes(monkeypatch):
         actor="owner@example.com",
         company_namespace="company:acme",
         auto_execute=False,
+        limit=25,
+    )
+    app.state.autonomous_planning_service.list_operating_follow_ups.assert_awaited_once_with(
+        status="completed",
+        kind="erpnext_review",
+        target_view="integrations",
+        company_namespace="company:acme",
         limit=25,
     )
 

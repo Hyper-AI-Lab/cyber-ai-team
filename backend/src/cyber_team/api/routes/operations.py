@@ -319,6 +319,40 @@ async def get_operating_cadence_status(
     )
 
 
+@router.get("/operating-cadence/follow-ups")
+async def list_operating_cadence_follow_ups(
+    request: Request,
+    status: str | None = "active",
+    kind: str | None = None,
+    target_view: str | None = None,
+    company_namespace: str | None = None,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    safe_limit = max(1, min(limit, 500))
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "operating_cadence_follow_up",
+        company_namespace or "all",
+        context={
+            "status": status,
+            "kind": kind,
+            "target_view": target_view,
+            "limit": safe_limit,
+        },
+    )
+    planner = request.app.state.autonomous_planning_service
+    return await planner.list_operating_follow_ups(
+        status=status,
+        kind=kind,
+        target_view=target_view,
+        company_namespace=company_namespace,
+        limit=safe_limit,
+    )
+
+
 @router.post("/operating-cadence/scan")
 async def scan_operating_cadences(
     data: OperatingCadenceScanRequest,
