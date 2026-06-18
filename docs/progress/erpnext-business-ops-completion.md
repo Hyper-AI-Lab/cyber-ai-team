@@ -993,6 +993,39 @@
 - Next step:
   - Deploy the follow-up queue to staging, run compose smoke, verify the live follow-up queue endpoint, commit, push, and watch GitHub CI.
 
+## 2026-06-18T03:35:15Z - STEP-039 - Operating cadence follow-up queue staging deploy and live verification
+
+- Files/services changed:
+  - Rebuilt staging Docker images for `core` and `ui` from commit `5823c061f1c040767efca7bfa99cfe33c700427c`.
+  - Restarted staging `core`, `worker`, and `ui`.
+  - Live verification evidence was written under ignored `dist/operating-cadence-followup-queue/`.
+  - This tracked entry records deployment evidence after the feature commit.
+- Commands run:
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env build core ui`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env up -d core worker ui`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env ./scripts/compose-smoke.sh`
+  - `curl`/owner-authenticated live checks for:
+    - `GET /health`
+    - `GET /api/operations/operating-cadence/follow-ups?status=all&limit=50`
+    - `GET /api/operations/operating-cadence/follow-ups?status=active&limit=50`
+    - `GET /api/operations/operating-cadence/follow-ups?status=completed&limit=50`
+- Result:
+  - Docker build completed for `cyber-team-core:latest` and `cyber-team-ui:latest`; frontend Docker `npm ci` reported `found 0 vulnerabilities`.
+  - Containerized Next build completed with no React hooks warning.
+  - Staging `core` became healthy and `ui` started successfully.
+  - Compose smoke passed: health, readiness, UI, owner login, dashboard KPIs, integration status, WebSocket ticket, tool readiness, and approval queue behavior.
+  - `/health` reports version `5823c06` and build SHA `5823c061f1c040767efca7bfa99cfe33c700427c`.
+  - Live follow-up queue `status=all` returned one completed `security_control_review` follow-up targeting `operations` at `medium` risk.
+  - Live follow-up queue `status=active` returned zero items, matching the current staging state after the prior follow-up plan was completed.
+- Evidence path/link:
+  - `https://cyberteam.hyperailab.com/health`
+  - `dist/operating-cadence-followup-queue/health-20260618T033505Z.json`
+  - `dist/operating-cadence-followup-queue/followups-all-20260618T033505Z.json`
+  - `dist/operating-cadence-followup-queue/followups-active-20260618T033505Z.json`
+  - `dist/operating-cadence-followup-queue/followups-completed-20260618T033505Z.json`
+- Next step:
+  - Commit this deployment evidence entry, push to GitHub, and watch CI for the pushed head.
+
 ## 2026-06-18T02:05:13Z - STEP-035 - Operating cadence follow-up plans v1
 
 - Files/services changed:
