@@ -41,6 +41,7 @@ class PlanScanRequest(BaseModel):
     include_role_gaps: bool = True
     include_memory_findings: bool = True
     include_company_context: bool = True
+    include_operating_cadence: bool = True
     auto_execute: bool = True
     limit: int = Field(default=50, ge=1, le=200)
 
@@ -56,6 +57,12 @@ class CompanyContextDriftScanRequest(BaseModel):
     dry_run: bool = False
     apply_low_risk: bool = True
     run_planner: bool = True
+
+
+class OperatingCadenceScanRequest(BaseModel):
+    company_namespace: str | None = None
+    auto_execute: bool = True
+    limit: int = Field(default=200, ge=1, le=500)
 
 
 class RetentionCleanupRequest(BaseModel):
@@ -289,6 +296,53 @@ async def get_company_context_drift_status(
     return await service.drift_status()
 
 
+@router.get("/operating-cadence/status")
+async def get_operating_cadence_status(
+    request: Request,
+    company_namespace: str | None = None,
+    limit: int = 200,
+    principal: Principal = Depends(get_current_principal),
+):
+    safe_limit = max(1, min(limit, 500))
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "operating_cadence",
+        company_namespace or "all",
+        context={"limit": safe_limit},
+    )
+    planner = request.app.state.autonomous_planning_service
+    return await planner.operating_cadence_status(
+        company_namespace=company_namespace,
+        limit=safe_limit,
+    )
+
+
+@router.post("/operating-cadence/scan")
+async def scan_operating_cadences(
+    data: OperatingCadenceScanRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "scan",
+        "operating_cadence",
+        data.company_namespace or "all",
+        context=data.model_dump(),
+    )
+    payload = data.model_dump()
+    if settings.autonomy_side_effect_mode == "manual_only":
+        payload["auto_execute"] = False
+    planner = request.app.state.autonomous_planning_service
+    return await planner.scan_operating_cadences(
+        actor=principal.email,
+        **payload,
+    )
+
+
 @router.get("/readiness")
 async def operations_readiness(
     request: Request,
@@ -392,6 +446,32 @@ async def operations_readiness(
             }
         )
 
+    planner = getattr(request.app.state, "autonomous_planning_service", None)
+    operating_cadence_status = {
+        "status": "unavailable",
+        "detail": "Autonomous planner is not available.",
+        "counts": {
+            "cadences": 0,
+            "due": 0,
+            "not_due": 0,
+            "active_plans": 0,
+        },
+    }
+    if planner and hasattr(planner, "operating_cadence_status"):
+        try:
+            operating_cadence_status = await planner.operating_cadence_status(limit=200)
+        except Exception as exc:
+            operating_cadence_status = {
+                "status": "degraded",
+                "detail": str(exc),
+                "counts": {
+                    "cadences": 0,
+                    "due": 0,
+                    "not_due": 0,
+                    "active_plans": 0,
+                },
+            }
+
     evidence = await request.app.state.audit_service.list_events(
         event_type="control.evidence",
         limit=50,
@@ -434,6 +514,7 @@ async def operations_readiness(
             "blocking_reasons": integration_blockers,
         },
         "company_context": company_context_status,
+        "operating_cadence": operating_cadence_status,
         "memory": {
             "recent_traces_reviewed": len(traces),
             "recent_trace_errors": len(trace_errors),

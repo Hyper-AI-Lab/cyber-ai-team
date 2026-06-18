@@ -88,6 +88,8 @@ async def test_autonomous_cycle_runs_memory_then_supervisor_and_records_audit():
         "autonomous_plans_waiting_approval": 0,
         "autonomous_plans_blocked": 0,
         "autonomous_plans_failed": 0,
+        "operating_cadences_due": 0,
+        "operating_cadences_skipped_not_due": 0,
     }
     assert {decision["decision"] for decision in result["decisions"]} == {
         "memory_findings_reviewed",

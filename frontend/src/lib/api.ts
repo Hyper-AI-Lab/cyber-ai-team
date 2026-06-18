@@ -613,6 +613,30 @@ class ApiClient {
     return this.request('/api/operations/company-context/drift-status');
   }
 
+  async getOperatingCadenceStatus(
+    filters: {
+      company_namespace?: string;
+      limit?: number;
+    } = {}
+  ) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 200) });
+    if (filters.company_namespace) {
+      params.set('company_namespace', filters.company_namespace);
+    }
+    return this.request(`/api/operations/operating-cadence/status?${params.toString()}`);
+  }
+
+  async scanOperatingCadences(options: Record<string, any> = {}) {
+    return this.request('/api/operations/operating-cadence/scan', {
+      method: 'POST',
+      body: JSON.stringify({
+        auto_execute: true,
+        limit: 200,
+        ...options,
+      }),
+    });
+  }
+
   async getDecisionTimeline(limit: number = 50) {
     return this.request(`/api/operations/decision-timeline?limit=${limit}`);
   }

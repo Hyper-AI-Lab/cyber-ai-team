@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import desc, select
@@ -58,13 +59,16 @@ class AutonomousPlanningService:
         include_role_gaps: bool = True,
         include_memory_findings: bool = True,
         include_company_context: bool = True,
+        include_operating_cadence: bool = True,
         auto_execute: bool = True,
         limit: int = 50,
     ) -> dict[str, Any]:
         safe_limit = max(1, min(limit, 200))
         created = []
         existing = []
+        skipped = []
         errors = []
+        operating_cadence_status = None
 
         if include_role_gaps:
             for gap in await self._load_role_gaps(safe_limit):
@@ -96,6 +100,21 @@ class AutonomousPlanningService:
                 except Exception as exc:
                     errors.append(self._error("company_context_snapshot", snapshot["id"], exc))
 
+        if include_operating_cadence:
+            operating_cadence_status = await self.operating_cadence_status(limit=safe_limit)
+            for cadence in operating_cadence_status["items"]:
+                if not cadence["due"]:
+                    skipped.append(cadence)
+                    continue
+                try:
+                    result = await self.create_plan_from_operating_cadence(
+                        cadence,
+                        actor=actor,
+                    )
+                    (created if result["created"] else existing).append(result["plan"])
+                except Exception as exc:
+                    errors.append(self._error("operating_cadence", cadence["cadence_id"], exc))
+
         execution = None
         if auto_execute:
             execution = await self.execute_ready_plans(actor=actor, limit=safe_limit)
@@ -105,8 +124,10 @@ class AutonomousPlanningService:
             "actor": actor,
             "plans_created": len(created),
             "plans_existing": len(existing),
+            "cadences_skipped_not_due": len(skipped),
             "created_plan_ids": [plan["id"] for plan in created],
             "existing_plan_ids": [plan["id"] for plan in existing],
+            "operating_cadence_status": operating_cadence_status,
             "errors": errors,
             "execution": execution,
         }
@@ -394,6 +415,259 @@ class AutonomousPlanningService:
         )
         return {"created": True, "plan": plan}
 
+    async def create_plan_from_operating_cadence(
+        self,
+        cadence_item: dict[str, Any],
+        *,
+        actor: str = "autonomous_planner",
+    ) -> dict[str, Any]:
+        cadence_id = cadence_item["cadence_id"]
+        existing = await self._find_active_plan("operating_cadence", cadence_id)
+        if existing:
+            return {"created": False, "plan": existing}
+
+        refreshed_status = await self.operating_cadence_status(
+            company_namespace=cadence_item.get("company_namespace"),
+            limit=200,
+        )
+        refreshed = next(
+            (
+                item
+                for item in refreshed_status["items"]
+                if item["cadence_id"] == cadence_id
+            ),
+            cadence_item,
+        )
+        if not refreshed.get("due"):
+            latest = refreshed.get("last_plan")
+            if latest:
+                return {"created": False, "plan": latest}
+            raise ValueError(f"Operating cadence {cadence_id} is not due")
+
+        cadence = refreshed.get("cadence") or cadence_item.get("cadence") or {}
+        policy = self._operating_cadence_policy(refreshed)
+        task_specs = self._number_task_specs([
+            self._task_spec(
+                "Assess operating cadence signals",
+                (
+                    "Inspect the active role cadence, current due state, and "
+                    "available backlog/context signals."
+                ),
+                "operating_cadence.assess",
+                "operating_cadence",
+                cadence_id,
+                "low",
+                {"cadence": refreshed, "policy": policy},
+                agent_id=refreshed.get("agent_id"),
+            ),
+            self._task_spec(
+                "Prepare owner operating review",
+                (
+                    "Create an owner-visible review brief and checklist without "
+                    "executing external side effects."
+                ),
+                "operating_cadence.prepare_review",
+                "operating_cadence",
+                cadence_id,
+                "low",
+                {"cadence": refreshed, "policy": policy},
+                agent_id=refreshed.get("agent_id"),
+            ),
+            self._task_spec(
+                "Record operating-loop next actions",
+                (
+                    "Record safe internal next actions and explicit approval "
+                    "requirements for any downstream external mutations."
+                ),
+                "operating_cadence.record_next_actions",
+                "operating_cadence",
+                cadence_id,
+                "low",
+                {"cadence": refreshed, "policy": policy},
+                agent_id=refreshed.get("agent_id"),
+            ),
+        ])
+        plan = await self._create_plan(
+            title=f"Run operating cadence: {refreshed.get('role_name') or cadence_id}",
+            objective=(
+                "Review the role's configured operating cadence, prepare an owner "
+                "brief, and keep side effects manual-only."
+            ),
+            source_type="operating_cadence",
+            source_id=cadence_id,
+            priority="low",
+            created_by=actor,
+            context={
+                "agent_id": refreshed.get("agent_id"),
+                "role_name": refreshed.get("role_name"),
+                "role_family": refreshed.get("role_family"),
+                "company_namespace": refreshed.get("company_namespace"),
+                "frequency": cadence.get("frequency"),
+                "review_window": cadence.get("review_window"),
+                "policy": policy,
+            },
+            task_specs=task_specs,
+        )
+        await self._record(
+            "autonomous_plan.created",
+            actor=actor,
+            resource_id=plan["id"],
+            metadata={"source_type": "operating_cadence", "source_id": cadence_id},
+        )
+        return {"created": True, "plan": plan}
+
+    async def operating_cadence_status(
+        self,
+        *,
+        company_namespace: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        if not hasattr(self._agent_manager, "role_operating_cadence"):
+            return {
+                "generated_at": utc_now().isoformat(),
+                "company_namespace": company_namespace,
+                "status": "unavailable",
+                "detail": "Agent manager does not expose operating cadence data.",
+                "counts": {
+                    "cadences": 0,
+                    "due": 0,
+                    "not_due": 0,
+                    "active_plans": 0,
+                },
+                "items": [],
+            }
+
+        cadence_summary = await self._agent_manager.role_operating_cadence(
+            company_namespace=company_namespace,
+        )
+        safe_limit = max(1, min(limit, 500))
+        now = utc_now()
+        items = []
+        for entry in (cadence_summary.get("cadences") or [])[:safe_limit]:
+            cadence = entry.get("cadence") or {}
+            cadence_id = cadence.get("cadence_id") or f"cadence:agent:{entry['agent_id']}"
+            latest_plan = await self._latest_plan_for_source(
+                "operating_cadence",
+                cadence_id,
+            )
+            interval = self._cadence_interval(cadence.get("frequency"))
+            baseline = self._plan_baseline_at(latest_plan)
+            active_plan = bool(
+                latest_plan
+                and latest_plan.get("status") in self.ACTIVE_PLAN_STATUSES
+            )
+            due = not active_plan and (
+                baseline is None or baseline + interval <= now
+            )
+            next_due_at = None
+            if active_plan:
+                next_due_at = None
+            elif baseline:
+                next_due_at = (baseline + interval).isoformat()
+            item_state = "active_plan" if active_plan else "due" if due else "not_due"
+            items.append(
+                {
+                    "cadence_id": cadence_id,
+                    "agent_id": entry.get("agent_id"),
+                    "role_name": entry.get("role_name"),
+                    "role_family": entry.get("role_family"),
+                    "status": entry.get("status"),
+                    "company_namespace": entry.get("company_namespace"),
+                    "frequency": cadence.get("frequency") or "weekly",
+                    "review_window": cadence.get("review_window") or "Operating review",
+                    "signals": cadence.get("signals") or [],
+                    "checklist": cadence.get("checklist") or [],
+                    "cadence": cadence,
+                    "source_role_gap_id": entry.get("source_role_gap_id"),
+                    "source_snapshot_id": entry.get("source_snapshot_id"),
+                    "last_plan": latest_plan,
+                    "due": due,
+                    "state": item_state,
+                    "due_reason": self._cadence_due_reason(
+                        due=due,
+                        active_plan=active_plan,
+                        latest_plan=latest_plan,
+                        frequency=cadence.get("frequency"),
+                    ),
+                    "next_due_at": next_due_at,
+                    "interval_seconds": int(interval.total_seconds()),
+                }
+            )
+
+        counts = {
+            "cadences": len(items),
+            "due": len([item for item in items if item["due"]]),
+            "not_due": len([item for item in items if item["state"] == "not_due"]),
+            "active_plans": len([item for item in items if item["state"] == "active_plan"]),
+        }
+        return {
+            "generated_at": now.isoformat(),
+            "company_namespace": company_namespace,
+            "status": "ready",
+            "counts": counts,
+            "items": items,
+            "recommended_owner_actions": cadence_summary.get("recommended_owner_actions", []),
+        }
+
+    async def scan_operating_cadences(
+        self,
+        *,
+        actor: str = "autonomous_planner",
+        company_namespace: str | None = None,
+        auto_execute: bool = False,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        status = await self.operating_cadence_status(
+            company_namespace=company_namespace,
+            limit=limit,
+        )
+        created = []
+        existing = []
+        errors = []
+        for cadence in status["items"]:
+            if not cadence["due"]:
+                continue
+            try:
+                result = await self.create_plan_from_operating_cadence(
+                    cadence,
+                    actor=actor,
+                )
+                (created if result["created"] else existing).append(result["plan"])
+            except Exception as exc:
+                errors.append(self._error("operating_cadence", cadence["cadence_id"], exc))
+        execution = None
+        if auto_execute:
+            execution = await self.execute_ready_plans(actor=actor, limit=limit)
+        summary = {
+            "scanned_at": utc_now().isoformat(),
+            "actor": actor,
+            "company_namespace": company_namespace,
+            "cadences_reviewed": len(status["items"]),
+            "cadences_due": status["counts"]["due"],
+            "plans_created": len(created),
+            "plans_existing": len(existing),
+            "created_plan_ids": [plan["id"] for plan in created],
+            "existing_plan_ids": [plan["id"] for plan in existing],
+            "status": status,
+            "errors": errors,
+            "execution": execution,
+        }
+        await self._record(
+            "operating_cadence.scan",
+            actor=actor,
+            resource_id=None,
+            outcome="degraded" if errors else "success",
+            metadata={
+                "company_namespace": company_namespace,
+                "cadences_reviewed": summary["cadences_reviewed"],
+                "cadences_due": summary["cadences_due"],
+                "plans_created": summary["plans_created"],
+                "plans_existing": summary["plans_existing"],
+                "errors": errors,
+            },
+        )
+        return summary
+
     async def execute_ready_plans(
         self,
         *,
@@ -505,6 +779,12 @@ class AutonomousPlanningService:
                     task,
                     actor,
                 )
+            elif task["task_type"] == "operating_cadence.assess":
+                result = await self._execute_operating_cadence_assess(task)
+            elif task["task_type"] == "operating_cadence.prepare_review":
+                result = await self._execute_operating_cadence_prepare_review(task)
+            elif task["task_type"] == "operating_cadence.record_next_actions":
+                result = await self._execute_operating_cadence_record_next_actions(task)
             else:
                 raise ValueError(f"Unsupported autonomous task type: {task['task_type']}")
         except Exception as exc:
@@ -918,6 +1198,82 @@ class AutonomousPlanningService:
         )
         return await self._finish_task(task["id"], "completed", result=result)
 
+    async def _execute_operating_cadence_assess(
+        self,
+        task: dict[str, Any],
+    ) -> dict[str, Any]:
+        cadence = task["action_payload"].get("cadence") or {}
+        cadence_id = cadence.get("cadence_id") or task["target_id"]
+        status = await self.operating_cadence_status(
+            company_namespace=cadence.get("company_namespace"),
+            limit=200,
+        )
+        current = next(
+            (item for item in status["items"] if item["cadence_id"] == cadence_id),
+            cadence,
+        )
+        result = {
+            "cadence_id": cadence_id,
+            "agent_id": current.get("agent_id"),
+            "role_name": current.get("role_name"),
+            "role_family": current.get("role_family"),
+            "company_namespace": current.get("company_namespace"),
+            "frequency": current.get("frequency"),
+            "review_window": current.get("review_window"),
+            "signals": current.get("signals", []),
+            "state": current.get("state"),
+            "due": current.get("due"),
+            "manual_only_side_effects": True,
+        }
+        return await self._finish_task(task["id"], "completed", result=result)
+
+    async def _execute_operating_cadence_prepare_review(
+        self,
+        task: dict[str, Any],
+    ) -> dict[str, Any]:
+        cadence = task["action_payload"].get("cadence") or {}
+        checklist = cadence.get("checklist") or []
+        signals = cadence.get("signals") or []
+        role_name = cadence.get("role_name") or task.get("agent_id") or "Role"
+        result = {
+            "title": f"{role_name} operating review",
+            "review_window": cadence.get("review_window") or "Operating review",
+            "checklist": checklist,
+            "signals_to_review": signals,
+            "source_snapshot_id": cadence.get("source_snapshot_id"),
+            "source_role_gap_id": cadence.get("source_role_gap_id"),
+            "owner_guidance": (
+                "Use this brief to inspect role work and approve any downstream "
+                "external side effects explicitly. This task does not mutate ERPNext, "
+                "send messages, or trigger provider writes."
+            ),
+        }
+        return await self._finish_task(task["id"], "completed", result=result)
+
+    async def _execute_operating_cadence_record_next_actions(
+        self,
+        task: dict[str, Any],
+    ) -> dict[str, Any]:
+        cadence = task["action_payload"].get("cadence") or {}
+        policy = task["action_payload"].get("policy") or {}
+        result = {
+            "cadence_id": cadence.get("cadence_id") or task["target_id"],
+            "safe_internal_actions": [
+                "Review the generated operating brief.",
+                "Open related role backlog, memory, or ERPNext context if the brief flags risk.",
+                "Create or approve downstream work only through the existing approval flows.",
+            ],
+            "external_side_effects": {
+                "allowed": False,
+                "reason": policy.get(
+                    "side_effect_policy",
+                    "External side effects remain manual-only.",
+                ),
+            },
+            "next_due_hint": cadence.get("next_due_at"),
+        }
+        return await self._finish_task(task["id"], "completed", result=result)
+
     async def _finish_task(
         self,
         task_id: str,
@@ -1020,6 +1376,23 @@ class AutonomousPlanningService:
             )
             plan = result.scalars().first()
             return self._plan_to_dict(plan) if plan else None
+
+    async def _latest_plan_for_source(
+        self,
+        source_type: str,
+        source_id: str,
+    ) -> dict[str, Any] | None:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(AutonomousPlan)
+                .where(
+                    AutonomousPlan.source_type == source_type,
+                    AutonomousPlan.source_id == source_id,
+                )
+                .order_by(desc(AutonomousPlan.created_at))
+            )
+            plan = result.scalars().first()
+            return self._plan_to_dict(plan, include_tasks=False) if plan else None
 
     async def _create_plan(
         self,
@@ -1129,6 +1502,23 @@ class AutonomousPlanningService:
             "review_reasons": self._unique(review_reasons),
             "blockers": [],
             "autonomous_execution": "owner_review" if review_reasons else "auto",
+        }
+
+    @staticmethod
+    def _operating_cadence_policy(cadence: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "policy_version": "planner-operating-cadence-v1",
+            "source_type": "operating_cadence",
+            "source_id": cadence["cadence_id"],
+            "max_risk": "low",
+            "owner_review_required": False,
+            "review_reasons": [],
+            "blockers": [],
+            "autonomous_execution": "safe_internal_review",
+            "side_effect_policy": (
+                "Cadence reviews may inspect and summarize, but production external "
+                "side effects require explicit owner approval."
+            ),
         }
 
     def _tool_readiness(self, requested_tools: list[str]) -> dict[str, Any]:
@@ -1330,6 +1720,50 @@ class AutonomousPlanningService:
     def _normalize_risk(self, risk_level: str | None) -> str:
         risk = str(risk_level or "medium").lower()
         return risk if risk in self.RISK_RANK else "medium"
+
+    @staticmethod
+    def _cadence_interval(frequency: str | None) -> timedelta:
+        normalized = str(frequency or "weekly").lower()
+        if normalized == "hourly":
+            return timedelta(hours=1)
+        if normalized == "daily":
+            return timedelta(days=1)
+        if normalized == "monthly":
+            return timedelta(days=30)
+        if normalized == "quarterly":
+            return timedelta(days=90)
+        return timedelta(days=7)
+
+    @staticmethod
+    def _plan_baseline_at(plan: dict[str, Any] | None) -> datetime | None:
+        if not plan:
+            return None
+        raw_value = plan.get("completed_at") or plan.get("created_at")
+        if not raw_value:
+            return None
+        try:
+            value = datetime.fromisoformat(str(raw_value))
+        except ValueError:
+            return None
+        if value.tzinfo is not None:
+            value = value.replace(tzinfo=None)
+        return value
+
+    @staticmethod
+    def _cadence_due_reason(
+        *,
+        due: bool,
+        active_plan: bool,
+        latest_plan: dict[str, Any] | None,
+        frequency: str | None,
+    ) -> str:
+        if active_plan and latest_plan:
+            return f"An active operating cadence plan already exists: {latest_plan['id']}."
+        if due and latest_plan:
+            return f"The last {frequency or 'weekly'} cadence plan is older than its interval."
+        if due:
+            return "No prior operating cadence plan exists for this role."
+        return f"The last {frequency or 'weekly'} cadence plan is still fresh."
 
     @staticmethod
     def _unique(values) -> list:

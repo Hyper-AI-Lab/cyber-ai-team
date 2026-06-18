@@ -941,3 +941,44 @@
   - `https://cyberteam.hyperailab.com/health`
 - Next step:
   - Commit this deployment evidence entry, push to GitHub, and watch CI for the pushed head.
+
+## 2026-06-18T01:32:14Z - STEP-033 - Operating cadence planning loop v1
+
+- Files/services changed:
+  - `backend/src/cyber_team/operations/planning.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/src/cyber_team/operations/autonomous.py`
+  - `backend/tests/test_autonomous_planning.py`
+  - `backend/tests/test_api_operations.py`
+  - `backend/tests/test_autonomous_operations.py`
+  - `frontend/src/components/OperationsView.tsx`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+- Commands run:
+  - `python3 -m py_compile backend/src/cyber_team/operations/planning.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/operations/autonomous.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_autonomous_planning.py backend/tests/test_api_operations.py -q`
+  - `npx -y node@20 node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/operations/planning.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/operations/autonomous.py backend/tests/test_autonomous_planning.py backend/tests/test_api_operations.py backend/tests/test_autonomous_operations.py`
+  - `npx -y node@20 node_modules/typescript/bin/tsc --noEmit`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `npx -y node@20 node_modules/next/dist/bin/next build`
+  - `python3 -m compileall -q backend/src backend/tests`
+  - `git diff --check`
+  - `python3 scripts/secret-scan.py`
+- Result:
+  - Added `operating_cadence` as a durable autonomous-planning source.
+  - Added idempotent cadence due detection based on each active role's cadence frequency and latest active/completed cadence plan.
+  - Added safe low-risk cadence task execution: assess cadence signals, prepare an owner operating review, and record manual-only next actions without external mutations.
+  - Added `GET /api/operations/operating-cadence/status` and `POST /api/operations/operating-cadence/scan`; manual-only autonomy forces scan auto-execution off.
+  - Extended `GET /api/operations/readiness` with operating-cadence status and extended autonomous-cycle counts/decisions with cadence reconciliation.
+  - Added Operations owner-console UI for operating loops, due counts, active cadence plans, and plan creation.
+  - Focused backend tests passed: `16 passed`.
+  - Full backend tests passed: `151 passed`.
+  - Frontend API tests passed: `16 passed`.
+  - Ruff, Python compile, TypeScript, Next production build, secret scan, and diff hygiene passed.
+- Evidence path/link:
+  - `backend/tests/test_autonomous_planning.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/lib/api.test.ts`
+- Next step:
+  - Commit, deploy this operating cadence loop to staging, run compose smoke, verify live cadence status/scan routes, push to GitHub, and watch CI.

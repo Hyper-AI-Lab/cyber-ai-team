@@ -237,6 +237,12 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
             }
 
     app.state.company_context_sync_service = FakeCompanyContext()
+    app.state.autonomous_planning_service = AsyncMock()
+    app.state.autonomous_planning_service.operating_cadence_status.return_value = {
+        "status": "ready",
+        "counts": {"cadences": 1, "due": 0, "not_due": 1, "active_plans": 0},
+        "items": [],
+    }
     app.state.audit_service = AsyncMock()
     app.state.audit_service.list_events.return_value = []
     app.state.memory_service = AsyncMock()
@@ -274,6 +280,7 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
     assert body["integrations"]["blocking_readiness"] is False
     assert body["integrations"]["optional_disabled"][0]["provider"] == "twilio"
     assert body["company_context"]["status"] == "ready"
+    assert body["operating_cadence"]["counts"]["cadences"] == 1
 
 
 def test_plan_scan_forces_manual_only_autonomy(monkeypatch):
@@ -311,6 +318,66 @@ def test_plan_scan_forces_manual_only_autonomy(monkeypatch):
     assert app.state.autonomous_planning_service.scan_and_plan.await_args.kwargs[
         "auto_execute"
     ] is False
+
+
+def test_operating_cadence_routes(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    app.state.autonomous_planning_service = AsyncMock()
+    app.state.autonomous_planning_service.operating_cadence_status.return_value = {
+        "status": "ready",
+        "counts": {"cadences": 1, "due": 1, "not_due": 0, "active_plans": 0},
+        "items": [{"cadence_id": "cadence:agent:finance", "due": True}],
+    }
+    app.state.autonomous_planning_service.scan_operating_cadences.return_value = {
+        "cadences_due": 1,
+        "plans_created": 1,
+        "created_plan_ids": ["plan_1"],
+    }
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.settings.autonomy_side_effect_mode",
+        "manual_only",
+    )
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+    client = TestClient(app)
+
+    status_response = client.get(
+        "/api/operations/operating-cadence/status?company_namespace=company%3Aacme&limit=25"
+    )
+    scan_response = client.post(
+        "/api/operations/operating-cadence/scan",
+        json={
+            "company_namespace": "company:acme",
+            "auto_execute": True,
+            "limit": 25,
+        },
+    )
+
+    assert status_response.status_code == 200
+    assert status_response.json()["counts"]["due"] == 1
+    assert scan_response.status_code == 200
+    assert scan_response.json()["plans_created"] == 1
+    app.state.autonomous_planning_service.operating_cadence_status.assert_awaited_once_with(
+        company_namespace="company:acme",
+        limit=25,
+    )
+    app.state.autonomous_planning_service.scan_operating_cadences.assert_awaited_once_with(
+        actor="owner@example.com",
+        company_namespace="company:acme",
+        auto_execute=False,
+        limit=25,
+    )
 
 
 def test_company_context_sync_routes(monkeypatch):

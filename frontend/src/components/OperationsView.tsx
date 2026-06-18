@@ -6,6 +6,7 @@ import {
   Activity,
   AlertTriangle,
   Brain,
+  CalendarClock,
   CheckCircle,
   Clock,
   GitBranch,
@@ -61,6 +62,7 @@ function sourceLabel(plan: any) {
   if (plan.source_type === 'role_gap') return 'Role gap'
   if (plan.source_type === 'memory_steward_finding') return 'Memory'
   if (plan.source_type === 'company_context_snapshot') return 'Company context'
+  if (plan.source_type === 'operating_cadence') return 'Operating cadence'
   return plan.source_type || 'Unknown'
 }
 
@@ -103,13 +105,16 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   const [localCycles, setLocalCycles] = useState<any[]>(cycles)
   const [plans, setPlans] = useState<any[]>([])
   const [readiness, setReadiness] = useState<any | null>(null)
+  const [operatingCadence, setOperatingCadence] = useState<any | null>(null)
   const [timeline, setTimeline] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [plansLoading, setPlansLoading] = useState(false)
   const [readinessLoading, setReadinessLoading] = useState(false)
+  const [operatingCadenceLoading, setOperatingCadenceLoading] = useState(false)
   const [timelineLoading, setTimelineLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [driftScanning, setDriftScanning] = useState(false)
+  const [cadenceScanning, setCadenceScanning] = useState(false)
   const [planAction, setPlanAction] = useState<string | null>(null)
   const [runMemorySteward, setRunMemorySteward] = useState(true)
   const [runSupervisorReview, setRunSupervisorReview] = useState(true)
@@ -155,6 +160,19 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
     }
   }
 
+  const loadOperatingCadence = async () => {
+    setOperatingCadenceLoading(true)
+    setError(null)
+    try {
+      const result = await api.getOperatingCadenceStatus({ limit: 200 })
+      setOperatingCadence(result)
+    } catch (e: any) {
+      setError(e.message || 'Failed to load operating cadence status')
+    } finally {
+      setOperatingCadenceLoading(false)
+    }
+  }
+
   const loadTimeline = async () => {
     setTimelineLoading(true)
     setError(null)
@@ -184,6 +202,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   useEffect(() => {
     loadPlans()
     loadReadiness()
+    loadOperatingCadence()
     loadTimeline()
   }, [])
 
@@ -205,6 +224,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadCycles()
       await loadPlans()
       await loadReadiness()
+      await loadOperatingCadence()
       await loadTimeline()
     } catch (e: any) {
       setError(e.message || 'Autonomous cycle failed')
@@ -228,6 +248,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadCycles()
       await loadPlans()
       await loadReadiness()
+      await loadOperatingCadence()
       await loadTimeline()
     } catch (e: any) {
       setError(e.message || 'Autonomous plan scan failed')
@@ -248,6 +269,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await onRefresh()
       await loadPlans()
       await loadReadiness()
+      await loadOperatingCadence()
       await loadTimeline()
     } catch (e: any) {
       setError(e.message || 'ERPNext drift scan failed')
@@ -265,11 +287,33 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadCycles()
       await loadPlans()
       await loadReadiness()
+      await loadOperatingCadence()
       await loadTimeline()
     } catch (e: any) {
       setError(e.message || 'Autonomous plan execution failed')
     } finally {
       setPlanAction(null)
+    }
+  }
+
+  const scanOperatingCadences = async () => {
+    setCadenceScanning(true)
+    setError(null)
+    try {
+      await api.scanOperatingCadences({
+        auto_execute: autoExecutePlans,
+        limit: 200,
+      })
+      await onRefresh()
+      await loadCycles()
+      await loadPlans()
+      await loadReadiness()
+      await loadOperatingCadence()
+      await loadTimeline()
+    } catch (e: any) {
+      setError(e.message || 'Operating cadence scan failed')
+    } finally {
+      setCadenceScanning(false)
     }
   }
 
@@ -667,6 +711,97 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
           </div>
         </section>
       )}
+
+      <section className="card">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <CalendarClock className="h-5 w-5 text-blue-300" />
+            <div>
+              <h3 className="text-lg font-semibold">Operating Loops</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Due role cadences become durable, owner-visible plans without external side effects.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={loadOperatingCadence}
+              disabled={operatingCadenceLoading}
+              className="btn-secondary flex items-center gap-2 text-sm"
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${operatingCadenceLoading ? 'animate-spin' : ''}`}
+              />
+              Refresh Loops
+            </button>
+            <button
+              onClick={scanOperatingCadences}
+              disabled={cadenceScanning}
+              className="btn-primary flex items-center gap-2 text-sm"
+            >
+              <Play className="h-4 w-4" />
+              {cadenceScanning ? 'Scanning...' : 'Create Due Plans'}
+            </button>
+          </div>
+        </div>
+
+        {operatingCadence ? (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <Metric label="Cadences" value={operatingCadence.counts?.cadences || 0} />
+              <Metric label="Due" value={operatingCadence.counts?.due || 0} />
+              <Metric label="Active plans" value={operatingCadence.counts?.active_plans || 0} />
+              <Metric label="Fresh" value={operatingCadence.counts?.not_due || 0} />
+            </div>
+            {operatingCadence.items?.length ? (
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {operatingCadence.items.slice(0, 6).map((item: any) => (
+                  <div
+                    key={item.cadence_id}
+                    className="rounded-lg border border-slate-800 bg-slate-900/30 p-3"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <div className="font-medium text-white">{item.role_name}</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {item.frequency} · {item.review_window}
+                        </div>
+                      </div>
+                      <span
+                        className={`rounded-full px-2 py-1 text-xs ${
+                          item.state === 'due'
+                            ? 'bg-amber-600/20 text-amber-300'
+                            : item.state === 'active_plan'
+                              ? 'bg-blue-600/20 text-blue-300'
+                              : 'bg-green-600/20 text-green-300'
+                        }`}
+                      >
+                        {item.state}
+                      </span>
+                    </div>
+                    <div className="mt-2 line-clamp-2 text-xs text-slate-400">
+                      {item.due_reason}
+                    </div>
+                    {item.next_due_at && (
+                      <div className="mt-2 text-xs text-slate-500">
+                        Next due {formatDate(item.next_due_at)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">
+                No active role cadences are available yet. Activate recommended roles first.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="py-8 text-center text-slate-500">
+            {operatingCadenceLoading ? 'Loading operating loops...' : 'Operating loop data unavailable.'}
+          </div>
+        )}
+      </section>
 
       <section className="card overflow-hidden">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">

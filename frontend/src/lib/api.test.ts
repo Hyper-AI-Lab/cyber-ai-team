@@ -348,6 +348,11 @@ describe('ApiClient', () => {
       .mockResolvedValueOnce(jsonResponse([{ id: 'plan-1', status: 'planned' }]))
       .mockResolvedValueOnce(jsonResponse({ id: 'plan-1', status: 'planned' }))
       .mockResolvedValueOnce(jsonResponse({ plans_created: 1 }))
+      .mockResolvedValueOnce(jsonResponse({
+        counts: { cadences: 1, due: 1 },
+        items: [{ cadence_id: 'cadence-1' }],
+      }))
+      .mockResolvedValueOnce(jsonResponse({ plans_created: 1 }))
       .mockResolvedValueOnce(jsonResponse({ status: 'completed' }))
     vi.stubGlobal('fetch', fetchMock)
     const client = new ApiClient('http://api.test')
@@ -362,8 +367,15 @@ describe('ApiClient', () => {
     await client.scanAutonomousPlans({
       include_role_gaps: true,
       include_memory_findings: false,
+      include_operating_cadence: true,
       auto_execute: true,
       limit: 10,
+    })
+    await client.getOperatingCadenceStatus({ company_namespace: 'company:acme', limit: 25 })
+    await client.scanOperatingCadences({
+      company_namespace: 'company:acme',
+      auto_execute: false,
+      limit: 25,
     })
     await client.executeAutonomousPlan('plan-1')
 
@@ -377,10 +389,23 @@ describe('ApiClient', () => {
     expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toEqual({
       include_role_gaps: true,
       include_memory_findings: false,
+      include_operating_cadence: true,
       auto_execute: true,
       limit: 10,
     })
-    expect(fetchMock.mock.calls[3][0]).toBe(
+    const cadenceStatusUrl = new URL(fetchMock.mock.calls[3][0] as string)
+    expect(cadenceStatusUrl.pathname).toBe('/api/operations/operating-cadence/status')
+    expect(cadenceStatusUrl.searchParams.get('company_namespace')).toBe('company:acme')
+    expect(cadenceStatusUrl.searchParams.get('limit')).toBe('25')
+    expect(fetchMock.mock.calls[4][0]).toBe(
+      'http://api.test/api/operations/operating-cadence/scan',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[4][1]?.body as string)).toEqual({
+      auto_execute: false,
+      limit: 25,
+      company_namespace: 'company:acme',
+    })
+    expect(fetchMock.mock.calls[5][0]).toBe(
       'http://api.test/api/operations/plans/plan-1/execute',
     )
   })

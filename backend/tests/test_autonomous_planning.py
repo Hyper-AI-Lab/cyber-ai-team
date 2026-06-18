@@ -105,13 +105,35 @@ class FakeToolRegistry:
 
 
 class FakeAgentManager:
-    def __init__(self, apply_result, *, approval_executable: bool = False):
+    def __init__(
+        self,
+        apply_result,
+        *,
+        approval_executable: bool = False,
+        operating_cadence_result: dict | None = None,
+    ):
         self.apply_result = apply_result
+        self.operating_cadence_result = operating_cadence_result or {
+            "generated_at": "2026-06-03T12:00:00",
+            "company_namespace": None,
+            "cadences": [],
+            "counts": {
+                "active_agents": 0,
+                "cadences": 0,
+                "active_role_gaps": 0,
+                "stale_role_gaps": 0,
+            },
+            "backlog": {"active": {"counts": {"total": 0}}, "stale": {"counts": {"total": 0}}},
+            "recommended_owner_actions": [],
+        }
         self.propose_role_for_gap = AsyncMock(side_effect=self._propose)
         self.apply_role_gap_proposal = AsyncMock(side_effect=self._apply)
         self.approval_is_executable = AsyncMock(return_value=approval_executable)
         self.consume_approval = AsyncMock()
         self._request_approval = AsyncMock(return_value="review_approval_1")
+        self.role_operating_cadence = AsyncMock(
+            side_effect=self._role_operating_cadence
+        )
 
     async def _propose(self, gap_id):
         return {
@@ -125,6 +147,11 @@ class FakeAgentManager:
     async def _apply(self, gap_id, approval_id=None, requested_by="owner"):
         result = dict(self.apply_result)
         result.setdefault("id", gap_id)
+        return result
+
+    async def _role_operating_cadence(self, company_namespace=None):
+        result = dict(self.operating_cadence_result)
+        result["company_namespace"] = company_namespace
         return result
 
 
@@ -221,6 +248,44 @@ def high_risk_tool_registry() -> FakeToolRegistry:
 
 def low_risk_tool_registry() -> FakeToolRegistry:
     return tool_registry(FakeTool("progress_report", risk_level="low"))
+
+
+def operating_cadence_summary() -> dict:
+    return {
+        "generated_at": "2026-06-03T12:00:00",
+        "company_namespace": None,
+        "cadences": [
+            {
+                "agent_id": "finance_agent",
+                "role_name": "Finance Operations Specialist",
+                "role_family": "finance",
+                "status": "active",
+                "memory_namespace": "company:acme:finance",
+                "company_namespace": "company:acme",
+                "source_role_gap_id": "gap_finance",
+                "source_snapshot_id": "ctx_1",
+                "cadence": {
+                    "cadence_id": "cadence:gap_finance",
+                    "source": "role_gap_activation",
+                    "frequency": "daily",
+                    "review_window": "Daily finance review",
+                    "signals": ["sales_invoice", "cash_risk"],
+                    "checklist": [
+                        "Review invoices.",
+                        "Summarize risks requiring owner approval.",
+                    ],
+                },
+            }
+        ],
+        "counts": {
+            "active_agents": 1,
+            "cadences": 1,
+            "active_role_gaps": 0,
+            "stale_role_gaps": 0,
+        },
+        "backlog": {"active": {"counts": {"total": 0}}, "stale": {"counts": {"total": 0}}},
+        "recommended_owner_actions": [],
+    }
 
 
 @pytest.mark.asyncio
@@ -335,6 +400,69 @@ async def test_company_context_snapshot_plan_executes_safe_tasks_and_waits_for_r
             "ctx_1",
             actor="test",
         )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_operating_cadence_scan_creates_due_plan_and_executes_safe_tasks():
+    engine, session_factory = await build_session_factory()
+    manager = FakeAgentManager(
+        {"status": "resolved"},
+        operating_cadence_result=operating_cadence_summary(),
+    )
+    try:
+        service = AutonomousPlanningService(
+            agent_manager=manager,
+            memory_steward_service=FakeMemorySteward(),
+            tool_registry=low_risk_tool_registry(),
+            session_factory=session_factory,
+        )
+
+        result = await service.scan_operating_cadences(actor="test", auto_execute=True)
+
+        assert result["cadences_due"] == 1
+        assert result["plans_created"] == 1
+        assert result["execution"]["plans_completed"] == 1
+        plan = (await service.list_plans(source_type="operating_cadence"))[0]
+        assert plan["status"] == "completed"
+        assert plan["source_id"] == "cadence:gap_finance"
+        assert [task["task_type"] for task in plan["tasks"]] == [
+            "operating_cadence.assess",
+            "operating_cadence.prepare_review",
+            "operating_cadence.record_next_actions",
+        ]
+        assert plan["tasks"][1]["result"]["owner_guidance"].startswith(
+            "Use this brief"
+        )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_operating_cadence_scan_skips_fresh_completed_plan():
+    engine, session_factory = await build_session_factory()
+    manager = FakeAgentManager(
+        {"status": "resolved"},
+        operating_cadence_result=operating_cadence_summary(),
+    )
+    try:
+        service = AutonomousPlanningService(
+            agent_manager=manager,
+            memory_steward_service=FakeMemorySteward(),
+            tool_registry=low_risk_tool_registry(),
+            session_factory=session_factory,
+        )
+
+        first = await service.scan_operating_cadences(actor="test", auto_execute=True)
+        second = await service.scan_operating_cadences(actor="test", auto_execute=True)
+
+        assert first["plans_created"] == 1
+        assert second["cadences_due"] == 0
+        assert second["plans_created"] == 0
+        assert second["status"]["counts"]["not_due"] == 1
+        plans = await service.list_plans(source_type="operating_cadence")
+        assert len(plans) == 1
     finally:
         await engine.dispose()
 

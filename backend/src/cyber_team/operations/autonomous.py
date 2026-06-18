@@ -83,6 +83,8 @@ class AutonomousOperationsService:
                 "autonomous_plans_waiting_approval": 0,
                 "autonomous_plans_blocked": 0,
                 "autonomous_plans_failed": 0,
+                "operating_cadences_due": 0,
+                "operating_cadences_skipped_not_due": 0,
             },
         }
 
@@ -247,6 +249,11 @@ class AutonomousOperationsService:
         )
         counts["autonomous_plans_blocked"] = int(execution.get("plans_blocked") or 0)
         counts["autonomous_plans_failed"] = int(execution.get("plans_failed") or 0)
+        counts["operating_cadences_skipped_not_due"] = int(
+            result.get("cadences_skipped_not_due") or 0
+        )
+        cadence_status = (result.get("operating_cadence_status") or {}).get("counts") or {}
+        counts["operating_cadences_due"] = int(cadence_status.get("due") or 0)
         if result.get("plans_created") or result.get("plans_existing"):
             summary["decisions"].append({
                 "step": "planner",
@@ -256,6 +263,13 @@ class AutonomousOperationsService:
                 "plans_completed": counts["autonomous_plans_completed"],
                 "plans_waiting_approval": counts["autonomous_plans_waiting_approval"],
                 "plans_blocked": counts["autonomous_plans_blocked"],
+            })
+        if counts["operating_cadences_due"] or counts["operating_cadences_skipped_not_due"]:
+            summary["decisions"].append({
+                "step": "planner",
+                "decision": "operating_cadences_reconciled",
+                "cadences_due": counts["operating_cadences_due"],
+                "cadences_skipped_not_due": counts["operating_cadences_skipped_not_due"],
             })
 
     async def _record_cycle(self, summary: dict[str, Any]) -> None:
