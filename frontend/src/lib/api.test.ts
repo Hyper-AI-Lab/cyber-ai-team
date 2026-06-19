@@ -457,20 +457,39 @@ describe('ApiClient', () => {
   })
 
   it('fetches owner attention queue', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
-      counts: { total: 1, active: 1, scheduler_created: 1 },
-      items: [{ plan_id: 'plan-1', kind: 'scheduled_operating_cadence' }],
-    }))
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        counts: { total: 1, active: 1, scheduler_created: 1 },
+        items: [{ plan_id: 'plan-1', kind: 'scheduled_operating_cadence' }],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        counts: { reviewed: 1, sent: 1 },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        status: 'ready',
+      }))
     vi.stubGlobal('fetch', fetchMock)
     const client = new ApiClient('http://api.test')
 
     client.setTokens('access-1')
     await client.getOwnerAttention({ status: 'active', limit: 15 })
+    await client.notifyOwnerAttention({ dryRun: true, limit: 15 })
+    await client.getOwnerAttentionNotificationStatus()
 
     const url = new URL(fetchMock.mock.calls[0][0] as string)
     expect(url.pathname).toBe('/api/operations/owner-attention')
     expect(url.searchParams.get('status')).toBe('active')
     expect(url.searchParams.get('limit')).toBe('15')
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/operations/owner-attention/notify',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({
+      dry_run: true,
+      limit: 15,
+    })
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/operations/owner-attention/notifications/status',
+    )
   })
 
   it('fetches operations readiness, decision timeline, and GDPR workflows', async () => {

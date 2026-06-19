@@ -47,6 +47,7 @@ from cyber_team.memory.service import MemoryService
 from cyber_team.observability.metrics import MetricsService
 from cyber_team.operations.autonomous import AutonomousOperationsService
 from cyber_team.operations.memory_steward import MemoryStewardService
+from cyber_team.operations.owner_attention import OwnerAttentionNotificationService
 from cyber_team.operations.planning import AutonomousPlanningService
 from cyber_team.operations.retention import RetentionService
 from cyber_team.operations.supervisor_review import SupervisorReviewService
@@ -125,6 +126,12 @@ async def lifespan(app: FastAPI):
     app.state.autonomous_planning_service.set_company_context_service(
         app.state.company_context_sync_service
     )
+    app.state.owner_attention_notification_service = OwnerAttentionNotificationService(
+        planner=app.state.autonomous_planning_service,
+        comms=app.state.comms_gateway,
+        audit_service=app.state.audit_service,
+        metrics_service=app.state.metrics_service,
+    )
     app.state.autonomous_operations_service = AutonomousOperationsService(
         supervisor_review_service=app.state.supervisor_review_service,
         memory_steward_service=app.state.memory_steward_service,
@@ -154,7 +161,11 @@ async def lifespan(app: FastAPI):
     app.state.inbound_email_task = None
     app.state.company_context_drift_task = None
     app.state.operating_cadence_scheduler_task = None
+    app.state.owner_attention_notification_task = None
     app.state.operating_cadence_scheduler_status = _initial_operating_cadence_scheduler_status()
+    app.state.owner_attention_notification_status = (
+        _initial_owner_attention_notification_status()
+    )
     if settings.inbound_email_enabled:
         app.state.inbound_email_task = asyncio.create_task(_inbound_email_loop(app))
     if settings.erpnext_drift_detection_enabled and settings.erpnext_configured:
@@ -167,6 +178,10 @@ async def lifespan(app: FastAPI):
     ):
         app.state.operating_cadence_scheduler_task = asyncio.create_task(
             _operating_cadence_scheduler_loop(app)
+        )
+    if settings.owner_attention_notifications_enabled:
+        app.state.owner_attention_notification_task = asyncio.create_task(
+            _owner_attention_notification_loop(app)
         )
     if settings.autonomous_operations_enabled:
         app.state.autonomous_operations_task = asyncio.create_task(
@@ -191,6 +206,7 @@ async def lifespan(app: FastAPI):
             "inbound_email_task",
             "company_context_drift_task",
             "operating_cadence_scheduler_task",
+            "owner_attention_notification_task",
         ):
             task = getattr(app.state, task_name, None)
             if task:
@@ -306,6 +322,105 @@ def _initial_operating_cadence_scheduler_status() -> dict:
     }
 
 
+def _initial_owner_attention_notification_status() -> dict:
+    enabled = settings.owner_attention_notifications_enabled
+    return {
+        "enabled": enabled,
+        "status": "idle" if enabled else "disabled",
+        "detail": (
+            "Owner attention notifications are waiting for the next run."
+            if enabled
+            else "Owner attention notifications are disabled."
+        ),
+        "actor": "owner_attention_notifier",
+        "channel": "email",
+        "interval_seconds": max(
+            60,
+            settings.owner_attention_notification_interval_seconds,
+        ),
+        "limit": settings.owner_attention_notification_limit,
+        "last_started_at": None,
+        "last_completed_at": None,
+        "last_result": None,
+        "last_error": None,
+    }
+
+
+async def _run_owner_attention_notification_once(
+    app: FastAPI,
+    *,
+    actor: str = "owner_attention_notifier",
+    dry_run: bool = False,
+) -> dict:
+    started_at = utc_now()
+    status = {
+        "enabled": settings.owner_attention_notifications_enabled,
+        "status": "running",
+        "detail": "Owner attention notification scan is running.",
+        "actor": actor,
+        "channel": "email",
+        "interval_seconds": max(
+            60,
+            settings.owner_attention_notification_interval_seconds,
+        ),
+        "limit": settings.owner_attention_notification_limit,
+        "last_started_at": started_at.isoformat(),
+        "last_completed_at": None,
+        "last_result": None,
+        "last_error": None,
+    }
+    app.state.owner_attention_notification_status = status
+    try:
+        result = await app.state.owner_attention_notification_service.run_once(
+            actor=actor,
+            dry_run=dry_run,
+            limit=settings.owner_attention_notification_limit,
+        )
+        completed_at = utc_now()
+        final_status = {
+            **status,
+            "status": result.get("status") or "completed",
+            "detail": result.get("detail") or "Owner attention notifications completed.",
+            "last_completed_at": completed_at.isoformat(),
+            "last_result": {
+                "counts": result.get("counts", {}),
+                "queue_counts": result.get("queue_counts", {}),
+                "dry_run": result.get("dry_run", dry_run),
+                "notification_status": result.get("notification_status", {}),
+            },
+            "last_error": None,
+        }
+        app.state.owner_attention_notification_status = final_status
+        return final_status
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        completed_at = utc_now()
+        final_status = {
+            **status,
+            "status": "failed",
+            "detail": "Owner attention notification scan failed.",
+            "last_completed_at": completed_at.isoformat(),
+            "last_result": None,
+            "last_error": str(exc),
+        }
+        app.state.owner_attention_notification_status = final_status
+        audit_service = getattr(app.state, "audit_service", None)
+        if audit_service:
+            await audit_service.record(
+                event_type="owner_attention.notification",
+                actor=actor,
+                actor_type="system",
+                resource_type="owner_attention",
+                resource_id=None,
+                action="run",
+                outcome="failure",
+                metadata={"error": str(exc), "dry_run": dry_run},
+            )
+        logger.exception("Owner attention notification scan failed")
+        return final_status
+
+
 async def _run_operating_cadence_scheduler_once(app: FastAPI) -> dict:
     started_at = utc_now()
     actor = "operating_cadence_scheduler"
@@ -418,6 +533,16 @@ async def _operating_cadence_scheduler_loop(app: FastAPI) -> None:
         await asyncio.sleep(initial_delay)
     while True:
         await _run_operating_cadence_scheduler_once(app)
+        await asyncio.sleep(interval)
+
+
+async def _owner_attention_notification_loop(app: FastAPI) -> None:
+    initial_delay = max(0, settings.owner_attention_notification_initial_delay_seconds)
+    interval = max(60, settings.owner_attention_notification_interval_seconds)
+    if initial_delay:
+        await asyncio.sleep(initial_delay)
+    while True:
+        await _run_owner_attention_notification_once(app)
         await asyncio.sleep(interval)
 
 

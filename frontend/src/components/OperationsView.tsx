@@ -13,6 +13,7 @@ import {
   GitBranch,
   Play,
   RefreshCw,
+  Send,
   ShieldCheck,
   XCircle,
 } from 'lucide-react'
@@ -139,6 +140,8 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   const [plansLoading, setPlansLoading] = useState(false)
   const [readinessLoading, setReadinessLoading] = useState(false)
   const [ownerAttentionLoading, setOwnerAttentionLoading] = useState(false)
+  const [ownerAttentionNotifyLoading, setOwnerAttentionNotifyLoading] = useState(false)
+  const [ownerAttentionNotifyResult, setOwnerAttentionNotifyResult] = useState<any | null>(null)
   const [operatingCadenceLoading, setOperatingCadenceLoading] = useState(false)
   const [followUpsLoading, setFollowUpsLoading] = useState(false)
   const [timelineLoading, setTimelineLoading] = useState(false)
@@ -201,6 +204,20 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       setError(e.message || 'Failed to load owner attention queue')
     } finally {
       setOwnerAttentionLoading(false)
+    }
+  }
+
+  const notifyOwnerAttention = async () => {
+    setOwnerAttentionNotifyLoading(true)
+    setError(null)
+    try {
+      const result = await api.notifyOwnerAttention({ dryRun: false, limit: 25 })
+      setOwnerAttentionNotifyResult(result)
+      await Promise.all([loadOwnerAttention(), loadReadiness()])
+    } catch (e: any) {
+      setError(e.message || 'Failed to notify owner attention queue')
+    } finally {
+      setOwnerAttentionNotifyLoading(false)
     }
   }
 
@@ -599,6 +616,18 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                 }
               />
               <ReadinessPanel
+                title="Owner Notify"
+                value={readiness.owner_attention_notifications?.status || 'unavailable'}
+                detail={
+                  readiness.owner_attention_notifications?.runtime?.last_completed_at
+                    ? `last run ${formatDate(
+                        readiness.owner_attention_notifications.runtime.last_completed_at,
+                      )}`
+                    : readiness.owner_attention_notifications?.detail
+                      || 'notification worker status unavailable'
+                }
+              />
+              <ReadinessPanel
                 title="Cadence Follow-Ups"
                 value={`${readiness.operating_follow_ups?.counts?.active || 0} active`}
                 detail={
@@ -652,14 +681,24 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
               </p>
             </div>
           </div>
-          <button
-            onClick={loadOwnerAttention}
-            disabled={ownerAttentionLoading}
-            className="btn-secondary flex items-center gap-2 text-sm"
-          >
-            <RefreshCw className={`h-4 w-4 ${ownerAttentionLoading ? 'animate-spin' : ''}`} />
-            Refresh Attention
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={loadOwnerAttention}
+              disabled={ownerAttentionLoading}
+              className="btn-secondary flex items-center gap-2 text-sm"
+            >
+              <RefreshCw className={`h-4 w-4 ${ownerAttentionLoading ? 'animate-spin' : ''}`} />
+              Refresh Attention
+            </button>
+            <button
+              onClick={notifyOwnerAttention}
+              disabled={ownerAttentionNotifyLoading}
+              className="btn-primary flex items-center gap-2 text-sm"
+            >
+              <Send className={`h-4 w-4 ${ownerAttentionNotifyLoading ? 'animate-pulse' : ''}`} />
+              {ownerAttentionNotifyLoading ? 'Notifying...' : 'Notify Owner'}
+            </button>
+          </div>
         </div>
 
         {ownerAttention ? (
@@ -674,6 +713,13 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
               />
               <Metric label="Executable" value={ownerAttention.counts?.executable || 0} />
             </div>
+            {ownerAttentionNotifyResult && (
+              <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-blue-100">
+                Notification run: {ownerAttentionNotifyResult.counts?.sent || 0} sent,{' '}
+                {ownerAttentionNotifyResult.counts?.skipped || 0} skipped,{' '}
+                {ownerAttentionNotifyResult.counts?.failed || 0} failed.
+              </div>
+            )}
 
             {ownerAttention.items?.length ? (
               <div className="space-y-3">

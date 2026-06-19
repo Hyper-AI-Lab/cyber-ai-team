@@ -589,6 +589,20 @@ class ApiClient {
     return this.request(`/api/operations/owner-attention?${params.toString()}`);
   }
 
+  async notifyOwnerAttention(options: { dryRun?: boolean; limit?: number } = {}) {
+    return this.request('/api/operations/owner-attention/notify', {
+      method: 'POST',
+      body: JSON.stringify({
+        dry_run: options.dryRun ?? false,
+        limit: options.limit ?? 25,
+      }),
+    });
+  }
+
+  async getOwnerAttentionNotificationStatus() {
+    return this.request('/api/operations/owner-attention/notifications/status');
+  }
+
   async syncCompanyContext(options: Record<string, any> = {}) {
     return this.request('/api/operations/company-context/sync', {
       method: 'POST',

@@ -3,7 +3,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from cyber_team.api import _run_operating_cadence_scheduler_once
+from cyber_team.api import (
+    _run_operating_cadence_scheduler_once,
+    _run_owner_attention_notification_once,
+)
 
 
 @pytest.mark.asyncio
@@ -73,3 +76,36 @@ async def test_operating_cadence_scheduler_reports_scan_failure(monkeypatch):
     audit_call = app.state.audit_service.record.await_args.kwargs
     assert audit_call["outcome"] == "failure"
     assert audit_call["metadata"]["error"] == "planner unavailable"
+
+
+@pytest.mark.asyncio
+async def test_owner_attention_notification_runner_updates_status(monkeypatch):
+    app = SimpleNamespace(state=SimpleNamespace())
+    app.state.owner_attention_notification_service = AsyncMock()
+    app.state.owner_attention_notification_service.run_once.return_value = {
+        "status": "ready",
+        "detail": "Owner attention notification run completed.",
+        "dry_run": False,
+        "counts": {"reviewed": 1, "sent": 1, "skipped": 0, "failed": 0},
+        "queue_counts": {"active": 1},
+        "notification_status": {"status": "ready"},
+    }
+    monkeypatch.setattr(
+        "cyber_team.api.settings.owner_attention_notification_interval_seconds",
+        900,
+    )
+    monkeypatch.setattr(
+        "cyber_team.api.settings.owner_attention_notification_limit",
+        25,
+    )
+
+    result = await _run_owner_attention_notification_once(app)
+
+    assert result["status"] == "ready"
+    assert result["last_result"]["counts"]["sent"] == 1
+    assert app.state.owner_attention_notification_status["last_error"] is None
+    app.state.owner_attention_notification_service.run_once.assert_awaited_once_with(
+        actor="owner_attention_notifier",
+        dry_run=False,
+        limit=25,
+    )

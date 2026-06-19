@@ -65,6 +65,11 @@ class OperatingCadenceScanRequest(BaseModel):
     limit: int = Field(default=200, ge=1, le=500)
 
 
+class OwnerAttentionNotifyRequest(BaseModel):
+    dry_run: bool = False
+    limit: int = Field(default=25, ge=1, le=200)
+
+
 class OperatingCadenceFollowUpResolveRequest(BaseModel):
     action: str = Field(default="reviewed", pattern="^(reviewed|deferred|dismissed)$")
     note: str = Field(default="", max_length=2000)
@@ -194,6 +199,59 @@ async def list_owner_attention(
     )
     planner = request.app.state.autonomous_planning_service
     return await planner.list_owner_attention(status=status, limit=limit)
+
+
+@router.post("/owner-attention/notify")
+async def notify_owner_attention(
+    data: OwnerAttentionNotifyRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "notify",
+        "owner_attention",
+        context=data.model_dump(),
+    )
+    service = getattr(request.app.state, "owner_attention_notification_service", None)
+    if not service:
+        raise HTTPException(503, "Owner attention notification service is not available")
+    return await service.run_once(
+        actor=principal.email,
+        limit=data.limit,
+        dry_run=data.dry_run,
+    )
+
+
+@router.get("/owner-attention/notifications/status")
+async def owner_attention_notification_status(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "owner_attention_notification",
+    )
+    service = getattr(request.app.state, "owner_attention_notification_service", None)
+    if not service:
+        return {
+            "enabled": False,
+            "status": "unavailable",
+            "detail": "Owner attention notification service is not available.",
+        }
+    status = await service.status()
+    runtime_status = getattr(
+        request.app.state,
+        "owner_attention_notification_status",
+        {},
+    )
+    return {
+        **status,
+        "runtime": runtime_status,
+    }
 
 
 @router.post("/plans/scan")
@@ -654,6 +712,42 @@ async def operations_readiness(
             "last_error": None,
         },
     )
+    owner_attention_notification_runtime = getattr(
+        request.app.state,
+        "owner_attention_notification_status",
+        {
+            "enabled": False,
+            "status": "unavailable",
+            "detail": "Owner attention notification worker status is not available.",
+            "actor": "owner_attention_notifier",
+            "channel": "email",
+            "interval_seconds": None,
+            "limit": None,
+            "last_started_at": None,
+            "last_completed_at": None,
+            "last_result": None,
+            "last_error": None,
+        },
+    )
+    owner_attention_notification_service = getattr(
+        request.app.state,
+        "owner_attention_notification_service",
+        None,
+    )
+    if owner_attention_notification_service:
+        owner_attention_notification_status = (
+            await owner_attention_notification_service.status()
+        )
+    else:
+        owner_attention_notification_status = {
+            "enabled": False,
+            "status": "unavailable",
+            "detail": "Owner attention notification service is not available.",
+        }
+    owner_attention_notification_status = {
+        **owner_attention_notification_status,
+        "runtime": owner_attention_notification_runtime,
+    }
 
     evidence = await request.app.state.audit_service.list_events(
         event_type="control.evidence",
@@ -701,6 +795,7 @@ async def operations_readiness(
         "operating_cadence_scheduler": operating_cadence_scheduler_status,
         "operating_follow_ups": operating_follow_ups_status,
         "owner_attention": owner_attention_status,
+        "owner_attention_notifications": owner_attention_notification_status,
         "memory": {
             "recent_traces_reviewed": len(traces),
             "recent_trace_errors": len(trace_errors),

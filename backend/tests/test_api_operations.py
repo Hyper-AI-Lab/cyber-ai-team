@@ -403,6 +403,20 @@ def test_operating_cadence_routes(monkeypatch):
         "counts": {"total": 1, "active": 1, "scheduler_created": 1},
         "items": [{"plan_id": "plan_1", "kind": "scheduled_operating_cadence"}],
     }
+    app.state.owner_attention_notification_service = AsyncMock()
+    app.state.owner_attention_notification_service.run_once.return_value = {
+        "status": "ready",
+        "counts": {"reviewed": 1, "sent": 1, "skipped": 0, "failed": 0},
+    }
+    app.state.owner_attention_notification_service.status.return_value = {
+        "enabled": True,
+        "status": "ready",
+        "channel": "email",
+    }
+    app.state.owner_attention_notification_status = {
+        "enabled": True,
+        "status": "idle",
+    }
     monkeypatch.setattr(
         "cyber_team.api.routes.operations.settings.autonomy_side_effect_mode",
         "manual_only",
@@ -447,6 +461,13 @@ def test_operating_cadence_routes(monkeypatch):
     attention_response = client.get(
         "/api/operations/owner-attention?status=active&limit=25"
     )
+    notify_response = client.post(
+        "/api/operations/owner-attention/notify",
+        json={"dry_run": False, "limit": 25},
+    )
+    notify_status_response = client.get(
+        "/api/operations/owner-attention/notifications/status"
+    )
 
     assert status_response.status_code == 200
     assert status_response.json()["counts"]["due"] == 1
@@ -458,6 +479,10 @@ def test_operating_cadence_routes(monkeypatch):
     assert resolve_response.json()["summary"]["owner_resolution"]["action"] == "dismissed"
     assert attention_response.status_code == 200
     assert attention_response.json()["items"][0]["plan_id"] == "plan_1"
+    assert notify_response.status_code == 200
+    assert notify_response.json()["counts"]["sent"] == 1
+    assert notify_status_response.status_code == 200
+    assert notify_status_response.json()["runtime"]["status"] == "idle"
     app.state.autonomous_planning_service.operating_cadence_status.assert_awaited_once_with(
         company_namespace="company:acme",
         limit=25,
@@ -486,6 +511,12 @@ def test_operating_cadence_routes(monkeypatch):
         status="active",
         limit=25,
     )
+    app.state.owner_attention_notification_service.run_once.assert_awaited_once_with(
+        actor="owner@example.com",
+        limit=25,
+        dry_run=False,
+    )
+    app.state.owner_attention_notification_service.status.assert_awaited_once()
 
 
 def test_company_context_sync_routes(monkeypatch):

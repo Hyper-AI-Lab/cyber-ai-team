@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     operating_cadence_scheduler_interval_seconds: int = 900
     operating_cadence_scheduler_limit: int = 200
     operating_cadence_scheduler_auto_execute: bool = False
+    owner_console_url: str = "http://localhost:3000"
+    owner_attention_notifications_enabled: bool = True
+    owner_attention_notification_initial_delay_seconds: int = 180
+    owner_attention_notification_interval_seconds: int = 900
+    owner_attention_notification_limit: int = 100
+    owner_attention_notification_min_priority: str = "medium"
+    owner_attention_notification_cooldown_hours: int = 24
     autonomy_side_effect_mode: str = "approval_required"
     require_live_tool_executors: bool = False
     supervisor_review_enabled: bool = True

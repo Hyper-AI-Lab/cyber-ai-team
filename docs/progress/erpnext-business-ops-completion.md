@@ -942,6 +942,47 @@
 - Next step:
   - Commit this deployment evidence entry, push to GitHub, and watch CI for the pushed head.
 
+## 2026-06-19T06:56:00Z - STEP-041 - Owner attention notification delivery v1
+
+- Files/services changed:
+  - `backend/src/cyber_team/operations/owner_attention.py`
+  - `backend/src/cyber_team/api/__init__.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/src/cyber_team/config.py`
+  - `backend/tests/test_owner_attention_notifications.py`
+  - `backend/tests/test_api_operations.py`
+  - `backend/tests/test_operating_cadence_scheduler.py`
+  - `frontend/src/components/OperationsView.tsx`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `.env.example`
+  - `deploy/environments/staging.env.example`
+  - `deploy/environments/production.env.example`
+- Commands run:
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_owner_attention_notifications.py tests/test_api_operations.py::test_operating_cadence_routes tests/test_operating_cadence_scheduler.py -q`
+  - `npx -y node@20 ./node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `PYTHONPATH=src ../.venv-quality/bin/ruff check src tests/test_owner_attention_notifications.py tests/test_api_operations.py tests/test_operating_cadence_scheduler.py`
+  - `npx -y node@20 ./node_modules/typescript/bin/tsc --noEmit --incremental false`
+  - `../.venv-quality/bin/python -m compileall src/cyber_team`
+- Result:
+  - Added a real owner attention notification service that scans active owner-attention items, filters by priority, sends owner email through the live communications gateway, and dedupes delivery using audit evidence plus communication idempotency keys.
+  - Added audit evidence events for sent, simulated, skipped, dry-run, configuration-required, and failed notification attempts.
+  - Added FastAPI lifespan-managed notification worker status and a recurring notification loop.
+  - Added owner-authorized `POST /api/operations/owner-attention/notify` and `GET /api/operations/owner-attention/notifications/status`.
+  - Extended operations readiness with `owner_attention_notifications` runtime/configuration status.
+  - Added Operations owner-console controls and readiness card for owner notifications.
+  - Added env knobs for owner console URL, notification enablement, initial delay, interval, limit, minimum priority, and cooldown.
+  - Focused backend tests passed: `6 passed`.
+  - Frontend API tests passed with Node 20: `18 passed`.
+  - Ruff, TypeScript, and Python compile checks passed for the changed surface.
+- Evidence path/link:
+  - `backend/tests/test_owner_attention_notifications.py`
+  - `backend/tests/test_api_operations.py`
+  - `backend/tests/test_operating_cadence_scheduler.py`
+  - `frontend/src/lib/api.test.ts`
+- Next step:
+  - Run the full quality gate, update live staging env notification URL/knobs, deploy to staging, smoke test, verify live notification status and manual notify endpoint, commit, push, and watch GitHub CI.
+
 ## 2026-06-18T10:33:14Z - STEP-042 - Scheduled operating cadence runner v1
 
 - Files/services changed:
