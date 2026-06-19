@@ -983,6 +983,44 @@
 - Next step:
   - Run the full quality gate, update live staging env notification URL/knobs, deploy to staging, smoke test, verify live notification status and manual notify endpoint, commit, push, and watch GitHub CI.
 
+## 2026-06-19T07:06:00Z - STEP-042 - Owner attention notification staging deploy and verification
+
+- Files/services changed:
+  - Rebuilt staging Docker images for `core` and `ui` from commit `a73346c2af9f7816422aa3205814a676370be985`.
+  - Restarted staging `core`, `worker`, and `ui`.
+  - Updated ignored live `deploy/environments/staging.env` with non-secret owner attention notification knobs and `OWNER_CONSOLE_URL=https://cyberteam.hyperailab.com`.
+  - Live verification evidence was written under ignored `dist/owner-attention-notifications/`.
+  - This tracked entry records deployment evidence after the feature commit.
+- Commands run:
+  - `./scripts/quality-gate.sh`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env build core ui`
+  - `BUILD_SHA=$(git rev-parse HEAD) APP_VERSION=$(git rev-parse --short HEAD) CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env up -d core worker ui`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_ENV_FILE=deploy/environments/staging.env ./scripts/compose-smoke.sh`
+  - Owner-authenticated `GET /api/operations/owner-attention?status=active&limit=25`
+  - Owner-authenticated `GET /api/operations/owner-attention/notifications/status`
+  - Owner-authenticated `GET /api/operations/readiness`
+  - Owner-authenticated `POST /api/operations/owner-attention/notify`
+  - Delayed owner-authenticated `GET /api/operations/owner-attention/notifications/status` after the background notification loop interval elapsed.
+- Result:
+  - Full quality gate passed: backend Ruff, full backend tests (`159 passed`), Python compile, Alembic offline SQL, dependency audit, Next production build, TypeScript, frontend tests (`18 passed`), frontend dependency audit, Compose config, script/dashboard syntax, secret scan, and diff hygiene.
+  - Docker build completed for `cyber-team-core:latest` and `cyber-team-ui:latest`; frontend Docker `npm ci` reported `found 0 vulnerabilities`.
+  - Staging `core` became healthy and `ui` started successfully.
+  - Compose smoke passed: health, UI, owner login, dashboard KPIs, integration status, WebSocket ticket, tool readiness, and approval queue behavior.
+  - `/health` reports build SHA `a73346c2af9f7816422aa3205814a676370be985`.
+  - Live owner attention queue had zero active items, so the manual notify endpoint ran with `dry_run=false` and sent no email.
+  - Live notification status reported `status=ready`, runtime `idle` before the scheduled loop, and runtime `ready` after the first background loop pass.
+  - Live background loop completed with counts `reviewed=0`, `sent=0`, `simulated=0`, `skipped=0`, and `failed=0`.
+- Evidence path/link:
+  - `https://cyberteam.hyperailab.com/health`
+  - `dist/owner-attention-notifications/health-20260619T050526Z.json`
+  - `dist/owner-attention-notifications/attention-20260619T050526Z.json`
+  - `dist/owner-attention-notifications/notification-status-20260619T050526Z.json`
+  - `dist/owner-attention-notifications/readiness-20260619T050526Z.json`
+  - `dist/owner-attention-notifications/notify-20260619T050526Z.json`
+  - `dist/owner-attention-notifications/background-status-20260619T050641Z.json`
+- Next step:
+  - Commit this deployment evidence entry, push to GitHub, and watch CI for the pushed head.
+
 ## 2026-06-18T10:33:14Z - STEP-042 - Scheduled operating cadence runner v1
 
 - Files/services changed:
