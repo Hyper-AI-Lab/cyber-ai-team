@@ -106,6 +106,55 @@ async def test_readiness_evidence_uses_configured_root(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_readiness_ci_allows_manual_full_ci_while_schedule_pending(tmp_path, monkeypatch):
+    path = tmp_path / "dist/ci/github-ci-latest.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "status": "ready",
+                "checked_at": datetime.now(UTC).isoformat(),
+                "repository": "Hyper-AI-Lab/cyber-team",
+                "branch": "main",
+                "push": {
+                    "head_sha": "current",
+                    "conclusion": "success",
+                    "html_url": "https://example.test/push",
+                },
+                "manual": {
+                    "head_sha": "current",
+                    "conclusion": "success",
+                    "html_url": "https://example.test/manual",
+                },
+                "schedule": {
+                    "head_sha": "previous",
+                    "conclusion": "failure",
+                    "html_url": "https://example.test/schedule",
+                },
+                "schedule_current_head": False,
+                "schedule_pending_current_head": True,
+                "failing_jobs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "cyber_team.operations.readiness.settings.environment",
+        "staging",
+    )
+
+    summary = await ProductionReadinessEvidenceService(
+        audit_service=FakeAudit(),
+        root_dir=tmp_path,
+    ).summary()
+
+    assert summary["ci"]["status"] == "ready"
+    assert summary["ci"]["blocking"] is False
+    assert summary["ci"]["schedule_pending_current_head"] is True
+    assert "scheduled proof is pending" in summary["ci"]["detail"]
+
+
+@pytest.mark.asyncio
 async def test_alert_and_credential_evidence_do_not_store_secret_values():
     audit = FakeAudit()
     service = ProductionReadinessEvidenceService(audit_service=audit)

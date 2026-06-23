@@ -5,13 +5,11 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,7 +40,12 @@ def github_get(path: str, token: str) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
-def latest_run(repository: str, token: str, event: str, branch: str) -> tuple[dict | None, list[dict]]:
+def latest_run(
+    repository: str,
+    token: str,
+    event: str,
+    branch: str,
+) -> tuple[dict | None, list[dict]]:
     query = urllib.parse.urlencode(
         {
             "branch": branch,
@@ -113,6 +116,7 @@ def main() -> int:
         "branch": branch,
         "push": None,
         "schedule": None,
+        "manual": None,
         "failing_jobs": [],
     }
     if not token or not repository:
@@ -123,6 +127,7 @@ def main() -> int:
     try:
         push, push_failures = latest_run(repository, token, "push", branch)
         schedule, schedule_failures = latest_run(repository, token, "schedule", branch)
+        manual, manual_failures = latest_run(repository, token, "workflow_dispatch", branch)
     except urllib.error.HTTPError as exc:
         payload.update({"status": "failed", "detail": f"GitHub API error: {exc.code}"})
         path = write_evidence(payload)
@@ -134,24 +139,40 @@ def main() -> int:
         print(f"GitHub CI evidence recorded: {path}")
         return 1
 
-    failing_jobs = [*push_failures, *schedule_failures]
-    ready = (
-        push
-        and schedule
-        and push.get("conclusion") == "success"
-        and schedule.get("conclusion") == "success"
+    push_success = bool(push and push.get("conclusion") == "success")
+    current_head = push.get("head_sha") if push else None
+    schedule_current = bool(schedule and schedule.get("head_sha") == current_head)
+    schedule_success = bool(schedule_current and schedule.get("conclusion") == "success")
+    manual_success = bool(
+        manual
+        and manual.get("head_sha") == current_head
+        and manual.get("conclusion") == "success"
     )
+    schedule_pending_current_head = bool(push_success and manual_success and not schedule_success)
+    ready = push_success and (schedule_success or manual_success)
+    failing_jobs = (
+        [*push_failures, *manual_failures]
+        if schedule_pending_current_head
+        else [*push_failures, *schedule_failures, *manual_failures]
+    )
+    detail = "Latest push and scheduled CI runs are successful."
+    if schedule_pending_current_head:
+        detail = (
+            "Latest push and manual full CI runs are successful; the next scheduled "
+            "run for this head is pending GitHub's cron."
+        )
+    elif not ready:
+        detail = "Latest push or scheduled/manual CI run is missing or unsuccessful."
     payload.update(
         {
             "status": "ready" if ready else "degraded",
             "push": push,
             "schedule": schedule,
+            "manual": manual,
+            "schedule_current_head": schedule_current,
+            "schedule_pending_current_head": schedule_pending_current_head,
             "failing_jobs": failing_jobs,
-            "detail": (
-                "Latest push and scheduled CI runs are successful."
-                if ready
-                else "Latest push or scheduled CI run is missing or unsuccessful."
-            ),
+            "detail": detail,
         }
     )
     path = write_evidence(payload)

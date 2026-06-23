@@ -129,11 +129,22 @@ class ProductionReadinessEvidenceService:
         status = payload.get("status") if payload else "not_recorded"
         push = payload.get("push") if payload else None
         scheduled = payload.get("schedule") if payload else None
+        manual = payload.get("manual") if payload else None
+        schedule_pending = bool(payload.get("schedule_pending_current_head")) if payload else False
         if push and scheduled:
+            push_success = push.get("conclusion") == "success"
+            schedule_success = (
+                scheduled.get("head_sha") == push.get("head_sha")
+                and scheduled.get("conclusion") == "success"
+            )
+            manual_success = bool(
+                manual
+                and manual.get("head_sha") == push.get("head_sha")
+                and manual.get("conclusion") == "success"
+            )
             status = (
                 "ready"
-                if push.get("conclusion") == "success"
-                and scheduled.get("conclusion") == "success"
+                if push_success and (schedule_success or manual_success)
                 else "degraded"
             )
         blocking = self._proof_required() and status != "ready"
@@ -144,10 +155,18 @@ class ProductionReadinessEvidenceService:
             "repository": payload.get("repository") if payload else settings.github_repository,
             "push": push,
             "schedule": scheduled,
+            "manual": manual,
+            "schedule_current_head": payload.get("schedule_current_head") if payload else None,
+            "schedule_pending_current_head": schedule_pending,
             "failing_jobs": payload.get("failing_jobs", []) if payload else [],
             "evidence_path": latest.get("_path") if latest else None,
             "detail": (
-                "Latest push and scheduled CI evidence is successful."
+                (
+                    "Latest push and manual full CI evidence is successful; "
+                    "scheduled proof is pending the next GitHub cron."
+                )
+                if status == "ready" and schedule_pending
+                else "Latest push and scheduled CI evidence is successful."
                 if status == "ready"
                 else "GitHub CI evidence has not been recorded or is not successful."
             ),

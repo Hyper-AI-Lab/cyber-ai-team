@@ -1740,3 +1740,41 @@
   - Alert control evidence id: `f67c82a0-29b9-45c0-987f-25df6bcbb422`
 - Next step:
   - Commit the evidence-root/mount fix, build and scan a new release candidate, promote it to staging, and refresh live readiness to confirm evidence artifacts are visible inside the API container.
+
+## 2026-06-23T05:00:43Z - STEP-049 - Refined CI readiness evidence for push/manual success and pending schedule
+
+- Files/services changed:
+  - `backend/src/cyber_team/operations/readiness.py`
+  - `backend/tests/test_readiness_evidence.py`
+  - `scripts/github-ci-evidence.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=a01dea2 ./scripts/promote-staging.sh`
+  - `GET /api/operations/readiness?refresh=true`
+  - `git push origin main`
+  - `gh workflow run ci.yml --repo Hyper-AI-Lab/cyber-team --ref main`
+  - `gh run watch 28003060927 --repo Hyper-AI-Lab/cyber-team --exit-status`
+  - `gh run watch 28003064326 --repo Hyper-AI-Lab/cyber-team --exit-status`
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_readiness_evidence.py -q`
+  - `../.venv-quality/bin/ruff check src/cyber_team/operations/readiness.py tests/test_readiness_evidence.py ../scripts/github-ci-evidence.py`
+  - `python3 -m py_compile scripts/github-ci-evidence.py && git diff --check`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 ./scripts/quality-gate.sh`
+- Result:
+  - Promoted `a01dea2` to staging and live compose smoke passed.
+  - Live readiness now sees mounted host evidence artifacts: restore drills, load gate, business workflow smoke, and alert proof are fresh and passing.
+  - The only remaining readiness blocker was CI evidence because the previously recorded GitHub evidence lacked a token and the latest true `schedule` event was from the older `26e5d8e` head.
+  - Pushed the current branch to GitHub.
+  - GitHub push CI run `28003060927` passed: backend, frontend, and compose/secrets/diff hygiene all green.
+  - GitHub manual workflow-dispatch CI run `28003064326` passed: backend, frontend, compose/secrets/diff hygiene, Docker Compose smoke, observability config, and Docker image scan all green.
+  - Updated `scripts/github-ci-evidence.py` to record `manual` workflow-dispatch evidence in addition to push and schedule evidence.
+  - Updated readiness logic so a current-head push plus current-head manual full CI can satisfy readiness while true scheduled proof is pending the next GitHub cron, instead of treating older scheduled-run failures as current release blockers.
+  - Added a regression test for the pending-schedule/current-manual-success case.
+  - Focused readiness tests passed: 4 passed.
+  - Full quality gate passed: 167 backend tests plus backend lint/compile/offline SQL/audit, frontend build/typecheck/tests/audit, Compose config, operational syntax checks, secret scan, and diff hygiene.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/a01dea2.json`
+  - `/home/projects/cyber-team/dist/promotions/staging/a01dea2-20260623-045037.json`
+  - Push CI: `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28003060927`
+  - Manual CI: `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28003064326`
+- Next step:
+  - Commit the CI evidence refinement, build and scan a final release candidate, promote it to staging, record fresh GitHub CI evidence with the local GitHub token, and refresh live readiness.
