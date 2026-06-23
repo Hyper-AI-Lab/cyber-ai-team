@@ -8,6 +8,7 @@ EVIDENCE_DIR="${LOAD_SMOKE_EVIDENCE_DIR:-$ROOT_DIR/dist/load-tests}"
 API_BASE="${API_BASE:-https://cyberteam.hyperailab.com}"
 K6_VUS="${K6_VUS:-5}"
 K6_DURATION="${K6_DURATION:-5m}"
+K6_DOCKER_USER="${K6_DOCKER_USER:-$(id -u):$(id -g)}"
 
 if [ -f "$ENV_FILE" ]; then
   set -a
@@ -27,6 +28,7 @@ timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 evidence_file="/out/load-smoke-$timestamp.json"
 
 docker run --rm --network host \
+  --user "$K6_DOCKER_USER" \
   -e API_BASE="$API_BASE" \
   -e OWNER_EMAIL="$OWNER_EMAIL" \
   -e OWNER_PASSWORD="$OWNER_PASSWORD" \

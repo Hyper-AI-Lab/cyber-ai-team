@@ -137,6 +137,55 @@ def test_operations_readiness_reports_tool_and_integration_blockers(monkeypatch)
     assert body["memory"]["recent_trace_errors"] == 1
 
 
+def test_operations_readiness_caches_snapshot_until_refresh(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+
+    class FakeRegistry:
+        def __init__(self):
+            self.calls = 0
+
+        def list_tool_contracts(self):
+            self.calls += 1
+            return [{"name": "memory_recall", "state": "live", "side_effects": False}]
+
+    class FakeComms:
+        def integration_status(self):
+            return []
+
+    registry = FakeRegistry()
+    app.state.tool_registry = registry
+    app.state.comms_gateway = FakeComms()
+    app.state.audit_service = AsyncMock()
+    app.state.audit_service.list_events.return_value = []
+    app.state.memory_service = AsyncMock()
+    app.state.memory_service.list_memory_traces.return_value = []
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.settings.required_communication_providers",
+        "",
+    )
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+
+    client = TestClient(app)
+    assert client.get("/api/operations/readiness").status_code == 200
+    assert client.get("/api/operations/readiness").status_code == 200
+    assert registry.calls == 1
+
+    assert client.get("/api/operations/readiness?refresh=true").status_code == 200
+    assert registry.calls == 2
+
+
 def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
     app = FastAPI()
     app.include_router(operations_router, prefix="/api/operations")

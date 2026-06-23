@@ -1,5 +1,6 @@
 """Autonomous operations routes."""
 
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -12,6 +13,7 @@ from cyber_team.config import settings
 from cyber_team.operations.readiness import ProductionReadinessEvidenceService
 
 router = APIRouter()
+READINESS_CACHE_TTL_SECONDS = 5.0
 
 
 class AutonomousCycleRequest(BaseModel):
@@ -158,6 +160,10 @@ def _readiness_evidence_service(request: Request) -> ProductionReadinessEvidence
     return ProductionReadinessEvidenceService(
         audit_service=getattr(request.app.state, "audit_service", None),
     )
+
+
+def _clear_operations_readiness_cache(request: Request) -> None:
+    request.app.state.operations_readiness_cache = None
 
 
 @router.post("/autonomous-cycle", response_model=AutonomousCycleResponse)
@@ -322,6 +328,7 @@ async def test_alert_email_delivery(
         response=response,
         dry_run=data.dry_run,
     )
+    _clear_operations_readiness_cache(request)
     return {
         "status": "ready" if response.get("status") in {"sent", "simulated"} else "failed",
         "dry_run": data.dry_run,
@@ -359,6 +366,7 @@ async def record_credential_rotation_evidence(
         note=data.note,
         rotated_at=data.rotated_at,
     )
+    _clear_operations_readiness_cache(request)
     return {"status": "recorded", "evidence": evidence}
 
 
@@ -598,6 +606,7 @@ async def scan_operating_cadences(
 @router.get("/readiness")
 async def operations_readiness(
     request: Request,
+    refresh: bool = False,
     principal: Principal = Depends(get_current_principal),
 ):
     await require_authorization(
@@ -607,6 +616,16 @@ async def operations_readiness(
         "operations_readiness",
         "production",
     )
+    cache = getattr(request.app.state, "operations_readiness_cache", None)
+    now = time.monotonic()
+    if (
+        not refresh
+        and isinstance(cache, dict)
+        and cache.get("expires_at", 0) > now
+        and isinstance(cache.get("payload"), dict)
+    ):
+        return cache["payload"]
+
     registry = request.app.state.tool_registry
     tools = registry.list_tool_contracts()
     tool_counts: dict[str, int] = {}
@@ -884,7 +903,7 @@ async def operations_readiness(
         + operational_blockers
     )
     status = "ready" if not blockers else "degraded"
-    return {
+    payload = {
         "status": status,
         "environment": settings.environment,
         "version": {
@@ -940,6 +959,11 @@ async def operations_readiness(
         },
         "blockers": blockers,
     }
+    request.app.state.operations_readiness_cache = {
+        "expires_at": time.monotonic() + READINESS_CACHE_TTL_SECONDS,
+        "payload": payload,
+    }
+    return payload
 
 
 @router.get("/decision-timeline")
