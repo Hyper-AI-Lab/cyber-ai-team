@@ -1705,3 +1705,38 @@
   - Local traceback from mocked in-container communications gateway showed `communication_logs_agent_id_fkey` on the synthetic alert-test agent id.
 - Next step:
   - Commit the alert-delivery fix, build and scan a new release candidate, promote it to staging, and rerun the live owner alert email proof against the repaired deployment.
+
+## 2026-06-23T04:41:48Z - STEP-048 - Exposed operational evidence artifacts to deployed readiness checks
+
+- Files/services changed:
+  - `.env.example`
+  - `backend/src/cyber_team/config.py`
+  - `backend/src/cyber_team/operations/readiness.py`
+  - `backend/tests/test_readiness_evidence.py`
+  - `deploy/environments/staging.env.example`
+  - `docker-compose.yml`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=5f65691 ./scripts/promote-staging.sh`
+  - `POST /api/operations/alerts/test-email` against staging with `dry_run=false`
+  - `GET /api/operations/readiness?refresh=true`
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_readiness_evidence.py tests/test_api_operations.py -q`
+  - `../.venv-quality/bin/ruff check src/cyber_team/operations/readiness.py src/cyber_team/config.py tests/test_readiness_evidence.py`
+  - `CYBERTEAM_ENV_FILE=/home/projects/cyber-team/deploy/environments/staging.env docker compose --env-file /home/projects/cyber-team/deploy/environments/staging.env config`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 ./scripts/quality-gate.sh`
+- Result:
+  - Promoted `5f65691` to staging and live compose smoke passed.
+  - The repaired live alert delivery proof succeeded through SMTP and recorded control evidence id `f67c82a0-29b9-45c0-987f-25df6bcbb422`.
+  - `/health` reported staging version `5f65691`; `/ready` reported ready.
+  - Live `/api/operations/readiness?refresh=true` correctly marked alerts ready, but still marked CI, restore drills, load test, and business workflow smoke as not recorded because the API container could not see host-side `dist/` evidence artifacts.
+  - Added `READINESS_EVIDENCE_ROOT` and `READINESS_EVIDENCE_HOST_DIR`.
+  - Mounted host `dist/` into the core API container at `/app/evidence/dist:ro` and set `READINESS_EVIDENCE_ROOT=/app/evidence`.
+  - Added a regression test proving the evidence service honors the configured root.
+  - Focused readiness/API tests passed: 13 passed.
+  - Full quality gate passed: 166 backend tests plus backend lint/compile/offline SQL/audit, frontend build/typecheck/tests/audit, Compose config, operational syntax checks, secret scan, and diff hygiene.
+- Evidence:
+  - `/home/projects/cyber-team/dist/promotions/staging/5f65691-20260623-043034.json`
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-5f65691-20260623-043000.dump`
+  - Alert control evidence id: `f67c82a0-29b9-45c0-987f-25df6bcbb422`
+- Next step:
+  - Commit the evidence-root/mount fix, build and scan a new release candidate, promote it to staging, and refresh live readiness to confirm evidence artifacts are visible inside the API container.

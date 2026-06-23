@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     secret_key: str = "changeme-app-secret-key"
     cors_allowed_origins: str = "*"
     data_dir: str = "/app/data"
+    readiness_evidence_root: str = ""
 
     # Owner
     owner_email: str = "owner@example.com"

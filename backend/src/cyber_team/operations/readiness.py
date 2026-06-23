@@ -11,7 +11,15 @@ from typing import Any
 from cyber_team.clock import utc_now
 from cyber_team.config import settings
 
-ROOT_DIR = Path(__file__).resolve().parents[4]
+
+def _default_root_dir() -> Path:
+    if settings.readiness_evidence_root.strip():
+        return Path(settings.readiness_evidence_root).expanduser()
+    path = Path(__file__).resolve()
+    for parent in path.parents:
+        if (parent / "backend").exists() and (parent / "frontend").exists():
+            return parent
+    return path.parents[4]
 
 
 @dataclass(frozen=True)
@@ -34,7 +42,7 @@ class ProductionReadinessEvidenceService:
 
     def __init__(self, audit_service=None, root_dir: Path | None = None) -> None:
         self._audit = audit_service
-        self._root = root_dir or ROOT_DIR
+        self._root = root_dir or _default_root_dir()
 
     async def summary(self) -> dict[str, Any]:
         evidence = await self._control_evidence()

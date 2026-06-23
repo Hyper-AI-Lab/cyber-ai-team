@@ -19,6 +19,7 @@ services:
       - OPENFGA_API_URL=http://openfga:8080
       - APP_VERSION=${APP_VERSION:-0.1.0}
       - BUILD_SHA=${BUILD_SHA:-local}
+      - READINESS_EVIDENCE_ROOT=/app/evidence
     depends_on:
       postgres:
         condition: service_healthy
@@ -32,6 +33,7 @@ services:
         condition: service_started
     volumes:
       - core-data:/app/data
+      - ${READINESS_EVIDENCE_HOST_DIR:-./dist}:/app/evidence/dist:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

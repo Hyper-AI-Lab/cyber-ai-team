@@ -73,6 +73,39 @@ async def test_readiness_evidence_reads_fresh_artifacts(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_readiness_evidence_uses_configured_root(tmp_path, monkeypatch):
+    now = datetime.now(UTC).isoformat()
+    path = tmp_path / "dist/load-tests/load-smoke-20260623T000000Z.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "completed_at": now,
+                "p95_ms": 200,
+                "failure_rate": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "cyber_team.operations.readiness.settings.readiness_evidence_root",
+        str(tmp_path),
+    )
+    monkeypatch.setattr(
+        "cyber_team.operations.readiness.settings.environment",
+        "staging",
+    )
+
+    summary = await ProductionReadinessEvidenceService(
+        audit_service=FakeAudit(),
+    ).summary()
+
+    assert summary["load_test"]["status"] == "ready"
+    assert summary["load_test"]["evidence_path"] == str(path)
+
+
+@pytest.mark.asyncio
 async def test_alert_and_credential_evidence_do_not_store_secret_values():
     audit = FakeAudit()
     service = ProductionReadinessEvidenceService(audit_service=audit)
