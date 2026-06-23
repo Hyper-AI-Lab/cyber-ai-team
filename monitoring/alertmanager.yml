@@ -1,0 +1,18 @@
+global:
+  smtp_smarthost: 'localhost:25'
+  smtp_from: 'alerts@example.local'
+  smtp_require_tls: false
+
+route:
+  receiver: owner-email
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: owner-email
+    email_configs:
+      - to: 'owner@example.local'
+        send_resolved: true
+        require_tls: false

@@ -519,6 +519,134 @@ def test_operating_cadence_routes(monkeypatch):
     app.state.owner_attention_notification_service.status.assert_awaited_once()
 
 
+def test_alert_email_delivery_records_control_evidence(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+
+    class FakeComms:
+        def __init__(self):
+            self.sent = []
+
+        async def send_email(self, data):
+            self.sent.append(data)
+            return {
+                "email_id": "email-1",
+                "status": "sent",
+                "provider": "smtp",
+            }
+
+    class FakeEvidence:
+        def __init__(self):
+            self.calls = []
+
+        async def record_alert_test(self, *, actor, response, dry_run):
+            self.calls.append(
+                {
+                    "actor": actor,
+                    "response": response,
+                    "dry_run": dry_run,
+                }
+            )
+            return {"id": "evidence-1", "outcome": "success"}
+
+    comms = FakeComms()
+    evidence = FakeEvidence()
+    app.state.comms_gateway = comms
+    app.state.readiness_evidence_service = evidence
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.settings.owner_email",
+        "owner@example.com",
+    )
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+
+    response = TestClient(app).post(
+        "/api/operations/alerts/test-email",
+        json={"dry_run": False, "note": "release gate"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["recipient"] == "owner@example.com"
+    assert comms.sent[0].to_address == "owner@example.com"
+    assert "release gate" in comms.sent[0].body
+    assert evidence.calls == [
+        {
+            "actor": "owner@example.com",
+            "response": {
+                "email_id": "email-1",
+                "status": "sent",
+                "provider": "smtp",
+            },
+            "dry_run": False,
+        }
+    ]
+
+
+def test_credential_rotation_evidence_endpoint_records_owner_evidence(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+
+    class FakeEvidence:
+        def __init__(self):
+            self.kwargs = None
+
+        async def record_credential_rotation_evidence(self, **kwargs):
+            self.kwargs = kwargs
+            return {
+                "id": "evidence-2",
+                "metadata": {"evidence": {"secret_names": ["SMTP_PASSWORD"]}},
+            }
+
+    evidence = FakeEvidence()
+    app.state.readiness_evidence_service = evidence
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+
+    response = TestClient(app).post(
+        "/api/operations/security/credential-rotation/evidence",
+        json={
+            "scope": "staging",
+            "secret_names": ["SMTP_PASSWORD", "not_allowed=value"],
+            "evidence_reference": "vault-change-123",
+            "note": "Rotated through owner runbook.",
+            "rotated_at": "2026-06-23T00:00:00Z",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "recorded"
+    assert evidence.kwargs == {
+        "actor": "owner@example.com",
+        "scope": "staging",
+        "secret_names": ["SMTP_PASSWORD", "not_allowed=value"],
+        "evidence_reference": "vault-change-123",
+        "note": "Rotated through owner runbook.",
+        "rotated_at": "2026-06-23T00:00:00Z",
+    }
+
+
 def test_company_context_sync_routes(monkeypatch):
     app = FastAPI()
     app.include_router(operations_router, prefix="/api/operations")

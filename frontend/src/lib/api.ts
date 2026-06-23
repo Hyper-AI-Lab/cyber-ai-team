@@ -576,6 +576,35 @@ class ApiClient {
     return this.request('/api/operations/readiness');
   }
 
+  async testAlertEmail(options: { dryRun?: boolean; note?: string } = {}) {
+    return this.request('/api/operations/alerts/test-email', {
+      method: 'POST',
+      body: JSON.stringify({
+        dry_run: options.dryRun ?? false,
+        note: options.note ?? '',
+      }),
+    });
+  }
+
+  async recordCredentialRotationEvidence(options: {
+    scope?: string;
+    secretNames?: string[];
+    evidenceReference?: string;
+    note?: string;
+    rotatedAt?: string;
+  } = {}) {
+    return this.request('/api/operations/security/credential-rotation/evidence', {
+      method: 'POST',
+      body: JSON.stringify({
+        scope: options.scope ?? 'staging',
+        secret_names: options.secretNames ?? [],
+        evidence_reference: options.evidenceReference ?? 'owner-console',
+        note: options.note ?? '',
+        ...(options.rotatedAt ? { rotated_at: options.rotatedAt } : {}),
+      }),
+    });
+  }
+
   async getOwnerAttention(
     filters: {
       status?: string;

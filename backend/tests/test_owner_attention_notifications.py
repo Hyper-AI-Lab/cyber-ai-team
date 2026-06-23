@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from cyber_team.operations.owner_attention import OwnerAttentionNotificationService
 
 
@@ -48,9 +50,13 @@ class FakeComms:
         return {"email_id": f"email-{len(self.sent)}", "status": "sent", "provider": "smtp"}
 
 
+FIXED_NOW = datetime(2026, 6, 19, 12, 0, 0)
+
+
 class FakeAudit:
-    def __init__(self):
+    def __init__(self, *, created_at=None):
         self.events = []
+        self.created_at = created_at or FIXED_NOW
 
     async def list_events(
         self,
@@ -92,13 +98,17 @@ class FakeAudit:
             "action": action,
             "outcome": outcome,
             "metadata": metadata or {},
-            "created_at": "2026-06-19T00:00:00",
+            "created_at": self.created_at.isoformat(),
         }
         self.events.append(event)
         return event
 
 
 async def test_owner_attention_notification_sends_and_dedupes(monkeypatch):
+    monkeypatch.setattr(
+        "cyber_team.operations.owner_attention.utc_now",
+        lambda: FIXED_NOW,
+    )
     monkeypatch.setattr(
         "cyber_team.operations.owner_attention.settings.owner_email",
         "owner@example.com",
@@ -141,7 +151,44 @@ async def test_owner_attention_notification_sends_and_dedupes(monkeypatch):
     assert len(comms.sent) == 1
 
 
+async def test_owner_attention_notification_resends_after_cooldown(monkeypatch):
+    monkeypatch.setattr(
+        "cyber_team.operations.owner_attention.utc_now",
+        lambda: FIXED_NOW,
+    )
+    monkeypatch.setattr(
+        "cyber_team.operations.owner_attention.settings.owner_email",
+        "owner@example.com",
+    )
+    monkeypatch.setattr(
+        "cyber_team.operations.owner_attention.settings.owner_attention_notifications_enabled",
+        True,
+    )
+    monkeypatch.setattr(
+        "cyber_team.operations.owner_attention.settings.owner_attention_notification_cooldown_hours",
+        24,
+    )
+    comms = FakeComms()
+    audit = FakeAudit(created_at=FIXED_NOW - timedelta(hours=25))
+    service = OwnerAttentionNotificationService(
+        planner=FakePlanner(),
+        comms=comms,
+        audit_service=audit,
+    )
+
+    first = await service.run_once(actor="test-runner")
+    second = await service.run_once(actor="test-runner")
+
+    assert first["counts"]["sent"] == 1
+    assert second["counts"]["sent"] == 1
+    assert len(comms.sent) == 2
+
+
 async def test_owner_attention_notification_dry_run_records_no_delivery(monkeypatch):
+    monkeypatch.setattr(
+        "cyber_team.operations.owner_attention.utc_now",
+        lambda: FIXED_NOW,
+    )
     monkeypatch.setattr(
         "cyber_team.operations.owner_attention.settings.owner_email",
         "owner@example.com",

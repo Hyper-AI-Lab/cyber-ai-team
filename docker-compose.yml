@@ -304,6 +304,43 @@ services:
       - prometheus-data:/prometheus
     restart: unless-stopped
 
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-alertmanager
+    profiles: ["observability"]
+    env_file: ${CYBERTEAM_ENV_FILE:-.env}
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      cat > /tmp/alertmanager.yml <<EOF
+      global:
+        smtp_smarthost: '$${SMTP_HOST:-localhost}:$${SMTP_PORT:-25}'
+        smtp_from: '$${SMTP_FROM_EMAIL:-alerts@example.local}'
+        smtp_auth_username: '$${SMTP_USERNAME:-}'
+        smtp_auth_password: '$${SMTP_PASSWORD:-}'
+        smtp_require_tls: $${SMTP_STARTTLS:-false}
+
+      route:
+        receiver: owner-email
+        group_by: ['alertname', 'severity']
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 4h
+
+      receivers:
+        - name: owner-email
+          email_configs:
+            - to: '$${OWNER_EMAIL:-owner@example.local}'
+              send_resolved: true
+              require_tls: $${SMTP_STARTTLS:-false}
+      EOF
+      exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
+    ports:
+      - "${ALERTMANAGER_PUBLISHED_PORT:-9093}:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    restart: unless-stopped
+
   # ─── ERPNext / Frappe System of Record ────────────────────────────
   erpnext-mariadb:
     image: mariadb:10.11
@@ -512,6 +549,7 @@ volumes:
   temporal-data:
   grafana-data:
   prometheus-data:
+  alertmanager-data:
   core-data:
   erpnext-sites:
   erpnext-logs:

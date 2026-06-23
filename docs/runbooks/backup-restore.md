@@ -73,6 +73,8 @@ writes JSON evidence to:
 dist/restore-drills/staging/staging-restore-drill-YYYYMMDDTHHMMSSZ.json
 ```
 
+The Operations readiness board treats this evidence as stale after 30 days.
+
 ## Qdrant Backup
 
 Create a collection snapshot:

@@ -495,6 +495,8 @@ describe('ApiClient', () => {
   it('fetches operations readiness, decision timeline, and GDPR workflows', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ status: 'ready' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'ready', response: { status: 'sent' } }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'recorded' }))
       .mockResolvedValueOnce(jsonResponse([{ id: 'timeline-1' }]))
       .mockResolvedValueOnce(jsonResponse({ dry_run: true }))
       .mockResolvedValueOnce(jsonResponse({ subject: 'person@example.com' }))
@@ -504,6 +506,14 @@ describe('ApiClient', () => {
 
     client.setTokens('access-1')
     await client.getOperationsReadiness()
+    await client.testAlertEmail({ dryRun: true, note: 'Smoke' })
+    await client.recordCredentialRotationEvidence({
+      scope: 'staging',
+      secretNames: ['SMTP_PASSWORD'],
+      evidenceReference: 'vault-change-123',
+      note: 'Rotated.',
+      rotatedAt: '2026-06-23T00:00:00Z',
+    })
     await client.getDecisionTimeline(25)
     await client.runRetentionCleanup(true)
     await client.exportSubjectData('person@example.com')
@@ -511,21 +521,38 @@ describe('ApiClient', () => {
 
     expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/operations/readiness')
     expect(fetchMock.mock.calls[1][0]).toBe(
-      'http://api.test/api/operations/decision-timeline?limit=25',
+      'http://api.test/api/operations/alerts/test-email',
     )
+    expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({
+      dry_run: true,
+      note: 'Smoke',
+    })
     expect(fetchMock.mock.calls[2][0]).toBe(
-      'http://api.test/api/operations/retention/cleanup',
+      'http://api.test/api/operations/security/credential-rotation/evidence',
     )
     expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toEqual({
-      dry_run: true,
+      scope: 'staging',
+      secret_names: ['SMTP_PASSWORD'],
+      evidence_reference: 'vault-change-123',
+      note: 'Rotated.',
+      rotated_at: '2026-06-23T00:00:00Z',
     })
     expect(fetchMock.mock.calls[3][0]).toBe(
-      'http://api.test/api/operations/gdpr/subjects/person%40example.com/export',
+      'http://api.test/api/operations/decision-timeline?limit=25',
     )
     expect(fetchMock.mock.calls[4][0]).toBe(
-      'http://api.test/api/operations/gdpr/subjects/person%40example.com/delete',
+      'http://api.test/api/operations/retention/cleanup',
     )
     expect(JSON.parse(fetchMock.mock.calls[4][1]?.body as string)).toEqual({
+      dry_run: true,
+    })
+    expect(fetchMock.mock.calls[5][0]).toBe(
+      'http://api.test/api/operations/gdpr/subjects/person%40example.com/export',
+    )
+    expect(fetchMock.mock.calls[6][0]).toBe(
+      'http://api.test/api/operations/gdpr/subjects/person%40example.com/delete',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[6][1]?.body as string)).toEqual({
       dry_run: true,
       audit_preserving: true,
     })

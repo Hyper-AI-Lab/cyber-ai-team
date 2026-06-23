@@ -49,6 +49,7 @@ from cyber_team.operations.autonomous import AutonomousOperationsService
 from cyber_team.operations.memory_steward import MemoryStewardService
 from cyber_team.operations.owner_attention import OwnerAttentionNotificationService
 from cyber_team.operations.planning import AutonomousPlanningService
+from cyber_team.operations.readiness import ProductionReadinessEvidenceService
 from cyber_team.operations.retention import RetentionService
 from cyber_team.operations.supervisor_review import SupervisorReviewService
 from cyber_team.roles.loader import load_default_roles
@@ -131,6 +132,9 @@ async def lifespan(app: FastAPI):
         comms=app.state.comms_gateway,
         audit_service=app.state.audit_service,
         metrics_service=app.state.metrics_service,
+    )
+    app.state.readiness_evidence_service = ProductionReadinessEvidenceService(
+        audit_service=app.state.audit_service,
     )
     app.state.autonomous_operations_service = AutonomousOperationsService(
         supervisor_review_service=app.state.supervisor_review_service,

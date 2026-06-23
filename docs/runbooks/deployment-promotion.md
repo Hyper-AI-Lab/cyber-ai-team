@@ -20,6 +20,10 @@ cp deploy/environments/production.env.example deploy/environments/production.env
 The real `.env` files are ignored by Git. Replace every placeholder secret, port, URL,
 and owner credential before execution.
 
+Before promotion, run the production-readiness closure evidence commands from
+`docs/runbooks/production-readiness-closure.md` and confirm the Operations
+readiness board has no required staging blockers.
+
 ## Dry Run
 
 ```bash

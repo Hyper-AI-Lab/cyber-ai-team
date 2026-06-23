@@ -1442,3 +1442,134 @@
   - `dist/operating-cadence/scan-idempotency-20260618T013650Z.json`
 - Next step:
   - Commit this deployment evidence entry, push to GitHub, and watch CI for the pushed head.
+## 2026-06-23T02:42:35Z - STEP-037 - Scheduled CI owner-notification determinism
+
+- Files/services changed:
+  - `backend/tests/test_owner_attention_notifications.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `date -u +%Y-%m-%dT%H:%M:%SZ`
+- Result:
+  - Replaced the date-sensitive owner-attention notification test setup with a fixed test clock.
+  - Added explicit cooldown-expiry coverage so scheduled CI will not flip from passing to failing as wall-clock time advances.
+- Evidence:
+  - Pending focused backend test run for owner-attention notifications.
+- Next step:
+  - Add production-readiness evidence collection, owner alert test API, and credential-rotation evidence support.
+
+## 2026-06-23T02:49:30Z - STEP-038 - Production-readiness evidence APIs
+
+- Files/services changed:
+  - `backend/src/cyber_team/config.py`
+  - `backend/src/cyber_team/api/__init__.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/src/cyber_team/operations/readiness.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - Repository inspection of operations readiness, audit evidence, communications gateway, and env examples.
+- Result:
+  - Added a production-readiness evidence service that summarizes CI, alert delivery, restore drills, credential rotation, conservative load tests, and business workflow smoke artifacts.
+  - Extended `GET /api/operations/readiness` with the new readiness sections while preserving existing response fields.
+  - Added owner-authorized `POST /api/operations/alerts/test-email` and `POST /api/operations/security/credential-rotation/evidence`.
+  - Added ERPNext secret settings already present in env examples so credential inventory reads runtime config consistently.
+- Evidence:
+  - Pending backend route/service tests.
+- Next step:
+  - Add focused backend tests for alert delivery evidence, credential evidence, and readiness artifact states.
+
+## 2026-06-23T02:56:10Z - STEP-039 - Readiness evidence backend tests
+
+- Files/services changed:
+  - `backend/tests/test_api_operations.py`
+  - `backend/tests/test_readiness_evidence.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - No test command yet; tests were added before the focused backend run.
+- Result:
+  - Added route tests for owner alert email proof and credential-rotation evidence recording.
+  - Added service tests proving fresh restore/load/business-smoke artifacts are recognized and credential evidence stores secret names only, never secret values.
+- Evidence:
+  - Pending focused backend test run.
+- Next step:
+  - Add operational evidence scripts for GitHub CI, conservative load, and end-to-end business workflow smoke.
+
+## 2026-06-23T03:04:20Z - STEP-040 - Operational evidence scripts and alert routing
+
+- Files/services changed:
+  - `scripts/github-ci-evidence.py`
+  - `scripts/load-smoke.sh`
+  - `scripts/k6/cyberteam-owner-console.js`
+  - `scripts/business-workflow-smoke.py`
+  - `monitoring/prometheus.yml`
+  - `monitoring/alertmanager.yml`
+  - `docker-compose.yml`
+  - `scripts/observability-check.sh`
+  - `.env.example`
+  - `deploy/environments/staging.env.example`
+  - `deploy/environments/production.env.example`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `chmod +x scripts/github-ci-evidence.py scripts/load-smoke.sh scripts/business-workflow-smoke.py`
+- Result:
+  - Added GitHub CI evidence collection for latest push and scheduled runs.
+  - Added a Docker-based k6 conservative owner-console load gate.
+  - Added a safe end-to-end business workflow smoke covering health, owner login, ERPNext readiness, dry-run company context sync, role backlog summary, owner notification dry-run, and invalid-approval blocking.
+  - Added Alertmanager to the observability profile and Prometheus alert routing with config validation.
+- Evidence:
+  - Pending syntax, unit, compose, and observability verification.
+- Next step:
+  - Update docs/runbooks and owner console/API client surfaces for the new controls.
+
+## 2026-06-23T03:11:45Z - STEP-041 - Owner console and runbook readiness surfaces
+
+- Files/services changed:
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/OperationsView.tsx`
+  - `docs/runbooks/production-readiness-closure.md`
+  - `docs/production-readiness-plan.md`
+  - `docs/runbooks/backup-restore.md`
+  - `docs/runbooks/deployment-promotion.md`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - Source inspections of frontend API and Operations owner-console component.
+- Result:
+  - Added frontend client methods for alert email proof and credential-rotation evidence.
+  - Extended the Operations readiness board with CI, alert email, restore-drill, credential-rotation, load-gate, and business-smoke cards plus an owner alert email test button.
+  - Added a production-readiness closure runbook and linked it from readiness/deployment docs.
+- Evidence:
+  - Pending frontend tests/build/typecheck and backend route tests.
+- Next step:
+  - Run focused backend/frontend tests, fix any regressions, then run broader quality checks.
+
+## 2026-06-23T03:25:20Z - STEP-042 - Local release-gate verification
+
+- Files/services changed:
+  - `monitoring/alertmanager.yml` permissions set to world-readable for container validation.
+  - `docker-compose.yml` Alertmanager runtime config generation refined to use ignored env values without committing secrets.
+  - `docs/runbooks/production-readiness-closure.md`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_owner_attention_notifications.py tests/test_readiness_evidence.py tests/test_api_operations.py -q`
+  - `../.venv-quality/bin/python -m compileall -q src tests`
+  - `npx -y node@20 ./node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `PYTHONPATH=src ../.venv-quality/bin/ruff check src tests/test_owner_attention_notifications.py tests/test_readiness_evidence.py tests/test_api_operations.py`
+  - `npx -y node@20 ./node_modules/typescript/bin/tsc --noEmit --incremental false`
+  - `bash -n scripts/*.sh && python3 -m py_compile scripts/github-ci-evidence.py scripts/business-workflow-smoke.py`
+  - `docker compose --env-file .env.example config --quiet`
+  - `./scripts/observability-check.sh`
+  - `python3 scripts/secret-scan.py && git diff --check`
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest -q`
+  - `npx -y node@20 ./node_modules/vitest/vitest.mjs run`
+  - `npx -y node@20 ./node_modules/next/dist/bin/next build`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_FRONTEND_BUILD=1 ./scripts/quality-gate.sh`
+- Result:
+  - Focused backend tests passed: 14 passed.
+  - Full backend suite passed: 164 passed, with only pre-existing third-party deprecation warnings.
+  - Frontend API tests passed: 18 passed.
+  - Frontend typecheck and Next production build passed.
+  - Docker Compose config, Prometheus rules/config, Alertmanager config, secret scan, diff hygiene, Alembic offline SQL, pip-audit, npm audit, and the full quality gate passed.
+- Evidence:
+  - Terminal output from local verification; no JSON release artifact generated by the quality gate.
+- Next step:
+  - Inspect staging promotion scripts and deploy the readiness layer to staging, then run live smoke/evidence commands.

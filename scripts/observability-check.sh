@@ -19,3 +19,13 @@ else
     "$PROMTOOL_IMAGE" \
     check rules /etc/prometheus/alerts.yml
 fi
+
+if command -v amtool >/dev/null 2>&1; then
+  amtool check-config "$ROOT_DIR/monitoring/alertmanager.yml"
+else
+  docker run --rm \
+    --entrypoint amtool \
+    -v "$ROOT_DIR/monitoring:/etc/alertmanager:ro" \
+    prom/alertmanager:latest \
+    check-config /etc/alertmanager/alertmanager.yml
+fi

@@ -1,0 +1,98 @@
+import json
+from datetime import UTC, datetime
+
+import pytest
+
+from cyber_team.operations.readiness import ProductionReadinessEvidenceService
+
+
+class FakeAudit:
+    def __init__(self, events=None):
+        self.events = events or []
+        self.recorded = []
+
+    async def list_events(self, **kwargs):
+        return self.events
+
+    async def record_control_evidence(self, **kwargs):
+        self.recorded.append(kwargs)
+        return {
+            "id": f"evidence-{len(self.recorded)}",
+            "resource_id": kwargs["control_id"],
+            "outcome": kwargs["outcome"],
+            "metadata": {
+                "control_id": kwargs["control_id"],
+                "evidence": kwargs["evidence"],
+            },
+        }
+
+
+@pytest.mark.asyncio
+async def test_readiness_evidence_reads_fresh_artifacts(tmp_path, monkeypatch):
+    now = datetime.now(UTC).isoformat()
+    artifacts = {
+        "dist/restore-drills/staging/staging-restore-drill-20260623T000000Z.json": {
+            "status": "passed",
+            "finished_at": now,
+            "row_counts": {"agents": 1},
+        },
+        "dist/erpnext/restore-drills/erpnext-restore-drill-20260623T000000Z.json": {
+            "status": "passed",
+            "finished_at": now,
+            "row_counts": {"User": 2},
+        },
+        "dist/load-tests/load-smoke-20260623T000000Z.json": {
+            "status": "passed",
+            "completed_at": now,
+            "p95_ms": 150,
+            "failure_rate": 0,
+        },
+        "dist/business-workflows/business-workflow-smoke-20260623T000000Z.json": {
+            "status": "passed",
+            "completed_at": now,
+            "checks": {"company_context_sync": "passed"},
+        },
+    }
+    for relative_path, payload in artifacts.items():
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        "cyber_team.operations.readiness.settings.environment",
+        "staging",
+    )
+
+    summary = await ProductionReadinessEvidenceService(
+        audit_service=FakeAudit(),
+        root_dir=tmp_path,
+    ).summary()
+
+    assert summary["backup_restore"]["status"] == "ready"
+    assert summary["load_test"]["status"] == "ready"
+    assert summary["business_workflow_smoke"]["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_alert_and_credential_evidence_do_not_store_secret_values():
+    audit = FakeAudit()
+    service = ProductionReadinessEvidenceService(audit_service=audit)
+
+    await service.record_alert_test(
+        actor="owner@example.com",
+        response={"email_id": "email-1", "status": "sent", "provider": "smtp"},
+        dry_run=False,
+    )
+    await service.record_credential_rotation_evidence(
+        actor="owner@example.com",
+        scope="staging",
+        secret_names=["SMTP_PASSWORD", "SMTP_PASSWORD=secret-value"],
+        evidence_reference="vault-change-123",
+        note="Rotated by owner.",
+        rotated_at="2026-06-23T00:00:00Z",
+    )
+
+    assert audit.recorded[0]["control_id"] == "alert_delivery.email"
+    assert audit.recorded[0]["evidence"]["response_status"] == "sent"
+    assert audit.recorded[1]["control_id"] == "credential_rotation.staging"
+    assert audit.recorded[1]["evidence"]["secret_names"] == ["SMTP_PASSWORD"]
+    assert "secret-value" not in json.dumps(audit.recorded)

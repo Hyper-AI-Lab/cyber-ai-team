@@ -127,6 +127,11 @@ class Settings(BaseSettings):
     erpnext_site_name: str = "erpnext.hyperailab.com"
     erpnext_edge_domain: str = "erpnext.hyperailab.com"
     erpnext_published_port: int = 18100
+    erpnext_admin_password: str = ""
+    erpnext_mariadb_root_password: str = ""
+    erpnext_db_password: str = ""
+    erpnext_caddy_basic_auth_user: str = "cyberteam"
+    erpnext_caddy_basic_auth_password: str = ""
     erpnext_integration_user: str = "cyberteam.integration@example.local"
     erpnext_api_key: str = ""
     erpnext_api_secret: str = ""

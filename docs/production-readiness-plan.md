@@ -245,3 +245,11 @@ Exit criteria:
 5. Operational health/readiness and observability.
 6. Release/deployment discipline.
 7. Product hardening and docs.
+
+## Production Readiness Closure Evidence
+
+The Operations owner console now surfaces closure evidence for GitHub CI, email
+alert delivery, restore drills, credential rotation, conservative load testing,
+and business workflow smoke testing. See
+`docs/runbooks/production-readiness-closure.md` for the exact commands and
+evidence locations.

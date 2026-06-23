@@ -1,5 +1,6 @@
 """Autonomous operations routes."""
 
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -8,6 +9,7 @@ from pydantic import BaseModel, Field
 from cyber_team.api.authorization import require_authorization
 from cyber_team.api.security import Principal, get_current_principal
 from cyber_team.config import settings
+from cyber_team.operations.readiness import ProductionReadinessEvidenceService
 
 router = APIRouter()
 
@@ -68,6 +70,19 @@ class OperatingCadenceScanRequest(BaseModel):
 class OwnerAttentionNotifyRequest(BaseModel):
     dry_run: bool = False
     limit: int = Field(default=25, ge=1, le=200)
+
+
+class AlertEmailTestRequest(BaseModel):
+    dry_run: bool = False
+    note: str = Field(default="", max_length=1000)
+
+
+class CredentialRotationEvidenceRequest(BaseModel):
+    scope: str = Field(default="staging", pattern="^[a-z0-9_.:-]{1,80}$")
+    secret_names: list[str] = Field(default_factory=list, max_length=50)
+    evidence_reference: str = Field(default="owner-console", max_length=500)
+    note: str = Field(default="", max_length=2000)
+    rotated_at: str | None = Field(default=None, max_length=100)
 
 
 class OperatingCadenceFollowUpResolveRequest(BaseModel):
@@ -134,6 +149,15 @@ def _tool_is_required_for_readiness(tool: dict[str, Any]) -> bool:
     if name == "ci_trigger":
         return "github" in required or "github_ci" in required or "ci" in required
     return True
+
+
+def _readiness_evidence_service(request: Request) -> ProductionReadinessEvidenceService:
+    service = getattr(request.app.state, "readiness_evidence_service", None)
+    if service:
+        return service
+    return ProductionReadinessEvidenceService(
+        audit_service=getattr(request.app.state, "audit_service", None),
+    )
 
 
 @router.post("/autonomous-cycle", response_model=AutonomousCycleResponse)
@@ -252,6 +276,90 @@ async def owner_attention_notification_status(
         **status,
         "runtime": runtime_status,
     }
+
+
+@router.post("/alerts/test-email")
+async def test_alert_email_delivery(
+    data: AlertEmailTestRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "test",
+        "operations_alert",
+        "email",
+        context={"dry_run": data.dry_run, "note": data.note},
+    )
+    comms = getattr(request.app.state, "comms_gateway", None)
+    if not comms:
+        raise HTTPException(503, "Communications gateway is not available")
+    if not settings.owner_email:
+        raise HTTPException(400, "OWNER_EMAIL is required for alert delivery tests")
+    email = SimpleNamespace(
+        to_address=settings.owner_email,
+        subject="[Cyber-Team] Alert delivery test",
+        body=(
+            "Cyber-Team alert delivery test.\n\n"
+            "This proves the required owner email alert channel can deliver."
+            + (f"\n\nOwner note: {data.note}" if data.note else "")
+        ),
+        cc=[],
+        agent_id="operations-alert-test",
+        idempotency_key=None if not data.dry_run else "alert-test:dry-run",
+    )
+    if data.dry_run:
+        response = {
+            "email_id": None,
+            "status": "simulated",
+            "provider": "dry_run",
+        }
+    else:
+        response = await comms.send_email(email)
+    evidence = await _readiness_evidence_service(request).record_alert_test(
+        actor=principal.email,
+        response=response,
+        dry_run=data.dry_run,
+    )
+    return {
+        "status": "ready" if response.get("status") in {"sent", "simulated"} else "failed",
+        "dry_run": data.dry_run,
+        "recipient": settings.owner_email,
+        "response": response,
+        "evidence": evidence,
+    }
+
+
+@router.post("/security/credential-rotation/evidence")
+async def record_credential_rotation_evidence(
+    data: CredentialRotationEvidenceRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "record",
+        "credential_rotation_evidence",
+        data.scope,
+        context={
+            "scope": data.scope,
+            "secret_names": data.secret_names,
+            "evidence_reference": data.evidence_reference,
+        },
+    )
+    evidence = await _readiness_evidence_service(
+        request,
+    ).record_credential_rotation_evidence(
+        actor=principal.email,
+        scope=data.scope,
+        secret_names=data.secret_names,
+        evidence_reference=data.evidence_reference,
+        note=data.note,
+        rotated_at=data.rotated_at,
+    )
+    return {"status": "recorded", "evidence": evidence}
 
 
 @router.post("/plans/scan")
@@ -749,6 +857,8 @@ async def operations_readiness(
         "runtime": owner_attention_notification_runtime,
     }
 
+    production_evidence = await _readiness_evidence_service(request).summary()
+
     evidence = await request.app.state.audit_service.list_events(
         event_type="control.evidence",
         limit=50,
@@ -758,7 +868,21 @@ async def operations_readiness(
         trace for trace in traces
         if trace.get("errors") or trace.get("metadata", {}).get("coverage") == "error"
     ]
-    blockers = side_effect_blockers + integration_blockers + company_context_blockers
+    operational_blockers = [
+        {
+            "area": area,
+            "mode": item.get("status"),
+            "reason": item.get("detail"),
+        }
+        for area, item in production_evidence.items()
+        if item.get("blocking")
+    ]
+    blockers = (
+        side_effect_blockers
+        + integration_blockers
+        + company_context_blockers
+        + operational_blockers
+    )
     status = "ready" if not blockers else "degraded"
     return {
         "status": status,
@@ -796,6 +920,12 @@ async def operations_readiness(
         "operating_follow_ups": operating_follow_ups_status,
         "owner_attention": owner_attention_status,
         "owner_attention_notifications": owner_attention_notification_status,
+        "ci": production_evidence["ci"],
+        "alerts": production_evidence["alerts"],
+        "backup_restore": production_evidence["backup_restore"],
+        "credential_rotation": production_evidence["credential_rotation"],
+        "load_test": production_evidence["load_test"],
+        "business_workflow_smoke": production_evidence["business_workflow_smoke"],
         "memory": {
             "recent_traces_reviewed": len(traces),
             "recent_trace_errors": len(trace_errors),

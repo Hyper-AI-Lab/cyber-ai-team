@@ -139,9 +139,11 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   const [loading, setLoading] = useState(false)
   const [plansLoading, setPlansLoading] = useState(false)
   const [readinessLoading, setReadinessLoading] = useState(false)
+  const [alertTestLoading, setAlertTestLoading] = useState(false)
   const [ownerAttentionLoading, setOwnerAttentionLoading] = useState(false)
   const [ownerAttentionNotifyLoading, setOwnerAttentionNotifyLoading] = useState(false)
   const [ownerAttentionNotifyResult, setOwnerAttentionNotifyResult] = useState<any | null>(null)
+  const [alertTestResult, setAlertTestResult] = useState<any | null>(null)
   const [operatingCadenceLoading, setOperatingCadenceLoading] = useState(false)
   const [followUpsLoading, setFollowUpsLoading] = useState(false)
   const [timelineLoading, setTimelineLoading] = useState(false)
@@ -191,6 +193,23 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       setError(e.message || 'Failed to load production readiness')
     } finally {
       setReadinessLoading(false)
+    }
+  }
+
+  const sendAlertTestEmail = async () => {
+    setAlertTestLoading(true)
+    setError(null)
+    try {
+      const result = await api.testAlertEmail({
+        dryRun: false,
+        note: 'Owner-console readiness proof',
+      })
+      setAlertTestResult(result)
+      await loadReadiness()
+    } catch (e: any) {
+      setError(e.message || 'Alert email test failed')
+    } finally {
+      setAlertTestLoading(false)
     }
   }
 
@@ -488,6 +507,14 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
               Refresh Readiness
             </button>
             <button
+              onClick={sendAlertTestEmail}
+              disabled={alertTestLoading}
+              className="btn-secondary flex items-center gap-2 text-sm"
+            >
+              <Send className={`h-4 w-4 ${alertTestLoading ? 'animate-pulse' : ''}`} />
+              {alertTestLoading ? 'Testing Alert...' : 'Test Alert Email'}
+            </button>
+            <button
               onClick={scanCompanyContextDrift}
               disabled={driftScanning}
               className="btn-primary flex items-center gap-2 text-sm"
@@ -538,6 +565,62 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
               </span>
             </div>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-6">
+              <ReadinessPanel
+                title="GitHub CI"
+                value={readiness.ci?.status || 'not recorded'}
+                detail={
+                  readiness.ci?.schedule?.conclusion
+                    ? `schedule ${readiness.ci.schedule.conclusion}`
+                    : readiness.ci?.detail || 'push and schedule evidence unavailable'
+                }
+              />
+              <ReadinessPanel
+                title="Alert Email"
+                value={readiness.alerts?.status || 'not recorded'}
+                detail={
+                  readiness.alerts?.last_delivery_test
+                    ? `last test ${formatDate(readiness.alerts.last_delivery_test)}`
+                    : readiness.alerts?.detail || 'delivery proof unavailable'
+                }
+              />
+              <ReadinessPanel
+                title="Restore Drills"
+                value={readiness.backup_restore?.status || 'not recorded'}
+                detail={
+                  readiness.backup_restore?.postgres_qdrant?.last_run_at
+                    ? `postgres ${formatDate(readiness.backup_restore.postgres_qdrant.last_run_at)}`
+                    : readiness.backup_restore?.detail || 'restore evidence unavailable'
+                }
+              />
+              <ReadinessPanel
+                title="Credential Rotation"
+                value={readiness.credential_rotation?.status || 'not recorded'}
+                detail={
+                  readiness.credential_rotation?.blockers?.length
+                    ? `${readiness.credential_rotation.blockers.length} required issue(s)`
+                    : readiness.credential_rotation?.last_evidence_at
+                      ? `evidence ${formatDate(readiness.credential_rotation.last_evidence_at)}`
+                      : readiness.credential_rotation?.detail || 'rotation evidence unavailable'
+                }
+              />
+              <ReadinessPanel
+                title="Load Gate"
+                value={readiness.load_test?.status || 'not recorded'}
+                detail={
+                  readiness.load_test?.last_run_at
+                    ? `p95 ${readiness.load_test?.summary?.p95_ms ?? '-'} ms`
+                    : readiness.load_test?.detail || 'load evidence unavailable'
+                }
+              />
+              <ReadinessPanel
+                title="Business Smoke"
+                value={readiness.business_workflow_smoke?.status || 'not recorded'}
+                detail={
+                  readiness.business_workflow_smoke?.last_run_at
+                    ? `last run ${formatDate(readiness.business_workflow_smoke.last_run_at)}`
+                    : readiness.business_workflow_smoke?.detail || 'workflow evidence unavailable'
+                }
+              />
               <ReadinessPanel
                 title="Required Providers"
                 value={(readiness.integrations?.required_providers || []).join(', ') || 'none'}
@@ -637,6 +720,11 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                 }
               />
             </div>
+            {alertTestResult && (
+              <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-blue-100">
+                Alert email test: {alertTestResult.response?.status || alertTestResult.status}.
+              </div>
+            )}
             {readiness.blockers?.length > 0 ? (
               <div className="space-y-2">
                 <h4 className="text-sm font-medium text-amber-200">Readiness Blockers</h4>
