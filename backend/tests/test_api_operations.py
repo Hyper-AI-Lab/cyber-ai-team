@@ -629,6 +629,7 @@ def test_alert_email_delivery_records_control_evidence(monkeypatch):
     assert body["status"] == "ready"
     assert body["recipient"] == "owner@example.com"
     assert comms.sent[0].to_address == "owner@example.com"
+    assert comms.sent[0].agent_id is None
     assert "release gate" in comms.sent[0].body
     assert evidence.calls == [
         {

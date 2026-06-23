@@ -1676,3 +1676,32 @@
   - `/home/projects/cyber-team/dist/erpnext/restore-drills/erpnext-restore-drill-20260623T033956Z.json`
 - Next step:
   - Run the full quality gate for the readiness-cache/load-smoke fix, build a new release candidate, redeploy staging, and rerun the conservative load gate.
+
+## 2026-06-23T04:21:20Z - STEP-047 - Fixed live alert delivery evidence foreign-key failure
+
+- Files/services changed:
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/tests/test_api_operations.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `CYBERTEAM_ENV_FILE=/home/projects/cyber-team/deploy/environments/staging.env ./scripts/load-smoke.sh`
+  - `POST /api/operations/alerts/test-email` against staging with `dry_run=false`
+  - `POST /api/operations/alerts/test-email` against staging with `dry_run=true`
+  - `docker compose --env-file /home/projects/cyber-team/deploy/environments/staging.env ps`
+  - `docker compose --env-file /home/projects/cyber-team/deploy/environments/staging.env exec -T core python ...` with SMTP mocked out
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_api_operations.py -q`
+  - `../.venv-quality/bin/ruff check src/cyber_team/api/routes/operations.py tests/test_api_operations.py`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 ./scripts/quality-gate.sh`
+- Result:
+  - The redeployed `eb4def7` readiness-cache/load-smoke fix passed the conservative k6 gate: 5 VUs for 5 minutes, 0 failed requests, checks rate 1, and p95 latency about 284 ms.
+  - The live alert email proof initially returned HTTP 500 after SMTP execution because live communication logging required `communication_logs.agent_id` to reference an existing agent, while the alert-test route used the synthetic id `operations-alert-test`.
+  - Dry-run alert evidence succeeded, confirming the failure was specific to the live communications logging path.
+  - Patched the alert-test route to log system-originated alert emails with `agent_id=None`, which the schema explicitly allows.
+  - Added a regression assertion that the alert-test email payload is system-originated.
+  - Focused operations API tests passed: 10 passed.
+  - Full quality gate passed: backend lint/tests/compile/offline SQL/dependency audit, frontend build/typecheck/tests/audit, Compose config, operational script syntax checks, secret scan, and diff hygiene.
+- Evidence:
+  - `/home/projects/cyber-team/dist/load-tests/load-smoke-20260623T040852Z.json`
+  - Local traceback from mocked in-container communications gateway showed `communication_logs_agent_id_fkey` on the synthetic alert-test agent id.
+- Next step:
+  - Commit the alert-delivery fix, build and scan a new release candidate, promote it to staging, and rerun the live owner alert email proof against the repaired deployment.

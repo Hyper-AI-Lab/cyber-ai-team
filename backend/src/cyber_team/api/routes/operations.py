@@ -312,7 +312,7 @@ async def test_alert_email_delivery(
             + (f"\n\nOwner note: {data.note}" if data.note else "")
         ),
         cc=[],
-        agent_id="operations-alert-test",
+        agent_id=None,
         idempotency_key=None if not data.dry_run else "alert-test:dry-run",
     )
     if data.dry_run:
