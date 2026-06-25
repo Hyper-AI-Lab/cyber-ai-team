@@ -87,13 +87,22 @@ echo "== Backend: Alembic offline SQL =="
   PYTHONPATH=src "$BACKEND_VENV/bin/alembic" upgrade head --sql >/tmp/cyberteam-alembic.sql
 )
 
-if [ ! -x "$BACKEND_AUDIT_VENV/bin/pip-audit" ]; then
-  "$PYTHON_BIN" -m venv "$BACKEND_AUDIT_VENV"
+backend_audit_needs_install=0
+if [ -x "$BACKEND_AUDIT_VENV/bin/pip-audit" ] \
+  && ! "$BACKEND_AUDIT_VENV/bin/python" -c "import pip_audit._cli" >/dev/null 2>&1; then
+  BACKEND_AUDIT_VENV="${BACKEND_AUDIT_VENV}-repaired"
 fi
 
-if [ "$SKIP_BACKEND_AUDIT_INSTALL" != "1" ] || [ ! -x "$BACKEND_AUDIT_VENV/bin/pip-audit" ]; then
+if [ ! -x "$BACKEND_AUDIT_VENV/bin/pip-audit" ]; then
+  "$PYTHON_BIN" -m venv "$BACKEND_AUDIT_VENV"
+  backend_audit_needs_install=1
+elif ! "$BACKEND_AUDIT_VENV/bin/python" -c "import pip_audit._cli" >/dev/null 2>&1; then
+  backend_audit_needs_install=1
+fi
+
+if [ "$SKIP_BACKEND_AUDIT_INSTALL" != "1" ] || [ "$backend_audit_needs_install" = "1" ]; then
   "$BACKEND_AUDIT_VENV/bin/python" -m pip install --upgrade pip setuptools wheel
-  "$BACKEND_AUDIT_VENV/bin/python" -m pip install pip-audit
+  "$BACKEND_AUDIT_VENV/bin/python" -m pip install --force-reinstall pip-audit
 fi
 
 echo "== Backend: dependency audit =="

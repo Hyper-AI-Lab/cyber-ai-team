@@ -228,6 +228,17 @@ class ApiClient {
     return this.request(`/api/agents/${id}`);
   }
 
+  async listAgentCapabilityGrants(id: string) {
+    return this.request(`/api/agents/${id}/capability-grants`);
+  }
+
+  async revokeAgentCapabilityGrant(agentId: string, grantId: string, reason: string = '') {
+    return this.request(`/api/agents/${agentId}/capability-grants/${grantId}/revoke`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
   async invokeAgent(id: string, task: string) {
     return this.request(`/api/agents/${id}/invoke`, {
       method: 'POST',
@@ -288,6 +299,35 @@ class ApiClient {
     }
     const suffix = params.toString() ? `?${params.toString()}` : '';
     return this.request(`/api/roles/operating-cadence${suffix}`);
+  }
+
+  async getTeamActivationCoverage() {
+    return this.request('/api/roles/team-activation/coverage');
+  }
+
+  async getLatestTeamActivationRun() {
+    return this.request('/api/roles/team-activation/latest');
+  }
+
+  async listTeamActivationRuns(limit: number = 20) {
+    return this.request(`/api/roles/team-activation/runs?limit=${limit}`);
+  }
+
+  async runTeamActivation(options: {
+    dryRun?: boolean;
+    applySafeRoles?: boolean;
+    requestHighRiskGrants?: boolean;
+    sourceSnapshotId?: string;
+  } = {}) {
+    return this.request('/api/roles/team-activation/run', {
+      method: 'POST',
+      body: JSON.stringify({
+        dry_run: options.dryRun ?? false,
+        apply_safe_roles: options.applySafeRoles ?? true,
+        request_high_risk_grants: options.requestHighRiskGrants ?? true,
+        ...(options.sourceSnapshotId ? { source_snapshot_id: options.sourceSnapshotId } : {}),
+      }),
+    });
   }
 
   async reportRoleGap(data: Record<string, any>) {
@@ -451,6 +491,32 @@ class ApiClient {
     return this.request('/api/workflows/');
   }
 
+  async listWorkflowTemplates(filters: {
+    status?: string;
+    category?: string;
+    isCore?: boolean;
+  } = {}) {
+    const params = new URLSearchParams();
+    if (filters.status !== undefined) {
+      params.set('status', filters.status);
+    }
+    if (filters.category) {
+      params.set('category', filters.category);
+    }
+    if (filters.isCore !== undefined) {
+      params.set('is_core', String(filters.isCore));
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return this.request(`/api/workflows/templates${suffix}`);
+  }
+
+  async instantiateWorkflowTemplate(templateId: string) {
+    return this.request(`/api/workflows/templates/${templateId}/instantiate`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  }
+
   async getWorkflow(id: string) {
     return this.request(`/api/workflows/${id}`);
   }
@@ -574,6 +640,18 @@ class ApiClient {
 
   async getOperationsReadiness() {
     return this.request('/api/operations/readiness');
+  }
+
+  async getInteropSummary() {
+    return this.request('/api/interop/summary');
+  }
+
+  async getMcpToolCatalog() {
+    return this.request('/api/interop/mcp/tools');
+  }
+
+  async getA2aAgentCards() {
+    return this.request('/api/interop/a2a/agent-cards');
   }
 
   async testAlertEmail(options: { dryRun?: boolean; note?: string } = {}) {

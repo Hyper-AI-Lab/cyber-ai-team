@@ -42,6 +42,9 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
   const [companyContextError, setCompanyContextError] = useState<string | null>(null)
   const [operatingCadence, setOperatingCadence] = useState<any | null>(null)
   const [operatingCadenceError, setOperatingCadenceError] = useState<string | null>(null)
+  const [teamActivation, setTeamActivation] = useState<any | null>(null)
+  const [activatingTeam, setActivatingTeam] = useState(false)
+  const [agentGrantCounts, setAgentGrantCounts] = useState<Record<string, any>>({})
 
   // 2. Custom Role Provisioning State
   const [roleFamily, setRoleFamily] = useState('engineering')
@@ -133,6 +136,52 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
     loadRoleGaps()
   }, [loadRoleGaps])
 
+  const loadTeamActivation = useCallback(async () => {
+    try {
+      const coverage = await api.getTeamActivationCoverage()
+      setTeamActivation(coverage)
+    } catch {
+      setTeamActivation(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadTeamActivation()
+  }, [loadTeamActivation])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadGrantCounts = async () => {
+      const entries = await Promise.all(
+        agents.map(async (agent: any) => {
+          try {
+            const grants = await api.listAgentCapabilityGrants(agent.id)
+            return [
+              agent.id,
+              {
+                active: grants.filter((grant: any) => grant.state === 'active').length,
+                pending: grants.filter((grant: any) => grant.state !== 'active').length,
+              },
+            ]
+          } catch {
+            return [agent.id, { active: 0, pending: 0 }]
+          }
+        }),
+      )
+      if (!cancelled) {
+        setAgentGrantCounts(Object.fromEntries(entries))
+      }
+    }
+    if (agents.length) {
+      loadGrantCounts()
+    } else {
+      setAgentGrantCounts({})
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [agents])
+
   const handleSupervisorReview = async () => {
     setReviewingRoleGaps(true)
     try {
@@ -170,11 +219,42 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
       await loadCompanyContext()
       await loadRoleGaps()
       await loadOperatingCadence(result.snapshot?.company_namespace)
+      await loadTeamActivation()
       onRefresh()
     } catch (e: any) {
       setCompanyContextError(e.message || 'ERPNext company-context sync failed')
     } finally {
       setSyncingCompanyContext(false)
+    }
+  }
+
+  const handleTeamActivation = async () => {
+    setActivatingTeam(true)
+    try {
+      const result = await api.runTeamActivation({
+        dryRun: false,
+        applySafeRoles: true,
+        requestHighRiskGrants: true,
+        sourceSnapshotId: companyContext?.snapshot?.id,
+      })
+      setTeamActivation({
+        status: result.status === 'completed' ? 'active' : result.status,
+        latest_run: result,
+        active_agent_count: agents.length + (result.counts?.agents_created || 0),
+        active_grant_count: result.counts?.safe_grants_active || 0,
+        pending_or_blocked_grant_count:
+          (result.counts?.grants_pending_approval || 0)
+          + (result.counts?.grants_configuration_required || 0)
+          + (result.counts?.grants_blocked || 0),
+      })
+      await loadRoleGaps()
+      await loadOperatingCadence(companyContext?.snapshot?.company_namespace)
+      await loadTeamActivation()
+      onRefresh()
+    } catch (e: any) {
+      alert(`Error: ${e.message}`)
+    } finally {
+      setActivatingTeam(false)
     }
   }
 
@@ -501,6 +581,60 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
           )}
         </div>
       )}
+
+      <div className="card border-slate-700 bg-slate-900/70">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <Shield className="mt-1 h-5 w-5 text-emerald-300" />
+            <div>
+              <h3 className="font-semibold">Safe Team Activation</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                {teamActivation?.latest_run
+                  ? `${teamActivation.status} · ${teamActivation.active_agent_count || 0} active agents · ${teamActivation.active_grant_count || 0} active grants`
+                  : 'No activation run recorded yet'}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleTeamActivation}
+            disabled={activatingTeam}
+            className="btn-primary flex items-center gap-2 text-sm"
+          >
+            <Check className="h-4 w-4" />
+            {activatingTeam ? 'Activating...' : 'Activate Safe Team'}
+          </button>
+        </div>
+        {teamActivation?.latest_run && (
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <div className="rounded border border-slate-700 bg-slate-950/60 px-3 py-2">
+              <p className="text-xs uppercase tracking-wide text-slate-500">Last Run</p>
+              <p className="mt-1 text-sm font-medium text-white">
+                {teamActivation.latest_run.completed_at
+                  ? new Date(teamActivation.latest_run.completed_at).toLocaleString()
+                  : teamActivation.latest_run.status}
+              </p>
+            </div>
+            <div className="rounded border border-slate-700 bg-slate-950/60 px-3 py-2">
+              <p className="text-xs uppercase tracking-wide text-slate-500">Created</p>
+              <p className="mt-1 text-lg font-semibold text-white">
+                {teamActivation.latest_run.counts?.agents_created || 0}
+              </p>
+            </div>
+            <div className="rounded border border-slate-700 bg-slate-950/60 px-3 py-2">
+              <p className="text-xs uppercase tracking-wide text-slate-500">Pending Grants</p>
+              <p className="mt-1 text-lg font-semibold text-white">
+                {teamActivation.pending_or_blocked_grant_count || 0}
+              </p>
+            </div>
+            <div className="rounded border border-slate-700 bg-slate-950/60 px-3 py-2">
+              <p className="text-xs uppercase tracking-wide text-slate-500">Status</p>
+              <p className="mt-1 text-sm font-semibold text-white">
+                {teamActivation.status}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* 1. Company Builder Panel */}
       {creationMode === 'builder' && (
@@ -1093,6 +1227,20 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
                 </span>
                 <span className="flex items-center gap-1">
                   Approval: <span className="text-slate-300 font-semibold uppercase">{agent.approval_policy}</span>
+                </span>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                <span>
+                  Active grants:{' '}
+                  <span className="font-semibold text-emerald-300">
+                    {agentGrantCounts[agent.id]?.active || 0}
+                  </span>
+                </span>
+                <span>
+                  Pending:{' '}
+                  <span className="font-semibold text-amber-300">
+                    {agentGrantCounts[agent.id]?.pending || 0}
+                  </span>
                 </span>
               </div>
 

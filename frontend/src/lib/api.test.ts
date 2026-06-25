@@ -179,6 +179,59 @@ describe('ApiClient', () => {
     )
   })
 
+  it('manages team activation and agent capability grants through the API client', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ status: 'active' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'teamact-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'teamact-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'teamact-2', status: 'completed' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'grant-1', state: 'active' }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'grant-1', state: 'revoked' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.getTeamActivationCoverage()
+    await client.getLatestTeamActivationRun()
+    await client.listTeamActivationRuns(5)
+    await client.runTeamActivation({
+      dryRun: true,
+      applySafeRoles: false,
+      requestHighRiskGrants: false,
+      sourceSnapshotId: 'ctx-1',
+    })
+    await client.listAgentCapabilityGrants('agent-1')
+    await client.revokeAgentCapabilityGrant('agent-1', 'grant-1', 'No longer needed')
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://api.test/api/roles/team-activation/coverage',
+    )
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/roles/team-activation/latest',
+    )
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/roles/team-activation/runs?limit=5',
+    )
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      'http://api.test/api/roles/team-activation/run',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[3][1]?.body as string)).toEqual({
+      dry_run: true,
+      apply_safe_roles: false,
+      request_high_risk_grants: false,
+      source_snapshot_id: 'ctx-1',
+    })
+    expect(fetchMock.mock.calls[4][0]).toBe(
+      'http://api.test/api/agents/agent-1/capability-grants',
+    )
+    expect(fetchMock.mock.calls[5][0]).toBe(
+      'http://api.test/api/agents/agent-1/capability-grants/grant-1/revoke',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[5][1]?.body as string)).toEqual({
+      reason: 'No longer needed',
+    })
+  })
+
   it('validates an integration provider through the authenticated API client', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ status: 'blocked' }))
@@ -646,5 +699,36 @@ describe('ApiClient', () => {
       approval_ids: { 'gap-1': 'approval-1' },
       note: 'Batch request',
     })
+  })
+
+  it('manages workflow templates and interop adapter endpoints', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'wft-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'workflow-1' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'available' }))
+      .mockResolvedValueOnce(jsonResponse({ tools: [] }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.listWorkflowTemplates({ status: 'active', isCore: true })
+    await client.instantiateWorkflowTemplate('wft-1')
+    await client.getInteropSummary()
+    await client.getMcpToolCatalog()
+    await client.getA2aAgentCards()
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://api.test/api/workflows/templates?status=active&is_core=true',
+    )
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/workflows/templates/wft-1/instantiate',
+    )
+    expect(fetchMock.mock.calls[1][1]?.method).toBe('POST')
+    expect(fetchMock.mock.calls[2][0]).toBe('http://api.test/api/interop/summary')
+    expect(fetchMock.mock.calls[3][0]).toBe('http://api.test/api/interop/mcp/tools')
+    expect(fetchMock.mock.calls[4][0]).toBe(
+      'http://api.test/api/interop/a2a/agent-cards',
+    )
   })
 })

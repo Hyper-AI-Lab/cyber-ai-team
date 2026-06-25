@@ -35,6 +35,43 @@ class Agent(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
 
+class AgentCapabilityGrant(Base):
+    __tablename__ = "agent_capability_grants"
+    __table_args__ = (
+        UniqueConstraint(
+            "agent_id",
+            "tool_name",
+            name="uq_agent_capability_grants_agent_tool",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id"), index=True)
+    role_gap_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("role_gaps.id"),
+        nullable=True,
+        index=True,
+    )
+    tool_name: Mapped[str] = mapped_column(String(100), index=True)
+    state: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    risk_level: Mapped[str] = mapped_column(String(20), default="low", index=True)
+    side_effects: Mapped[bool] = mapped_column(Boolean, default=False)
+    approval_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("approval_requests.id"),
+        nullable=True,
+        index=True,
+    )
+    requested_by: Mapped[str] = mapped_column(String(200), default="system")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Workflow(Base):
     __tablename__ = "workflows"
 
@@ -52,6 +89,31 @@ class Workflow(Base):
         back_populates="workflow",
         cascade="all, delete-orphan",
     )
+
+
+class WorkflowTemplate(Base):
+    __tablename__ = "workflow_templates"
+    __table_args__ = (
+        UniqueConstraint(
+            "name",
+            "version",
+            name="uq_workflow_templates_name_version",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), index=True)
+    description: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(100), index=True)
+    version: Mapped[str] = mapped_column(String(40), default="1.0.0", index=True)
+    graph_definition: Mapped[dict] = mapped_column(JSON, default=dict)
+    default_trigger_type: Mapped[str] = mapped_column(String(30), default="manual")
+    default_trigger_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    is_core: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
 
 class WorkflowRun(Base):
@@ -301,6 +363,30 @@ class CompanyContextSyncRun(Base):
     )
     source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     company_namespace: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    counts: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    errors: Mapped[list] = mapped_column(JSON, default=list)
+    actor: Mapped[str] = mapped_column(String(200), default="system")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TeamActivationRun(Base):
+    __tablename__ = "team_activation_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_snapshot_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("company_context_snapshots.id"),
+        nullable=True,
+        index=True,
+    )
+    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    company_namespace: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="running", index=True)
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
+    apply_safe_roles: Mapped[bool] = mapped_column(Boolean, default=True)
+    request_high_risk_grants: Mapped[bool] = mapped_column(Boolean, default=True)
     counts: Mapped[dict] = mapped_column(JSON, default=dict)
     result: Mapped[dict] = mapped_column(JSON, default=dict)
     errors: Mapped[list] = mapped_column(JSON, default=list)

@@ -661,6 +661,31 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                 }
               />
               <ReadinessPanel
+                title="Team Activation"
+                value={readiness.team_activation?.status || 'not run'}
+                detail={
+                  readiness.team_activation?.latest_run?.completed_at
+                    ? `last run ${formatDate(readiness.team_activation.latest_run.completed_at)}`
+                    : readiness.team_activation?.detail || 'safe activation has not completed'
+                }
+              />
+              <ReadinessPanel
+                title="Workflow Templates"
+                value={readiness.workflow_templates?.status || 'unavailable'}
+                detail={`${readiness.workflow_templates?.core_template_count || 0} templates · ${
+                  readiness.workflow_templates?.core_workflow_count || 0
+                } workflows`}
+              />
+              <ReadinessPanel
+                title="MCP / A2A"
+                value={readiness.interop?.status || 'unavailable'}
+                detail={
+                  readiness.interop?.mcp?.tool_counts
+                    ? `${readiness.interop.mcp.tool_counts.total} tools · ${readiness.interop.a2a?.agent_counts?.total || 0} agent cards`
+                    : readiness.interop?.detail || 'adapter status unavailable'
+                }
+              />
+              <ReadinessPanel
                 title="ERPNext Drift"
                 value={
                   readiness.company_context?.drift_detection?.latest_drift?.status

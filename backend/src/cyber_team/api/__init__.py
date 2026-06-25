@@ -25,6 +25,7 @@ from cyber_team.api.routes import (
     comms,
     dashboard,
     integrations,
+    interop,
     memory,
     operations,
     roles,
@@ -42,6 +43,7 @@ from cyber_team.company.context_sync import CompanyContextSyncService
 from cyber_team.config import settings
 from cyber_team.db import async_session, init_db
 from cyber_team.integrations.erpnext import ERPNextClient
+from cyber_team.interop.service import InteropService
 from cyber_team.llm.gateway import LLMGateway
 from cyber_team.memory.service import MemoryService
 from cyber_team.observability.metrics import MetricsService
@@ -53,7 +55,9 @@ from cyber_team.operations.readiness import ProductionReadinessEvidenceService
 from cyber_team.operations.retention import RetentionService
 from cyber_team.operations.supervisor_review import SupervisorReviewService
 from cyber_team.roles.loader import load_default_roles
+from cyber_team.roles.team_activation import TeamActivationService
 from cyber_team.tools.registry import ToolRegistry
+from cyber_team.workflows.templates import WorkflowTemplateService
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +105,9 @@ async def lifespan(app: FastAPI):
         memory_service=app.state.memory_service,
         tool_registry=app.state.tool_registry,
     )
+    app.state.workflow_template_service = WorkflowTemplateService(
+        orchestrator=app.state.orchestrator,
+    )
     app.state.supervisor_review_service = SupervisorReviewService(
         agent_manager=app.state.agent_manager,
         audit_service=app.state.audit_service,
@@ -126,6 +133,16 @@ async def lifespan(app: FastAPI):
     )
     app.state.autonomous_planning_service.set_company_context_service(
         app.state.company_context_sync_service
+    )
+    app.state.team_activation_service = TeamActivationService(
+        agent_manager=app.state.agent_manager,
+        tool_registry=app.state.tool_registry,
+        audit_service=app.state.audit_service,
+    )
+    app.state.interop_service = InteropService(
+        tool_registry=app.state.tool_registry,
+        agent_manager=app.state.agent_manager,
+        team_activation=app.state.team_activation_service,
     )
     app.state.owner_attention_notification_service = OwnerAttentionNotificationService(
         planner=app.state.autonomous_planning_service,
@@ -159,6 +176,8 @@ async def lifespan(app: FastAPI):
     )
     await app.state.memory_service.startup()
     await load_default_roles()
+    await app.state.workflow_template_service.ensure_core_templates()
+    await app.state.workflow_template_service.ensure_core_workflows()
     app.state.autonomous_operations_task = None
     app.state.supervisor_review_task = None
     app.state.memory_steward_task = None
@@ -651,6 +670,12 @@ app.include_router(
     integrations.router,
     prefix="/api/integrations",
     tags=["integrations"],
+    dependencies=protected_dependencies,
+)
+app.include_router(
+    interop.router,
+    prefix="/api/interop",
+    tags=["interop"],
     dependencies=protected_dependencies,
 )
 

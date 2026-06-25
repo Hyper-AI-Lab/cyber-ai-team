@@ -876,6 +876,62 @@ async def operations_readiness(
         "runtime": owner_attention_notification_runtime,
     }
 
+    team_activation_service = getattr(request.app.state, "team_activation_service", None)
+    if team_activation_service:
+        team_activation_status = await team_activation_service.coverage_summary()
+    else:
+        team_activation_status = {
+            "status": "unavailable",
+            "latest_run": None,
+            "active_agent_count": 0,
+            "active_grant_count": 0,
+            "pending_or_blocked_grant_count": 0,
+            "blocking": True,
+            "detail": "Team activation service is not available.",
+        }
+
+    workflow_template_service = getattr(request.app.state, "workflow_template_service", None)
+    if workflow_template_service:
+        templates = await workflow_template_service.list_templates(
+            status="active",
+            is_core=True,
+        )
+        workflows = await request.app.state.orchestrator.list_workflows()
+        template_workflows = [
+            workflow
+            for workflow in workflows
+            if (workflow.get("trigger_config") or {}).get("template_id")
+        ]
+        workflow_templates_status = {
+            "status": "ready" if templates and template_workflows else "degraded",
+            "core_template_count": len(templates),
+            "core_workflow_count": len(template_workflows),
+            "template_ids": [template["id"] for template in templates],
+            "workflow_ids": [workflow["id"] for workflow in template_workflows],
+            "blocking": not templates or not template_workflows,
+        }
+    else:
+        workflow_templates_status = {
+            "status": "unavailable",
+            "core_template_count": 0,
+            "core_workflow_count": 0,
+            "template_ids": [],
+            "workflow_ids": [],
+            "blocking": True,
+            "detail": "Workflow template service is not available.",
+        }
+
+    interop_service = getattr(request.app.state, "interop_service", None)
+    if interop_service:
+        interop_status = await interop_service.summary()
+        interop_status["blocking"] = False
+    else:
+        interop_status = {
+            "status": "unavailable",
+            "blocking": True,
+            "detail": "Interop adapter service is not available.",
+        }
+
     production_evidence = await _readiness_evidence_service(request).summary()
 
     evidence = await request.app.state.audit_service.list_events(
@@ -896,11 +952,35 @@ async def operations_readiness(
         for area, item in production_evidence.items()
         if item.get("blocking")
     ]
+    runtime_blockers = [
+        {
+            "area": "team_activation",
+            "mode": team_activation_status.get("status"),
+            "reason": "Safe AI team activation has not completed successfully.",
+        }
+        if team_activation_status.get("blocking")
+        else None,
+        {
+            "area": "workflow_templates",
+            "mode": workflow_templates_status.get("status"),
+            "reason": "Core workflow templates or their manual workflows are missing.",
+        }
+        if workflow_templates_status.get("blocking")
+        else None,
+        {
+            "area": "interop",
+            "mode": interop_status.get("status"),
+            "reason": "MCP/A2A adapter surfaces are unavailable.",
+        }
+        if interop_status.get("blocking")
+        else None,
+    ]
     blockers = (
         side_effect_blockers
         + integration_blockers
         + company_context_blockers
         + operational_blockers
+        + [blocker for blocker in runtime_blockers if blocker]
     )
     status = "ready" if not blockers else "degraded"
     payload = {
@@ -939,6 +1019,9 @@ async def operations_readiness(
         "operating_follow_ups": operating_follow_ups_status,
         "owner_attention": owner_attention_status,
         "owner_attention_notifications": owner_attention_notification_status,
+        "team_activation": team_activation_status,
+        "workflow_templates": workflow_templates_status,
+        "interop": interop_status,
         "ci": production_evidence["ci"],
         "alerts": production_evidence["alerts"],
         "backup_restore": production_evidence["backup_restore"],

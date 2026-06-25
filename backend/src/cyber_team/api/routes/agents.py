@@ -29,6 +29,10 @@ class AgentUpdate(BaseModel):
     config: dict | None = None
 
 
+class CapabilityGrantRevokeRequest(BaseModel):
+    reason: str = ""
+
+
 class AgentResponse(BaseModel):
     id: str
     role_family: str
@@ -60,6 +64,53 @@ async def get_agent(
     if not agent:
         raise HTTPException(404, "Agent not found")
     return agent
+
+
+@router.get("/{agent_id}/capability-grants")
+async def list_agent_capability_grants(
+    agent_id: str,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "agent_capability_grant", agent_id)
+    mgr: AgentManager = request.app.state.agent_manager
+    agent = await mgr.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+    service = request.app.state.team_activation_service
+    return await service.list_agent_grants(agent_id)
+
+
+@router.post("/{agent_id}/capability-grants/{grant_id}/revoke")
+async def revoke_agent_capability_grant(
+    agent_id: str,
+    grant_id: str,
+    data: CapabilityGrantRevokeRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "revoke",
+        "agent_capability_grant",
+        grant_id,
+        context={"agent_id": agent_id},
+    )
+    mgr: AgentManager = request.app.state.agent_manager
+    agent = await mgr.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+    service = request.app.state.team_activation_service
+    grants = await service.list_agent_grants(agent_id)
+    if not any(grant["id"] == grant_id for grant in grants):
+        raise HTTPException(404, "Capability grant not found for this agent")
+    grant = await service.revoke_grant(
+        grant_id=grant_id,
+        actor=principal.email,
+        reason=data.reason,
+    )
+    return grant
 
 
 @router.post("/", response_model=AgentResponse, status_code=201)

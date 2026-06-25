@@ -74,6 +74,13 @@ class RoleGapBatchActionRequest(BaseModel):
     note: str = ""
 
 
+class TeamActivationRunRequest(BaseModel):
+    dry_run: bool = False
+    apply_safe_roles: bool = True
+    request_high_risk_grants: bool = True
+    source_snapshot_id: str | None = None
+
+
 class SupervisorReviewResponse(BaseModel):
     reviewed_at: str
     actor: str
@@ -258,6 +265,71 @@ async def role_operating_cadence(
     )
     mgr = request.app.state.agent_manager
     return await mgr.role_operating_cadence(company_namespace=company_namespace)
+
+
+@router.get("/team-activation/latest")
+async def latest_team_activation_run(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "team_activation")
+    service = request.app.state.team_activation_service
+    return await service.latest_run()
+
+
+@router.get("/team-activation/runs")
+async def list_team_activation_runs(
+    request: Request,
+    limit: int = 20,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "team_activation",
+        context={"limit": limit},
+    )
+    service = request.app.state.team_activation_service
+    return await service.list_runs(limit=limit)
+
+
+@router.get("/team-activation/coverage")
+async def team_activation_coverage(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "team_activation")
+    service = request.app.state.team_activation_service
+    return await service.coverage_summary()
+
+
+@router.post("/team-activation/run")
+async def run_team_activation(
+    data: TeamActivationRunRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "run",
+        "team_activation",
+        context={
+            "dry_run": data.dry_run,
+            "apply_safe_roles": data.apply_safe_roles,
+            "request_high_risk_grants": data.request_high_risk_grants,
+            "source_snapshot_id": data.source_snapshot_id,
+        },
+    )
+    service = request.app.state.team_activation_service
+    return await service.run_activation(
+        actor=principal.email,
+        dry_run=data.dry_run,
+        apply_safe_roles=data.apply_safe_roles,
+        request_high_risk_grants=data.request_high_risk_grants,
+        source_snapshot_id=data.source_snapshot_id,
+    )
 
 
 @router.post("/role-gaps", status_code=201)

@@ -38,11 +38,69 @@ class WorkflowRunResponse(BaseModel):
     error: str | None
 
 
+class WorkflowTemplateInstantiateRequest(BaseModel):
+    pass
+
+
 @router.get("/", response_model=list[WorkflowResponse])
 async def list_workflows(request: Request, principal: Principal = Depends(get_current_principal)):
     await require_authorization(request, principal, "read", "workflow")
     orchestrator = request.app.state.orchestrator
     return await orchestrator.list_workflows()
+
+
+@router.get("/templates")
+async def list_workflow_templates(
+    request: Request,
+    status: str | None = "active",
+    category: str | None = None,
+    is_core: bool | None = None,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "workflow_template",
+        context={"status": status, "category": category, "is_core": is_core},
+    )
+    service = request.app.state.workflow_template_service
+    return await service.list_templates(status=status, category=category, is_core=is_core)
+
+
+@router.get("/templates/{template_id}")
+async def get_workflow_template(
+    template_id: str,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "workflow_template", template_id)
+    service = request.app.state.workflow_template_service
+    template = await service.get_template(template_id)
+    if not template:
+        raise HTTPException(404, "Workflow template not found")
+    return template
+
+
+@router.post("/templates/{template_id}/instantiate", response_model=WorkflowResponse)
+async def instantiate_workflow_template(
+    template_id: str,
+    request: Request,
+    _data: WorkflowTemplateInstantiateRequest | None = None,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "instantiate",
+        "workflow_template",
+        template_id,
+    )
+    service = request.app.state.workflow_template_service
+    try:
+        return await service.instantiate_template(template_id, actor=principal.email)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @router.get("/{workflow_id}", response_model=WorkflowResponse)

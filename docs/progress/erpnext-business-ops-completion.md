@@ -1778,3 +1778,184 @@
   - Manual CI: `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28003064326`
 - Next step:
   - Commit the CI evidence refinement, build and scan a final release candidate, promote it to staging, record fresh GitHub CI evidence with the local GitHub token, and refresh live readiness.
+
+## 2026-06-25T00:09:00Z - STEP-050 - Started vision-alignment execution and backend state inspection
+
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `tail -n 40 docs/progress/erpnext-business-ops-completion.md`
+  - `sed -n '1,260p' backend/src/cyber_team/api/__init__.py`
+  - `rg -n "load_default_roles|AgentManager\\(|ToolRegistry\\(|orchestrator|workflow" backend/src/cyber_team/api/__init__.py backend/src/cyber_team -g '*.py'`
+  - `sed -n '1,620p' backend/src/cyber_team/db/models.py`
+  - `ls backend/alembic/versions`
+  - `sed -n '1,220p' backend/alembic/versions/0009_company_context_snapshots.py`
+  - `sed -n '1,620p' backend/src/cyber_team/api/routes/roles.py`
+  - `sed -n '1,260p' backend/src/cyber_team/api/routes/agents.py`
+- Result:
+  - Confirmed the live backend wires FastAPI services in `backend/src/cyber_team/api/__init__.py`, uses the custom `AgentManager` plus Temporal-backed workflow orchestration, and already exposes role gaps, role proposals, approval regeneration, and role application.
+  - Confirmed current persistence lacks durable team activation runs, per-agent capability grant state, and reusable workflow template state.
+  - Confirmed migration head is `0009_company_context_snapshots`, so the next schema change should be a new `0010` migration.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/api/__init__.py`
+  - `/home/projects/cyber-team/backend/src/cyber_team/api/routes/roles.py`
+  - `/home/projects/cyber-team/backend/src/cyber_team/api/routes/agents.py`
+  - `/home/projects/cyber-team/backend/src/cyber_team/db/models.py`
+  - `/home/projects/cyber-team/backend/alembic/versions/0009_company_context_snapshots.py`
+- Next step:
+  - Add durable schema and ORM models for team activation runs, agent capability grants, and core workflow templates.
+
+## 2026-06-25T00:20:00Z - STEP-051 - Added durable team activation and capability grant backend surface
+
+- Files/services changed:
+  - `backend/src/cyber_team/db/models.py`
+  - `backend/alembic/versions/0010_team_activation.py`
+  - `backend/src/cyber_team/roles/team_activation.py`
+  - `backend/src/cyber_team/api/__init__.py`
+  - `backend/src/cyber_team/api/routes/roles.py`
+  - `backend/src/cyber_team/api/routes/agents.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `apply_patch` updates for ORM models, Alembic migration, activation service, app wiring, role routes, and agent capability-grant routes.
+- Result:
+  - Added persistent state for `agent_capability_grants`, `team_activation_runs`, and `workflow_templates` with migration `0010_team_activation`.
+  - Added `TeamActivationService` to safely activate company-context role gaps into baseline agents with non-side-effect tools only.
+  - Added explicit grant states for active, pending approval, configuration-required, blocked, and revoked capabilities.
+  - Added owner-authorized endpoints for team activation runs, activation coverage, agent grant inspection, and grant revocation.
+  - Tightened grant revocation so ownership is checked before mutation.
+- Evidence:
+  - `/home/projects/cyber-team/backend/alembic/versions/0010_team_activation.py`
+  - `/home/projects/cyber-team/backend/src/cyber_team/roles/team_activation.py`
+  - `/home/projects/cyber-team/backend/src/cyber_team/api/routes/roles.py`
+  - `/home/projects/cyber-team/backend/src/cyber_team/api/routes/agents.py`
+- Next step:
+  - Add core workflow template persistence/service/routes and then expose MCP/A2A-compatible adapter views from the live registry and active agents.
+
+## 2026-06-25T00:34:00Z - STEP-052 - Added core workflow templates and interoperability adapters
+
+- Files/services changed:
+  - `backend/src/cyber_team/workflows/templates.py`
+  - `backend/src/cyber_team/api/routes/workflows.py`
+  - `backend/src/cyber_team/interop/__init__.py`
+  - `backend/src/cyber_team/interop/service.py`
+  - `backend/src/cyber_team/api/routes/interop.py`
+  - `backend/src/cyber_team/api/__init__.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `sed -n '1,180p' backend/src/cyber_team/api/routes/workflows.py`
+  - `sed -n '1,130p' backend/src/cyber_team/agents/orchestrator.py`
+  - `sed -n '320,445p' backend/src/cyber_team/worker.py`
+  - `sed -n '1288,1370p' backend/src/cyber_team/tools/registry.py`
+  - `rg -n "company_profile_read|role_gap_report|erpnext_.*read|crm_" backend/src/cyber_team/tools/registry.py`
+  - `apply_patch` updates for workflow templates, interop service/routes, app wiring, and readiness.
+- Result:
+  - Added idempotent core workflow templates for company-context review, role-backlog triage, ERPNext operations snapshot, and memory steward coverage review.
+  - Startup now seeds core templates and safe manual workflows from those templates.
+  - Added protected workflow template list/get/instantiate endpoints.
+  - Added MCP-compatible tool catalog and A2A-style agent-card adapter views backed by the live tool registry and active agent capability grants.
+  - Extended operations readiness with `team_activation`, `workflow_templates`, and `interop` sections and blockers.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/workflows/templates.py`
+  - `/home/projects/cyber-team/backend/src/cyber_team/interop/service.py`
+  - `/home/projects/cyber-team/backend/src/cyber_team/api/routes/operations.py`
+- Next step:
+  - Update the owner console and API client so the new activation, grant, template, interop, and readiness surfaces are visible and actionable.
+
+## 2026-06-25T00:46:00Z - STEP-053 - Updated owner console for safe activation, grants, templates, and interop readiness
+
+- Files/services changed:
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/components/AgentsView.tsx`
+  - `frontend/src/components/OperationsView.tsx`
+  - `frontend/src/components/WorkflowsView.tsx`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `sed -n '1,680p' frontend/src/lib/api.ts`
+  - `sed -n '1,1280p' frontend/src/components/AgentsView.tsx`
+  - `sed -n '520,735p' frontend/src/components/OperationsView.tsx`
+  - `sed -n '1,620p' frontend/src/components/WorkflowsView.tsx`
+  - `apply_patch` updates for API client methods and owner-console panels.
+- Result:
+  - Added frontend API helpers for team activation, agent capability grants, workflow templates, and MCP/A2A adapter summaries.
+  - Added a Safe Team Activation panel to Agents with activation execution and latest run/grant counts.
+  - Added active/pending capability grant counts to agent cards.
+  - Added readiness cards for team activation, core workflow templates, and MCP/A2A adapters.
+  - Added Core Workflow Templates to the Workflows view with instantiate actions and existing-workflow detection.
+- Evidence:
+  - `/home/projects/cyber-team/frontend/src/lib/api.ts`
+  - `/home/projects/cyber-team/frontend/src/components/AgentsView.tsx`
+  - `/home/projects/cyber-team/frontend/src/components/OperationsView.tsx`
+  - `/home/projects/cyber-team/frontend/src/components/WorkflowsView.tsx`
+- Next step:
+  - Add focused backend and frontend tests for activation policy, grant persistence, template APIs, interop adapters, readiness payloads, and API client route coverage.
+
+## 2026-06-25T00:55:00Z - STEP-054 - Added and ran focused tests for activation, templates, readiness, and API routes
+
+- Files/services changed:
+  - `backend/tests/test_team_activation.py`
+  - `backend/tests/test_workflow_templates.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/lib/api.test.ts`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_team_activation.py tests/test_workflow_templates.py tests/test_api_operations.py::test_operations_readiness_keeps_optional_disabled_non_blocking -q`
+  - `../.venv-quality/bin/ruff check src/cyber_team/db/models.py src/cyber_team/roles/team_activation.py src/cyber_team/workflows/templates.py src/cyber_team/interop src/cyber_team/api/__init__.py src/cyber_team/api/routes/roles.py src/cyber_team/api/routes/agents.py src/cyber_team/api/routes/workflows.py src/cyber_team/api/routes/interop.py src/cyber_team/api/routes/operations.py tests/test_team_activation.py tests/test_workflow_templates.py tests/test_api_operations.py`
+  - `PYTHONPATH=src python3 -m compileall -q src/cyber_team tests/test_team_activation.py tests/test_workflow_templates.py`
+  - `npx -y node@20 ./node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `npx -y node@20 ./node_modules/typescript/bin/tsc --noEmit --incremental false`
+- Result:
+  - Added backend tests proving safe activation creates baseline agents, grants safe tools, leaves high-risk tools pending approval, and resolves safe-only role gaps.
+  - Added backend tests proving core workflow template seeding and workflow instantiation are idempotent.
+  - Updated readiness tests to assert team activation, workflow template, and interop readiness fields.
+  - Added frontend API-client tests for activation, capability grants, workflow templates, and MCP/A2A adapter endpoints.
+  - Focused backend tests passed: 4 passed.
+  - Touched Python Ruff and compile checks passed.
+  - Frontend API tests passed under Node 20: 20 passed.
+  - TypeScript check passed under Node 20.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_team_activation.py`
+  - `/home/projects/cyber-team/backend/tests/test_workflow_templates.py`
+  - `/home/projects/cyber-team/frontend/src/lib/api.test.ts`
+- Next step:
+  - Run the full repository quality gate, fix any integration regressions, then run staging migration/deploy/smoke and live activation checks.
+
+## 2026-06-25T01:10:00Z - STEP-055 - Full quality gate passed after hardening audit venv repair
+
+- Files/services changed:
+  - `scripts/quality-gate.sh`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 ./scripts/quality-gate.sh`
+  - `sed -n '1,180p' scripts/quality-gate.sh`
+  - `.venv-quality/bin/python -m pip show pip-audit`
+  - `python3 -m pip show pip-audit`
+- Result:
+  - Initial full quality gate passed backend lint, 170 backend tests, compile, and Alembic offline SQL, then failed because `/tmp/cyberteam-audit-venv` contained a broken `pip-audit` entrypoint and packages without RECORD metadata.
+  - Hardened `scripts/quality-gate.sh` to validate `import pip_audit._cli` and use a repaired sibling audit venv when the configured audit venv is broken.
+  - Reran the full quality gate successfully.
+  - Full gate results: backend lint passed; backend tests passed `170 passed`; backend compile passed; Alembic offline SQL through `0010_team_activation` passed; backend dependency audit reported no known vulnerabilities; frontend production build passed; frontend typecheck passed; frontend tests passed `20 passed`; frontend dependency audit reported zero vulnerabilities; Compose config passed; shell/dashboard syntax passed; secret scan found no high-confidence secrets; git diff hygiene passed.
+- Evidence:
+  - `/tmp/cyberteam-alembic.sql`
+  - `/home/projects/cyber-team/scripts/quality-gate.sh`
+- Next step:
+  - Build/promote the current revision to staging, run compose smoke and live endpoint checks, run a safe team activation against staging, and verify readiness no longer reports activation/template/interop blockers.
+
+## 2026-06-25T00:49:39Z - STEP-056 - Built and scanned interim dirty release candidate without promotion
+
+- Files/services changed:
+  - Docker images built locally: `cyber-team-core:e733e0f-vision1`, `cyber-team-ui:e733e0f-vision1`
+  - Release manifest generated: `dist/releases/e733e0f-vision1.json`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `RELEASE_VERSION=e733e0f-vision1 RELEASE_ALLOW_DIRTY=1 RUN_QUALITY_GATE=0 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com ./scripts/release-check.sh`
+- Result:
+  - Backend Docker image built successfully.
+  - Frontend Docker image built successfully with production Next.js build.
+  - Trivy image scans reported zero vulnerabilities for both backend and frontend images.
+  - The candidate was not promoted because it was built from a dirty worktree and its manifest points at the pre-change commit.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/e733e0f-vision1.json`
+  - Docker local images: `cyber-team-core:e733e0f-vision1`, `cyber-team-ui:e733e0f-vision1`
+- Next step:
+  - Commit the verified source changes, build a clean release candidate from the committed revision, then promote that clean candidate to staging and run live activation/readiness checks.

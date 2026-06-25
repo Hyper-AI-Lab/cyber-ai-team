@@ -11,11 +11,17 @@ export default function WorkflowsView() {
   const [expandedRun, setExpandedRun] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState<string | null>(null)
+  const [templates, setTemplates] = useState<any[]>([])
+  const [instantiatingTemplate, setInstantiatingTemplate] = useState<string | null>(null)
 
   const loadWorkflows = useCallback(async () => {
     try {
-      const res = await api.listWorkflows()
+      const [res, templateList] = await Promise.all([
+        api.listWorkflows(),
+        api.listWorkflowTemplates({ status: 'active', isCore: true }),
+      ])
       setWorkflows(res)
+      setTemplates(templateList)
     } catch (e) {
       console.error('Failed to load workflows:', e)
     } finally {
@@ -71,6 +77,19 @@ export default function WorkflowsView() {
     }
   }
 
+  const handleInstantiateTemplate = async (templateId: string) => {
+    setInstantiatingTemplate(templateId)
+    try {
+      const workflow = await api.instantiateWorkflowTemplate(templateId)
+      await loadWorkflows()
+      setExpandedWorkflow(workflow.id)
+    } catch (e: any) {
+      alert(`Error creating workflow: ${e.message}`)
+    } finally {
+      setInstantiatingTemplate(null)
+    }
+  }
+
   const statusIcon = (status: string) => {
     switch (status) {
       case 'completed':
@@ -111,6 +130,53 @@ export default function WorkflowsView() {
         <h2 className="text-2xl font-bold">Workflows</h2>
         <p className="text-slate-400 mt-1">Design, execute, and monitor durable company automation workflows</p>
       </div>
+
+      {templates.length > 0 && (
+        <div className="card border-slate-700 bg-slate-900/70">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-semibold text-white">Core Workflow Templates</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                {templates.length} safe templates available for company operations
+              </p>
+            </div>
+            <button onClick={loadWorkflows} className="btn-secondary text-sm">
+              Refresh
+            </button>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {templates.map((template: any) => {
+              const alreadyCreated = workflows.some(
+                (workflow: any) => workflow.trigger_config?.template_id === template.id,
+              )
+              return (
+                <div key={template.id} className="rounded border border-slate-700 bg-slate-950/60 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-medium text-white">{template.name}</h4>
+                      <p className="mt-1 line-clamp-2 text-xs text-slate-500">
+                        {template.description}
+                      </p>
+                    </div>
+                    <span className="badge badge-info">{template.category}</span>
+                  </div>
+                  <button
+                    onClick={() => handleInstantiateTemplate(template.id)}
+                    disabled={alreadyCreated || instantiatingTemplate === template.id}
+                    className="btn-secondary mt-3 w-full text-sm"
+                  >
+                    {alreadyCreated
+                      ? 'Workflow Ready'
+                      : instantiatingTemplate === template.id
+                        ? 'Creating...'
+                        : 'Create Workflow'}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-6">
         {workflows.map((wf: any) => {

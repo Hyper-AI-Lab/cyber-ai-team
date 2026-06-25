@@ -286,6 +286,32 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
             }
 
     app.state.company_context_sync_service = FakeCompanyContext()
+    app.state.team_activation_service = AsyncMock()
+    app.state.team_activation_service.coverage_summary.return_value = {
+        "status": "active",
+        "latest_run": {"id": "teamact_1", "status": "completed"},
+        "active_agent_count": 3,
+        "active_grant_count": 6,
+        "pending_or_blocked_grant_count": 1,
+        "blocking": False,
+    }
+    app.state.workflow_template_service = AsyncMock()
+    app.state.workflow_template_service.list_templates.return_value = [
+        {"id": "wft_company_context_review_1_0_0"},
+    ]
+    app.state.orchestrator = AsyncMock()
+    app.state.orchestrator.list_workflows.return_value = [
+        {
+            "id": "workflow_1",
+            "trigger_config": {"template_id": "wft_company_context_review_1_0_0"},
+        }
+    ]
+    app.state.interop_service = AsyncMock()
+    app.state.interop_service.summary.return_value = {
+        "status": "available",
+        "mcp": {"tool_counts": {"total": 3}},
+        "a2a": {"agent_counts": {"total": 2}},
+    }
     app.state.autonomous_planning_service = AsyncMock()
     app.state.autonomous_planning_service.operating_cadence_status.return_value = {
         "status": "ready",
@@ -376,6 +402,10 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
     assert body["operating_cadence_scheduler"]["last_result"]["cadences_reviewed"] == 1
     assert body["owner_attention"]["counts"]["active"] == 1
     assert body["owner_attention"]["counts"]["scheduler_created"] == 1
+    assert body["team_activation"]["status"] == "active"
+    assert body["workflow_templates"]["core_template_count"] == 1
+    assert body["workflow_templates"]["core_workflow_count"] == 1
+    assert body["interop"]["status"] == "available"
 
 
 def test_plan_scan_forces_manual_only_autonomy(monkeypatch):
