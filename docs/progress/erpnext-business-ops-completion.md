@@ -1993,3 +1993,23 @@
   - Staging containers: `cyberteam-staging-core` and `cyberteam-staging-worker` on `cyber-team-core:d23a36e`; `cyberteam-staging-ui` on `cyber-team-ui:d23a36e`.
 - Next step:
   - Commit the appended operational evidence, push the code and evidence to GitHub, and watch GitHub CI for the pushed revision.
+
+## 2026-06-25T01:13:52Z - STEP-058 - Pushed implementation and verified GitHub CI
+
+- Files/services changed:
+  - GitHub `main` branch updated through commit `5375b4b`.
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `git push origin main`
+  - `gh run list --repo Hyper-AI-Lab/cyber-team --branch main --limit 5 --json databaseId,headSha,displayTitle,event,status,conclusion,createdAt,url`
+  - `gh run watch 28140146289 --repo Hyper-AI-Lab/cyber-team --exit-status`
+- Result:
+  - Pushed commits `d23a36e feat: add safe team activation layer` and `5375b4b docs: record vision alignment release evidence` to `origin/main`.
+  - GitHub Actions run `28140146289` for commit `5375b4b526bd43768e649707129a008dcfc3b79a` completed successfully.
+  - GitHub CI backend job passed: setup, dependency install, lint, compile, tests, Alembic offline SQL, real PostgreSQL upgrade, dependency audit, and migration rehearsal.
+  - GitHub CI frontend job passed: setup, dependency install, tests, dependency audit, build, and typecheck.
+  - GitHub CI compose/secrets/diff hygiene job passed: Docker Compose config, operations config syntax, secret scan, and diff hygiene.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28140146289`
+- Next step:
+  - Continue with the next product milestone only after owner review of the newly activated agents, pending capability grants, and generated approvals in the staging owner console.
