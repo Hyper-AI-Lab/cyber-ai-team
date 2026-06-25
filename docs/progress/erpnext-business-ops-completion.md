@@ -1959,3 +1959,37 @@
   - Docker local images: `cyber-team-core:e733e0f-vision1`, `cyber-team-ui:e733e0f-vision1`
 - Next step:
   - Commit the verified source changes, build a clean release candidate from the committed revision, then promote that clean candidate to staging and run live activation/readiness checks.
+
+## 2026-06-25T01:10:23Z - STEP-057 - Promoted clean vision-alignment release and activated safe staging team
+
+- Files/services changed:
+  - Git commit created: `d23a36e feat: add safe team activation layer`
+  - Docker images built and promoted: `cyber-team-core:d23a36e`, `cyber-team-ui:d23a36e`
+  - Staging services recreated: `cyberteam-staging-core`, `cyberteam-staging-worker`, `cyberteam-staging-ui`
+  - Staging data backup created before promotion.
+  - Staging safe team activation run created agents and capability grants from company-context role gaps.
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `git commit -m "feat: add safe team activation layer"`
+  - `RELEASE_VERSION=d23a36e RUN_QUALITY_GATE=0 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=d23a36e ./scripts/promote-staging.sh`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 CYBERTEAM_CONTAINER_PREFIX=cyberteam-smoke-d23a36e API_PUBLISHED_PORT=127.0.0.1:28080 UI_PUBLISHED_PORT=127.0.0.1:23081 POSTGRES_PUBLISHED_PORT=127.0.0.1:25432 REDIS_PUBLISHED_PORT=127.0.0.1:26379 QDRANT_HTTP_PUBLISHED_PORT=127.0.0.1:26333 QDRANT_GRPC_PUBLISHED_PORT=127.0.0.1:26334 TEMPORAL_PUBLISHED_PORT=127.0.0.1:27233 OPA_PUBLISHED_PORT=127.0.0.1:28181 API_BASE=http://localhost:28080 UI_BASE=http://localhost:23081 RELEASE_VERSION=d23a36e RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=d23a36e ./scripts/promote-staging.sh`
+  - Authenticated staging checks against `https://cyberteam.hyperailab.com`: `/health`, `/api/roles/team-activation/run`, `/api/roles/team-activation/coverage`, `/api/workflows/templates`, `/api/interop/summary`, `/api/operations/readiness?refresh=true`.
+- Result:
+  - Initial clean release candidate built and scanned, but promotion correctly refused it because the manifest did not include required `quality_gate`, `migration_rehearsal`, and `compose_smoke` checks.
+  - Full release gate rerun passed backend lint, 170 backend tests, compile, Alembic offline SQL, dependency audit, frontend build/typecheck/tests/audit, Compose config, script syntax, secret scan, git diff hygiene, migration rehearsal against legacy and representative schemas, isolated Docker Compose smoke, Docker builds, and Trivy image scans.
+  - First full release-gate compose smoke attempt found a real port collision on host port `8000`; rerun used isolated smoke container prefix and alternate loopback ports, and compose smoke passed.
+  - Staging promotion succeeded with backup-first deployment and live HTTPS smoke.
+  - Live `/health` reports `version=d23a36e` and build SHA `d23a36eb15db17d0f01e9e8456df71fd7f89afb7`.
+  - Live team activation completed with run `teamact_79fcdbdc0545`: 16 role gaps reviewed, 16 agents created, 149 safe grants activated, 41 grants pending approval, 13 grants marked configuration-required, 3 approvals requested, 0 errors.
+  - Live operations readiness is `ready` with zero blockers; team activation, workflow templates, and MCP/A2A interop all report non-blocking status.
+  - Live workflow templates are ready: 4 core templates and 4 instantiated core workflows.
+  - Live interop adapters are available: MCP catalog has 71 tools; A2A card catalog has 17 active agents.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/d23a36e.json`
+  - `/home/projects/cyber-team/dist/promotions/staging/d23a36e-20260625-010832.json`
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-d23a36e-20260625-010758.dump`
+  - Staging containers: `cyberteam-staging-core` and `cyberteam-staging-worker` on `cyber-team-core:d23a36e`; `cyberteam-staging-ui` on `cyber-team-ui:d23a36e`.
+- Next step:
+  - Commit the appended operational evidence, push the code and evidence to GitHub, and watch GitHub CI for the pushed revision.
