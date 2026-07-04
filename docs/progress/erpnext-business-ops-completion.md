@@ -2174,3 +2174,16 @@
   - `backups/staging/cyberteam-staging-63a62d1-20260704-074204.dump`
   - control evidence `f6aef627-b7b9-4475-9b9b-5468f1b223b2`
 - Next step: commit the progress evidence, push to GitHub, and watch CI for the pushed governor release.
+
+### 2026-07-04T07:51:12Z — STEP-066 — Governor GitHub CI passed
+- Files/services changed: no runtime changes; recorded GitHub CI evidence for pushed governor release.
+- Commands run:
+  - `git push origin main`
+  - `gh run watch 28699533661 --repo Hyper-AI-Lab/cyber-team --exit-status`
+  - `gh workflow run ci.yml --repo Hyper-AI-Lab/cyber-team --ref main`
+  - `gh run watch 28699587898 --repo Hyper-AI-Lab/cyber-team --exit-status`
+- Result: push CI `28699533661` passed backend, frontend, compose/config, secret scan, and diff hygiene. Manual full CI `28699587898` passed backend, frontend, compose/config, secret scan, diff hygiene, observability config, Docker Compose smoke, and Docker image scan for head `30738c4e06926a78e98d81d0395e49231e1488e9`.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28699533661`
+  - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28699587898`
+- Next step: governor v1 milestone is complete; continue with a future milestone for automatic PR drafting or internal MCP/A2A adapter surfaces if/when authorized.
