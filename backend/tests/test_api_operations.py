@@ -75,6 +75,91 @@ def test_run_autonomous_cycle_endpoint(monkeypatch):
     )
 
 
+def test_governor_routes_call_service(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    app.state.orchestration_governor_service = AsyncMock()
+    app.state.orchestration_governor_service.run_once.return_value = {
+        "run_id": "govrun_1",
+        "status": "completed",
+    }
+    app.state.orchestration_governor_service.latest_run.return_value = {
+        "run_id": "govrun_1",
+        "status": "completed",
+    }
+    app.state.orchestration_governor_service.list_runs.return_value = {
+        "items": [{"run_id": "govrun_1"}],
+    }
+    app.state.orchestration_governor_service.list_decisions.return_value = {
+        "items": [{"id": "govdec_1"}],
+    }
+    app.state.orchestration_governor_service.list_tool_proposals.return_value = {
+        "items": [{"id": "toolprop_1"}],
+    }
+    app.state.orchestration_governor_service.request_tool_proposal_approval.return_value = {
+        "status": "approval_requested",
+        "approval_id": "approval_1",
+    }
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+    client = TestClient(app)
+
+    assert client.post(
+        "/api/operations/governor/run",
+        json={"dry_run": True, "max_actions": 3},
+    ).json()["run_id"] == "govrun_1"
+    assert client.get("/api/operations/governor/latest").json()["run_id"] == "govrun_1"
+    assert client.get("/api/operations/governor/runs?limit=5").json()["items"][0][
+        "run_id"
+    ] == "govrun_1"
+    assert client.get(
+        "/api/operations/governor/decisions?status=delegated&limit=5"
+    ).json()["items"][0]["id"] == "govdec_1"
+    assert client.get(
+        "/api/operations/governor/tool-proposals?status=proposed&limit=5"
+    ).json()["items"][0]["id"] == "toolprop_1"
+    assert client.post(
+        "/api/operations/governor/tool-proposals/toolprop_1/approval",
+        json={"note": "review"},
+    ).json()["approval_id"] == "approval_1"
+
+    app.state.orchestration_governor_service.run_once.assert_awaited_once_with(
+        actor="owner@example.com",
+        dry_run=True,
+        auto_apply_low_risk=None,
+        max_actions=3,
+        continue_on_error=True,
+    )
+    app.state.orchestration_governor_service.list_runs.assert_awaited_once_with(limit=5)
+    app.state.orchestration_governor_service.list_decisions.assert_awaited_once_with(
+        status="delegated",
+        decision_type=None,
+        limit=5,
+    )
+    app.state.orchestration_governor_service.list_tool_proposals.assert_awaited_once_with(
+        status="proposed",
+        limit=5,
+    )
+    (
+        app.state.orchestration_governor_service.request_tool_proposal_approval
+        .assert_awaited_once_with(
+            "toolprop_1",
+            actor="owner@example.com",
+            note="review",
+        )
+    )
+
+
 def test_operations_readiness_reports_tool_and_integration_blockers(monkeypatch):
     app = FastAPI()
     app.include_router(operations_router, prefix="/api/operations")

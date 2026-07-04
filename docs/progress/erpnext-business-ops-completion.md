@@ -2013,3 +2013,122 @@
   - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28140146289`
 - Next step:
   - Continue with the next product milestone only after owner review of the newly activated agents, pending capability grants, and generated approvals in the staging owner console.
+
+## 2026-07-04T06:51:27Z - STEP-059 - Started Autonomous Orchestration Governor v1 implementation
+
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `git status --short`
+  - Repository inspection for autonomous operations, planning, role backlog, readiness, API routes, models, migrations, frontend app files, and existing tests.
+- Result:
+  - Confirmed the current codebase already contains autonomous operations cycles, autonomous plans/tasks, owner-attention queues, readiness evidence, ERPNext/company-context sync, role backlog summary/apply flows, memory steward findings, MCP/A2A interop summaries, and safe team activation.
+  - Chose an additive governor layer over these existing services: durable governor runs/decisions/tool proposals, explicit APIs, readiness/UI surfaces, and scheduler support.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/autonomous.py`
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/planning.py`
+  - `/home/projects/cyber-team/backend/src/cyber_team/api/routes/operations.py`
+  - `/home/projects/cyber-team/backend/src/cyber_team/db/models.py`
+- Next step:
+  - Add governor persistence, configuration, service logic, API routes, owner-console UI, and focused tests.
+
+## 2026-07-04T07:02:39Z - STEP-060 - Added backend Chief Operating Agent governor foundation
+
+- Files/services changed:
+  - `backend/src/cyber_team/config.py`
+  - `backend/src/cyber_team/db/models.py`
+  - `backend/alembic/versions/0011_orchestration_governor.py`
+  - `backend/src/cyber_team/operations/governor.py`
+  - `backend/src/cyber_team/operations/__init__.py`
+  - `backend/src/cyber_team/api/__init__.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/tests/test_orchestration_governor.py`
+  - `backend/tests/test_api_operations.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `PYTHONPATH=src ../.venv-quality/bin/ruff check src/cyber_team/operations/governor.py src/cyber_team/api/routes/operations.py src/cyber_team/api/__init__.py src/cyber_team/db/models.py src/cyber_team/config.py alembic/versions/0011_orchestration_governor.py`
+  - `PYTHONPATH=src python3 -m compileall -q src/cyber_team/operations/governor.py src/cyber_team/api/routes/operations.py src/cyber_team/api/__init__.py src/cyber_team/db/models.py src/cyber_team/config.py`
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_orchestration_governor.py tests/test_api_operations.py tests/test_migrations.py -q`
+  - `PYTHONPATH=src ../.venv-quality/bin/ruff check src/cyber_team/operations/governor.py src/cyber_team/api/routes/operations.py src/cyber_team/api/__init__.py src/cyber_team/db/models.py src/cyber_team/config.py tests/test_orchestration_governor.py tests/test_api_operations.py alembic/versions/0011_orchestration_governor.py`
+- Result:
+  - Added durable governor runs, decisions, and tool proposals with Alembic migration `0011_orchestration_governor`.
+  - Added `OrchestrationGovernorService`, which idempotently ensures the Chief Operating Agent, builds a redacted operating snapshot, creates deterministic decisions, delegates low-risk owner-attention plans, and creates explicit tool proposals without hot-loading generated code.
+  - Added owner APIs for manual governor runs, latest/runs/decisions, tool proposals, and approval requests.
+  - Added independent governor scheduler startup wiring and readiness status.
+  - Focused backend tests passed: `19 passed`.
+  - Ruff passed on the new backend/test surface.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_orchestration_governor.py`
+  - `/home/projects/cyber-team/backend/tests/test_api_operations.py`
+- Next step:
+  - Add frontend API client methods, Operations governor cockpit, readiness card, and focused frontend tests.
+
+## 2026-07-04T07:10:18Z - STEP-061 - Added Owner Console governor cockpit and frontend API support
+
+- Files/services changed:
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/OperationsView.tsx`
+  - `.env.example`
+  - `deploy/environments/staging.env.example`
+  - `deploy/environments/production.env.example`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `npx tsc --noEmit`
+  - `docker run --rm -v /home/projects/cyber-team/frontend:/app -w /app node:20-bookworm npm test -- --run src/lib/api.test.ts`
+  - `npm run build`
+  - `git status --short`
+- Result:
+  - Added frontend API client methods for governor run/latest/runs/decisions/tool proposals and proposal approval requests.
+  - Added an Operations readiness card and Chief Operating Agent cockpit with manual/dry-run controls, latest operating brief, recent decisions, tool proposals, sandbox status, and approval-request actions.
+  - Added explicit governor env defaults to local, staging, and production env examples.
+  - TypeScript typecheck passed.
+  - Frontend API tests passed under Node 20 Docker runtime: `21 passed`.
+  - Next.js production build passed.
+  - No generated frontend build artifacts were left in the git worktree.
+- Evidence:
+  - `/home/projects/cyber-team/frontend/src/components/OperationsView.tsx`
+  - `/home/projects/cyber-team/frontend/src/lib/api.test.ts`
+- Next step:
+  - Run the broader backend/frontend quality gate, Alembic offline SQL, Docker Compose config, and then exercise the live governor API against staging after deployment.
+
+## 2026-07-04T07:15:48Z - STEP-062 - Ran full local quality gate for governor layer
+
+- Files/services changed:
+  - `/tmp/cyberteam-alembic-governor.sql`
+  - `/tmp/cyberteam-compose-config.yml`
+  - Temporary backend audit environment under `/tmp/cyberteam-audit-venv-repaired`
+  - Docker image cache for `node:20-bookworm`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests -q`
+  - `PYTHONPATH=src ../.venv-quality/bin/ruff check src tests alembic`
+  - `PYTHONPATH=src python3 -m compileall -q src tests`
+  - `docker compose config >/tmp/cyberteam-compose-config.yml`
+  - `PYTHONPATH=src ../.venv-quality/bin/python - <<'PY' >/tmp/cyberteam-alembic-governor.sql ... command.upgrade(cfg, 'head', sql=True) ... PY`
+  - `npx tsc --noEmit`
+  - `docker run --rm -v /home/projects/cyber-team/frontend:/app -w /app node:20-bookworm npm test -- --run src/lib/api.test.ts`
+  - `npm run build`
+  - `npm audit --audit-level=high`
+  - `python3 scripts/secret-scan.py`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_FRONTEND_BUILD=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 ./scripts/quality-gate.sh`
+- Result:
+  - Backend tests passed: `173 passed`.
+  - Backend Ruff passed.
+  - Backend compileall passed.
+  - Alembic offline SQL rendered through `0011_orchestration_governor`.
+  - Docker Compose config rendered successfully.
+  - Frontend typecheck passed.
+  - Frontend API tests passed under Node 20: `21 passed`.
+  - Frontend production build passed.
+  - Backend dependency audit found no known vulnerabilities.
+  - Frontend dependency audit found zero vulnerabilities.
+  - Secret scan found no high-confidence secrets.
+  - `git diff --check` passed.
+  - Consolidated quality gate passed.
+- Evidence:
+  - `/tmp/cyberteam-alembic-governor.sql`
+  - `/tmp/cyberteam-compose-config.yml`
+  - `/home/projects/cyber-team/scripts/quality-gate.sh`
+- Next step:
+  - Commit the governor layer, build/promote a clean staging release, run live governor API checks, push to GitHub, and verify CI.

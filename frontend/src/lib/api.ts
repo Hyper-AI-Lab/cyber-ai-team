@@ -638,6 +638,62 @@ class ApiClient {
     });
   }
 
+  async runGovernor(options: Record<string, any> = {}) {
+    return this.request('/api/operations/governor/run', {
+      method: 'POST',
+      body: JSON.stringify({
+        dry_run: false,
+        continue_on_error: true,
+        ...options,
+      }),
+    });
+  }
+
+  async getGovernorLatest() {
+    return this.request('/api/operations/governor/latest');
+  }
+
+  async listGovernorRuns(limit: number = 20) {
+    return this.request(`/api/operations/governor/runs?limit=${limit}`);
+  }
+
+  async listGovernorDecisions(
+    filters: {
+      status?: string;
+      decisionType?: string;
+      limit?: number;
+    } = {}
+  ) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 100) });
+    if (filters.status) {
+      params.set('status', filters.status);
+    }
+    if (filters.decisionType) {
+      params.set('decision_type', filters.decisionType);
+    }
+    return this.request(`/api/operations/governor/decisions?${params.toString()}`);
+  }
+
+  async listGovernorToolProposals(
+    filters: {
+      status?: string;
+      limit?: number;
+    } = {}
+  ) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 100) });
+    if (filters.status) {
+      params.set('status', filters.status);
+    }
+    return this.request(`/api/operations/governor/tool-proposals?${params.toString()}`);
+  }
+
+  async requestGovernorToolProposalApproval(proposalId: string, note: string = '') {
+    return this.request(`/api/operations/governor/tool-proposals/${proposalId}/approval`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    });
+  }
+
   async getOperationsReadiness() {
     return this.request('/api/operations/readiness');
   }

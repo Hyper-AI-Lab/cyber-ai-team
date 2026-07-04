@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     autonomous_planner_enabled: bool = True
     autonomous_planner_auto_execute_safe_tasks: bool = True
     autonomous_planner_scan_limit: int = 50
+    governor_enabled: bool = True
+    governor_initial_delay_seconds: int = 180
+    governor_interval_seconds: int = 3600
+    governor_auto_apply_low_risk: bool = True
+    governor_max_actions_per_cycle: int = 10
+    governor_tool_creation_mode: str = "sandbox_draft"
     operating_cadence_scheduler_enabled: bool = True
     operating_cadence_scheduler_initial_delay_seconds: int = 120
     operating_cadence_scheduler_interval_seconds: int = 900

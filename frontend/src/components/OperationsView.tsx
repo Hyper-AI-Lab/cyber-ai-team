@@ -131,6 +131,9 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   const [plans, setPlans] = useState<any[]>([])
   const [readiness, setReadiness] = useState<any | null>(null)
   const [ownerAttention, setOwnerAttention] = useState<any | null>(null)
+  const [governorLatest, setGovernorLatest] = useState<any | null>(null)
+  const [governorDecisions, setGovernorDecisions] = useState<any[]>([])
+  const [toolProposals, setToolProposals] = useState<any[]>([])
   const [operatingCadence, setOperatingCadence] = useState<any | null>(null)
   const [followUps, setFollowUps] = useState<any | null>(null)
   const [followUpStatus, setFollowUpStatus] = useState('active')
@@ -143,6 +146,10 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   const [ownerAttentionLoading, setOwnerAttentionLoading] = useState(false)
   const [ownerAttentionNotifyLoading, setOwnerAttentionNotifyLoading] = useState(false)
   const [ownerAttentionNotifyResult, setOwnerAttentionNotifyResult] = useState<any | null>(null)
+  const [governorLoading, setGovernorLoading] = useState(false)
+  const [governorRunning, setGovernorRunning] = useState(false)
+  const [governorResult, setGovernorResult] = useState<any | null>(null)
+  const [toolProposalAction, setToolProposalAction] = useState<string | null>(null)
   const [alertTestResult, setAlertTestResult] = useState<any | null>(null)
   const [operatingCadenceLoading, setOperatingCadenceLoading] = useState(false)
   const [followUpsLoading, setFollowUpsLoading] = useState(false)
@@ -240,6 +247,65 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
     }
   }
 
+  const loadGovernor = async () => {
+    setGovernorLoading(true)
+    setError(null)
+    try {
+      const [latest, decisions, proposals] = await Promise.all([
+        api.getGovernorLatest(),
+        api.listGovernorDecisions({ limit: 25 }),
+        api.listGovernorToolProposals({ limit: 25 }),
+      ])
+      setGovernorLatest(latest)
+      setGovernorDecisions(decisions.items || [])
+      setToolProposals(proposals.items || [])
+    } catch (e: any) {
+      setError(e.message || 'Failed to load Chief Operating Agent status')
+    } finally {
+      setGovernorLoading(false)
+    }
+  }
+
+  const runGovernor = async (dryRun = false) => {
+    setGovernorRunning(true)
+    setError(null)
+    try {
+      const result = await api.runGovernor({
+        dry_run: dryRun,
+        max_actions: 10,
+        auto_apply_low_risk: true,
+      })
+      setGovernorResult(result)
+      await Promise.all([
+        loadGovernor(),
+        loadReadiness(),
+        loadOwnerAttention(),
+        loadPlans(),
+        loadTimeline(),
+      ])
+    } catch (e: any) {
+      setError(e.message || 'Chief Operating Agent run failed')
+    } finally {
+      setGovernorRunning(false)
+    }
+  }
+
+  const requestToolProposalApproval = async (proposalId: string) => {
+    setToolProposalAction(proposalId)
+    setError(null)
+    try {
+      await api.requestGovernorToolProposalApproval(
+        proposalId,
+        'Owner-console tool proposal review',
+      )
+      await Promise.all([loadGovernor(), loadReadiness()])
+    } catch (e: any) {
+      setError(e.message || 'Failed to request tool proposal approval')
+    } finally {
+      setToolProposalAction(null)
+    }
+  }
+
   const loadOperatingCadence = async () => {
     setOperatingCadenceLoading(true)
     setError(null)
@@ -299,6 +365,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
     loadPlans()
     loadReadiness()
     loadOwnerAttention()
+    loadGovernor()
     loadOperatingCadence()
     loadTimeline()
   }, [])
@@ -326,6 +393,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadPlans()
       await loadReadiness()
       await loadOwnerAttention()
+      await loadGovernor()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -352,6 +420,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadPlans()
       await loadReadiness()
       await loadOwnerAttention()
+      await loadGovernor()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -375,6 +444,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadPlans()
       await loadReadiness()
       await loadOwnerAttention()
+      await loadGovernor()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -395,6 +465,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadPlans()
       await loadReadiness()
       await loadOwnerAttention()
+      await loadGovernor()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -426,6 +497,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadPlans()
       await loadReadiness()
       await loadOwnerAttention()
+      await loadGovernor()
       await loadFollowUps()
       await loadTimeline()
     } catch (e: any) {
@@ -448,6 +520,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadPlans()
       await loadReadiness()
       await loadOwnerAttention()
+      await loadGovernor()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -686,6 +759,17 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                 }
               />
               <ReadinessPanel
+                title="Chief Operating Agent"
+                value={readiness.governor?.status || 'unavailable'}
+                detail={
+                  readiness.governor?.scheduler?.last_completed_at
+                    ? `last run ${formatDate(
+                        readiness.governor.scheduler.last_completed_at,
+                      )}`
+                    : readiness.governor?.detail || 'governor run not recorded yet'
+                }
+              />
+              <ReadinessPanel
                 title="ERPNext Drift"
                 value={
                   readiness.company_context?.drift_detection?.latest_drift?.status
@@ -779,6 +863,230 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
         ) : (
           <div className="py-8 text-center text-slate-500">
             {readinessLoading ? 'Loading readiness...' : 'Readiness data unavailable.'}
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Brain className="h-5 w-5 text-blue-300" />
+            <div>
+              <h3 className="text-lg font-semibold">Chief Operating Agent</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Governed orchestration decisions, delegated plans, and tool proposals.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={loadGovernor}
+              disabled={governorLoading}
+              className="btn-secondary flex items-center gap-2 text-sm"
+            >
+              <RefreshCw className={`h-4 w-4 ${governorLoading ? 'animate-spin' : ''}`} />
+              Refresh Governor
+            </button>
+            <button
+              onClick={() => runGovernor(true)}
+              disabled={governorRunning}
+              className="btn-secondary flex items-center gap-2 text-sm"
+            >
+              <Play className={`h-4 w-4 ${governorRunning ? 'animate-pulse' : ''}`} />
+              Dry Run
+            </button>
+            <button
+              onClick={() => runGovernor(false)}
+              disabled={governorRunning}
+              className="btn-primary flex items-center gap-2 text-sm"
+            >
+              <ShieldCheck className={`h-4 w-4 ${governorRunning ? 'animate-pulse' : ''}`} />
+              {governorRunning ? 'Running...' : 'Run Governor'}
+            </button>
+          </div>
+        </div>
+
+        {governorLatest ? (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+              <Metric
+                label="Status"
+                value={governorLatest.status === 'completed' ? 1 : 0}
+              />
+              <Metric
+                label="Decisions"
+                value={governorLatest.counts?.total || governorDecisions.length || 0}
+              />
+              <Metric
+                label="Delegated"
+                value={governorLatest.counts?.plans_delegated || 0}
+              />
+              <Metric
+                label="Tool proposals"
+                value={governorLatest.counts?.tool_proposals || toolProposals.length || 0}
+              />
+              <Metric
+                label="Duplicates"
+                value={governorLatest.counts?.duplicates || 0}
+              />
+            </div>
+
+            <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span
+                  className={`rounded-full px-2 py-1 text-xs ${
+                    statusClass[governorLatest.status] || 'bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  {governorLatest.status || 'waiting'}
+                </span>
+                <span className="rounded-full border border-slate-700 px-2 py-1 text-xs text-slate-300">
+                  policy {governorLatest.policy_version || readiness?.governor?.safety?.policy_version}
+                </span>
+                <span className="rounded-full border border-slate-700 px-2 py-1 text-xs text-slate-300">
+                  mode {governorLatest.mode || 'active'}
+                </span>
+                <span className="rounded-full border border-slate-700 px-2 py-1 text-xs text-slate-300">
+                  last {formatDate(governorLatest.completed_at || governorLatest.started_at)}
+                </span>
+              </div>
+              <p className="text-sm text-slate-300">
+                {governorLatest.operating_brief || governorLatest.detail || 'No operating brief recorded yet.'}
+              </p>
+              <div className="mt-2 text-xs text-slate-500">
+                snapshot {governorLatest.snapshot_hash || readiness?.governor?.latest_run?.snapshot_hash || '-'}
+              </div>
+            </div>
+
+            {governorResult && (
+              <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-blue-100">
+                Governor run {governorResult.run_id}: {governorResult.status};{' '}
+                {governorResult.counts?.total || 0} decision(s).
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-medium text-slate-200">Recent Decisions</h4>
+                  <span className="text-xs text-slate-500">{governorDecisions.length} shown</span>
+                </div>
+                {governorDecisions.length ? (
+                  governorDecisions.slice(0, 8).map((decision: any) => (
+                    <div
+                      key={decision.id}
+                      className="rounded-lg border border-slate-800 bg-slate-900/30 p-3"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-medium text-white">{decision.title}</div>
+                          <div className="mt-1 line-clamp-2 text-sm text-slate-400">
+                            {decision.description}
+                          </div>
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-1 text-xs ${
+                            statusClass[decision.status] || 'bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {decision.status}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-slate-500">
+                        <span>{decision.decision_type?.replace(/_/g, ' ')}</span>
+                        <span>{decision.source_type || 'snapshot'}:{decision.source_id || '-'}</span>
+                        <span
+                          className={`rounded-full px-2 py-0.5 ${
+                            riskClass[decision.risk_level] || 'bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {decision.risk_level}
+                        </span>
+                        {decision.plan_id && <span>plan {decision.plan_id}</span>}
+                        {decision.approval_id && <span>approval {decision.approval_id}</span>}
+                        {decision.tool_proposal_id && (
+                          <span>proposal {decision.tool_proposal_id}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4 text-sm text-slate-500">
+                    {governorLoading ? 'Loading decisions...' : 'No governor decisions recorded.'}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-medium text-slate-200">Tool Proposals</h4>
+                  <span className="text-xs text-slate-500">{toolProposals.length} shown</span>
+                </div>
+                {toolProposals.length ? (
+                  toolProposals.slice(0, 8).map((proposal: any) => (
+                    <div
+                      key={proposal.id}
+                      className="rounded-lg border border-slate-800 bg-slate-900/30 p-3"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-medium text-white">{proposal.title}</div>
+                          <div className="mt-1 line-clamp-2 text-sm text-slate-400">
+                            {proposal.purpose}
+                          </div>
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-1 text-xs ${
+                            statusClass[proposal.status] || 'bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {proposal.status}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-slate-500">
+                        <span>{proposal.capability}</span>
+                        <span>{proposal.executor_kind}</span>
+                        <span>{proposal.sandbox_mode}</span>
+                        <span
+                          className={`rounded-full px-2 py-0.5 ${
+                            riskClass[proposal.risk_level] || 'bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {proposal.risk_level}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs text-slate-500">
+                          {proposal.sandbox_result?.detail || 'Proposal awaits owner review.'}
+                        </span>
+                        <button
+                          onClick={() => requestToolProposalApproval(proposal.id)}
+                          disabled={
+                            toolProposalAction === proposal.id
+                            || proposal.status === 'approved'
+                          }
+                          className="btn-secondary text-xs"
+                        >
+                          {toolProposalAction === proposal.id
+                            ? 'Requesting...'
+                            : proposal.approval_id
+                              ? 'Refresh Approval'
+                              : 'Request Approval'}
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4 text-sm text-slate-500">
+                    {governorLoading ? 'Loading proposals...' : 'No tool proposals recorded.'}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="py-8 text-center text-slate-500">
+            {governorLoading ? 'Loading governor...' : 'Chief Operating Agent has not run yet.'}
           </div>
         )}
       </section>

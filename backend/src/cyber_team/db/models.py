@@ -395,6 +395,121 @@ class TeamActivationRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class OrchestrationGovernorRun(Base):
+    __tablename__ = "orchestration_governor_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    status: Mapped[str] = mapped_column(String(30), default="running", index=True)
+    actor: Mapped[str] = mapped_column(String(200), default="chief_operating_agent")
+    policy_version: Mapped[str] = mapped_column(String(80), default="governor-v1")
+    mode: Mapped[str] = mapped_column(String(40), default="manual")
+    auto_apply_low_risk: Mapped[bool] = mapped_column(Boolean, default=True)
+    max_actions: Mapped[int] = mapped_column(Integer, default=10)
+    snapshot_hash: Mapped[str] = mapped_column(String(64), index=True)
+    operating_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    operating_brief: Mapped[str] = mapped_column(Text, default="")
+    counts: Mapped[dict] = mapped_column(JSON, default=dict)
+    errors: Mapped[list] = mapped_column(JSON, default=list)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    decisions: Mapped[list["OrchestrationGovernorDecision"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+    )
+
+
+class OrchestrationGovernorDecision(Base):
+    __tablename__ = "orchestration_governor_decisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "idempotency_key",
+            name="uq_orchestration_governor_decisions_idempotency_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("orchestration_governor_runs.id"),
+        index=True,
+    )
+    decision_type: Mapped[str] = mapped_column(String(60), index=True)
+    title: Mapped[str] = mapped_column(String(240))
+    description: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="proposed", index=True)
+    risk_level: Mapped[str] = mapped_column(String(20), default="low", index=True)
+    source_type: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    target_type: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    target_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    action_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approval_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("approval_requests.id"),
+        nullable=True,
+        index=True,
+    )
+    plan_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("autonomous_plans.id"),
+        nullable=True,
+        index=True,
+    )
+    tool_proposal_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("orchestration_tool_proposals.id"),
+        nullable=True,
+        index=True,
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(200), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    run: Mapped["OrchestrationGovernorRun"] = relationship(back_populates="decisions")
+
+
+class OrchestrationToolProposal(Base):
+    __tablename__ = "orchestration_tool_proposals"
+    __table_args__ = (
+        UniqueConstraint(
+            "idempotency_key",
+            name="uq_orchestration_tool_proposals_idempotency_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(String(240))
+    capability: Mapped[str] = mapped_column(String(120), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="proposed", index=True)
+    risk_level: Mapped[str] = mapped_column(String(20), default="medium", index=True)
+    side_effects: Mapped[bool] = mapped_column(Boolean, default=False)
+    source_type: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    purpose: Mapped[str] = mapped_column(Text)
+    input_schema: Mapped[dict] = mapped_column(JSON, default=dict)
+    output_schema: Mapped[dict] = mapped_column(JSON, default=dict)
+    required_credentials: Mapped[list] = mapped_column(JSON, default=list)
+    executor_kind: Mapped[str] = mapped_column(String(60), default="proposed_executor")
+    tests_required: Mapped[list] = mapped_column(JSON, default=list)
+    rollback_notes: Mapped[str] = mapped_column(Text, default="")
+    readiness_checks: Mapped[list] = mapped_column(JSON, default=list)
+    sandbox_mode: Mapped[str] = mapped_column(String(40), default="proposal_only")
+    sandbox_result: Mapped[dict] = mapped_column(JSON, default=dict)
+    approval_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("approval_requests.id"),
+        nullable=True,
+        index=True,
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(200), index=True)
+    created_by: Mapped[str] = mapped_column(String(200), default="chief_operating_agent")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+
+
 class AutonomousPlan(Base):
     __tablename__ = "autonomous_plans"
 

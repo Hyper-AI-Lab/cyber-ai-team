@@ -79,6 +79,17 @@ class AlertEmailTestRequest(BaseModel):
     note: str = Field(default="", max_length=1000)
 
 
+class GovernorRunRequest(BaseModel):
+    dry_run: bool = False
+    auto_apply_low_risk: bool | None = None
+    max_actions: int | None = Field(default=None, ge=1, le=50)
+    continue_on_error: bool = True
+
+
+class ToolProposalApprovalRequest(BaseModel):
+    note: str = Field(default="", max_length=2000)
+
+
 class CredentialRotationEvidenceRequest(BaseModel):
     scope: str = Field(default="staging", pattern="^[a-z0-9_.:-]{1,80}$")
     secret_names: list[str] = Field(default_factory=list, max_length=50)
@@ -166,6 +177,13 @@ def _clear_operations_readiness_cache(request: Request) -> None:
     request.app.state.operations_readiness_cache = None
 
 
+def _governor_service(request: Request):
+    service = getattr(request.app.state, "orchestration_governor_service", None)
+    if not service:
+        raise HTTPException(503, "Chief Operating Agent governor is not available")
+    return service
+
+
 @router.post("/autonomous-cycle", response_model=AutonomousCycleResponse)
 async def run_autonomous_cycle(
     data: AutonomousCycleRequest,
@@ -192,6 +210,140 @@ async def run_autonomous_cycle(
         auto_execute_plans=data.auto_execute_plans,
         continue_on_error=data.continue_on_error,
     )
+
+
+@router.post("/governor/run")
+async def run_orchestration_governor(
+    data: GovernorRunRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "run",
+        "orchestration_governor",
+        "cycle",
+        context=data.model_dump(),
+    )
+    result = await _governor_service(request).run_once(
+        actor=principal.email,
+        dry_run=data.dry_run,
+        auto_apply_low_risk=data.auto_apply_low_risk,
+        max_actions=data.max_actions,
+        continue_on_error=data.continue_on_error,
+    )
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.get("/governor/latest")
+async def latest_orchestration_governor_run(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "orchestration_governor",
+        "latest",
+    )
+    latest = await _governor_service(request).latest_run()
+    return latest or {
+        "status": "waiting",
+        "detail": "Chief Operating Agent governor has not run yet.",
+    }
+
+
+@router.get("/governor/runs")
+async def list_orchestration_governor_runs(
+    request: Request,
+    limit: int = 20,
+    principal: Principal = Depends(get_current_principal),
+):
+    safe_limit = max(1, min(limit, 200))
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "orchestration_governor_run",
+        context={"limit": safe_limit},
+    )
+    return await _governor_service(request).list_runs(limit=safe_limit)
+
+
+@router.get("/governor/decisions")
+async def list_orchestration_governor_decisions(
+    request: Request,
+    status: str | None = None,
+    decision_type: str | None = None,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    safe_limit = max(1, min(limit, 500))
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "orchestration_governor_decision",
+        context={
+            "status": status,
+            "decision_type": decision_type,
+            "limit": safe_limit,
+        },
+    )
+    return await _governor_service(request).list_decisions(
+        status=status,
+        decision_type=decision_type,
+        limit=safe_limit,
+    )
+
+
+@router.get("/governor/tool-proposals")
+async def list_orchestration_tool_proposals(
+    request: Request,
+    status: str | None = None,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    safe_limit = max(1, min(limit, 500))
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "orchestration_tool_proposal",
+        context={"status": status, "limit": safe_limit},
+    )
+    return await _governor_service(request).list_tool_proposals(
+        status=status,
+        limit=safe_limit,
+    )
+
+
+@router.post("/governor/tool-proposals/{proposal_id}/approval")
+async def request_orchestration_tool_proposal_approval(
+    proposal_id: str,
+    data: ToolProposalApprovalRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "approve",
+        "orchestration_tool_proposal",
+        proposal_id,
+        context=data.model_dump(),
+    )
+    try:
+        return await _governor_service(request).request_tool_proposal_approval(
+            proposal_id,
+            actor=principal.email,
+            note=data.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/plans")
@@ -932,6 +1084,42 @@ async def operations_readiness(
             "detail": "Interop adapter service is not available.",
         }
 
+    governor_service = getattr(
+        request.app.state,
+        "orchestration_governor_service",
+        None,
+    )
+    if governor_service:
+        governor_status = await governor_service.readiness()
+    else:
+        governor_status = {
+            "enabled": False,
+            "status": "unavailable",
+            "blocking": False,
+            "detail": "Chief Operating Agent governor service is not available.",
+            "latest_run": None,
+            "safety": {
+                "manual_only_external_side_effects": True,
+                "generated_code_hot_loading": False,
+            },
+        }
+    governor_status = {
+        **governor_status,
+        "scheduler": getattr(
+            request.app.state,
+            "orchestration_governor_scheduler_status",
+            {
+                "enabled": False,
+                "status": "unavailable",
+                "detail": "Chief Operating Agent governor scheduler status is unavailable.",
+                "last_started_at": None,
+                "last_completed_at": None,
+                "last_result": None,
+                "last_error": None,
+            },
+        ),
+    }
+
     production_evidence = await _readiness_evidence_service(request).summary()
 
     evidence = await request.app.state.audit_service.list_events(
@@ -973,6 +1161,13 @@ async def operations_readiness(
             "reason": "MCP/A2A adapter surfaces are unavailable.",
         }
         if interop_status.get("blocking")
+        else None,
+        {
+            "area": "orchestration_governor",
+            "mode": governor_status.get("status"),
+            "reason": governor_status.get("detail"),
+        }
+        if governor_status.get("blocking")
         else None,
     ]
     blockers = (
@@ -1022,6 +1217,7 @@ async def operations_readiness(
         "team_activation": team_activation_status,
         "workflow_templates": workflow_templates_status,
         "interop": interop_status,
+        "governor": governor_status,
         "ci": production_evidence["ci"],
         "alerts": production_evidence["alerts"],
         "backup_restore": production_evidence["backup_restore"],

@@ -396,6 +396,60 @@ describe('ApiClient', () => {
     })
   })
 
+  it('manages governor runs, decisions, and tool proposals', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ run_id: 'govrun-1', status: 'completed' }))
+      .mockResolvedValueOnce(jsonResponse({ run_id: 'govrun-1', status: 'completed' }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ run_id: 'govrun-1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'govdec-1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'toolprop-1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ approval_id: 'approval-1' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.runGovernor({ dry_run: true, max_actions: 3 })
+    await client.getGovernorLatest()
+    await client.listGovernorRuns(5)
+    await client.listGovernorDecisions({
+      status: 'delegated',
+      decisionType: 'create_plan',
+      limit: 7,
+    })
+    await client.listGovernorToolProposals({ status: 'proposed', limit: 9 })
+    await client.requestGovernorToolProposalApproval('toolprop-1', 'review')
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://api.test/api/operations/governor/run',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({
+      dry_run: true,
+      continue_on_error: true,
+      max_actions: 3,
+    })
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/operations/governor/latest',
+    )
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/operations/governor/runs?limit=5',
+    )
+    const decisionsUrl = new URL(fetchMock.mock.calls[3][0] as string)
+    expect(decisionsUrl.pathname).toBe('/api/operations/governor/decisions')
+    expect(decisionsUrl.searchParams.get('status')).toBe('delegated')
+    expect(decisionsUrl.searchParams.get('decision_type')).toBe('create_plan')
+    expect(decisionsUrl.searchParams.get('limit')).toBe('7')
+    const proposalsUrl = new URL(fetchMock.mock.calls[4][0] as string)
+    expect(proposalsUrl.pathname).toBe('/api/operations/governor/tool-proposals')
+    expect(proposalsUrl.searchParams.get('status')).toBe('proposed')
+    expect(proposalsUrl.searchParams.get('limit')).toBe('9')
+    expect(fetchMock.mock.calls[5][0]).toBe(
+      'http://api.test/api/operations/governor/tool-proposals/toolprop-1/approval',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[5][1]?.body as string)).toEqual({
+      note: 'review',
+    })
+  })
+
   it('manages autonomous plans through the operations API', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'plan-1', status: 'planned' }]))
