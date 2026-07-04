@@ -2151,3 +2151,26 @@
   - Failed Trivy output from release gate for `cyber-team-core:91ccd20`
 - Next step:
   - Rerun lint/tests/build/release gate after the Dockerfile security fix, commit the remediation, and promote the clean candidate.
+### 2026-07-04T07:41:30Z — STEP-064 — Governor release gate passed
+- Files/services changed: no additional code changes; verified committed release `63a62d1`.
+- Commands run:
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) SKIP_BACKEND_INSTALL=1 SKIP_FRONTEND_INSTALL=1 CYBERTEAM_CONTAINER_PREFIX=cyberteam-smoke-$(git rev-parse --short HEAD) API_PUBLISHED_PORT=127.0.0.1:28080 UI_PUBLISHED_PORT=127.0.0.1:23081 POSTGRES_PUBLISHED_PORT=127.0.0.1:25432 REDIS_PUBLISHED_PORT=127.0.0.1:26379 QDRANT_HTTP_PUBLISHED_PORT=127.0.0.1:26333 QDRANT_GRPC_PUBLISHED_PORT=127.0.0.1:26334 TEMPORAL_PUBLISHED_PORT=127.0.0.1:27233 OPA_PUBLISHED_PORT=127.0.0.1:28181 API_BASE=http://localhost:28080 UI_BASE=http://localhost:23081 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com ./scripts/release-check.sh`
+  - `cat dist/releases/63a62d1.json`
+  - `docker images --format '{{.Repository}}:{{.Tag}} {{.CreatedSince}} {{.Size}}' | rg 'cyber-team-(core|ui):63a62d1' -S`
+- Result: passed quality gate, Alembic migration rehearsal, isolated Docker Compose smoke, release image builds, and Trivy image scans. Release images are `cyber-team-core:63a62d1` and `cyber-team-ui:63a62d1`.
+- Evidence: `dist/releases/63a62d1.json`.
+- Next step: promote `63a62d1` to staging and run live governor/readiness smoke checks.
+
+### 2026-07-04T07:44:34Z — STEP-065 — Governor staging promotion and live smoke passed
+- Files/services changed: promoted staging Compose services `postgres`, `redis`, `qdrant`, `temporal`, `opa`, `core`, `worker`, and `ui` to release `63a62d1`; created a pre-promotion PostgreSQL backup.
+- Commands run:
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=63a62d1 ./scripts/promote-staging.sh`
+  - authenticated staging smoke against `https://cyberteam.hyperailab.com` for `/health`, owner login, readiness, governor dry run, governor safe run, latest run, decisions, and tool proposals
+  - owner-authorized `POST /api/operations/alerts/test-email` with `dry_run=false`
+  - authenticated `GET /api/operations/readiness?refresh=true`
+- Result: staging promotion completed; Compose smoke passed; `/health` reports `version=63a62d1` and `build_sha=63a62d12100f2204d508cd5290d210ed76816f73`; governor dry run `govrun_6f371f06a124` completed; safe run `govrun_8410fd9160b8` completed with 5 proposed decisions and no unapproved external side effects; alert email proof was sent through SMTP and recorded control evidence `f6aef627-b7b9-4475-9b9b-5468f1b223b2`; post-remediation readiness returned `status=ready`.
+- Evidence:
+  - `dist/promotions/staging/63a62d1-20260704-074241.json`
+  - `backups/staging/cyberteam-staging-63a62d1-20260704-074204.dump`
+  - control evidence `f6aef627-b7b9-4475-9b9b-5468f1b223b2`
+- Next step: commit the progress evidence, push to GitHub, and watch CI for the pushed governor release.
