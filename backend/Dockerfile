@@ -13,9 +13,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+ARG DEBIAN_SECURITY_REFRESH=2026-07-04
 RUN apt-get update \
     && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl libssh2-1t64 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

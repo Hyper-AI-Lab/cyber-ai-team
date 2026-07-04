@@ -2132,3 +2132,22 @@
   - `/home/projects/cyber-team/scripts/quality-gate.sh`
 - Next step:
   - Commit the governor layer, build/promote a clean staging release, run live governor API checks, push to GitHub, and verify CI.
+
+## 2026-07-04T07:28:41Z - STEP-063 - Release image scan found and remediated Debian libssh2 runtime CVEs
+
+- Files/services changed:
+  - Git commit created before release gate: `91ccd20 feat: add autonomous orchestration governor`
+  - `backend/Dockerfile`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `git commit -m "feat: add autonomous orchestration governor"`
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) SKIP_BACKEND_INSTALL=1 SKIP_FRONTEND_INSTALL=1 CYBERTEAM_CONTAINER_PREFIX=cyberteam-smoke-$(git rev-parse --short HEAD) API_PUBLISHED_PORT=127.0.0.1:28080 UI_PUBLISHED_PORT=127.0.0.1:23081 POSTGRES_PUBLISHED_PORT=127.0.0.1:25432 REDIS_PUBLISHED_PORT=127.0.0.1:26379 QDRANT_HTTP_PUBLISHED_PORT=127.0.0.1:26333 QDRANT_GRPC_PUBLISHED_PORT=127.0.0.1:26334 TEMPORAL_PUBLISHED_PORT=127.0.0.1:27233 OPA_PUBLISHED_PORT=127.0.0.1:28181 API_BASE=http://localhost:28080 UI_BASE=http://localhost:23081 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com ./scripts/release-check.sh`
+- Result:
+  - Release gate passed quality gate, migration rehearsal against legacy and representative schemas, isolated Compose smoke, and Docker image builds.
+  - Image scan failed on `cyber-team-core:91ccd20` because Debian `libssh2-1t64` had three fixed high CVEs: `CVE-2026-55199`, `CVE-2026-55200`, and `CVE-2026-7598`.
+  - Updated the backend runtime Dockerfile layer to force a fresh Debian security refresh and explicitly install/upgrade `libssh2-1t64` with `curl`.
+- Evidence:
+  - `backend/Dockerfile`
+  - Failed Trivy output from release gate for `cyber-team-core:91ccd20`
+- Next step:
+  - Rerun lint/tests/build/release gate after the Dockerfile security fix, commit the remediation, and promote the clean candidate.
