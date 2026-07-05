@@ -2342,3 +2342,56 @@
   - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28727477082`
 - Next step:
   - No further implementation step is pending for the Autonomous Executive Company OS v2 milestone. Keep monitoring scheduled CI and runtime readiness; future work should focus on pinning existing floating infrastructure image tags and gradually resolving open outsourcing requests.
+
+### 2026-07-05T06:34:10Z — STEP-072 — Hardened infrastructure image pins, outsourcing dedupe, and resource-policy proposal metadata
+- Files/services changed:
+  - `docker-compose.yml`
+  - `backend/src/cyber_team/operations/executive.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/src/cyber_team/operations/governor.py`
+  - `backend/tests/test_executive_company_os.py`
+  - `backend/tests/test_api_operations.py`
+  - `backend/tests/test_orchestration_governor.py`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/OperationsView.tsx`
+  - Live staging metadata for six pre-existing orchestration tool proposals, annotated with declared FOSS-only resource-policy metadata.
+- Commands run:
+  - `docker buildx imagetools inspect ...` for Qdrant, Temporal, OPA, OpenFGA, Grafana, Prometheus, Alertmanager, Asterisk, and Jasmin pinned image digests.
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src backend/tests backend/alembic`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m compileall -q backend/src backend/tests backend/alembic`
+  - `cd frontend && npx -y node@20 ./node_modules/typescript/bin/tsc --noEmit`
+  - `cd frontend && npx -y node@20 ./node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `python3 scripts/resource-policy-check.py`
+  - `CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env config --quiet`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_FRONTEND_BUILD=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=0 ./scripts/quality-gate.sh`
+  - `RELEASE_VERSION=f1d1853 ... RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=f1d1853 ./scripts/promote-staging.sh`
+  - `POST /api/operations/outsourcing-requests/deduplicate` against live staging.
+  - Live staging checks for `/health`, `/ready`, `/api/operations/readiness`, `/api/operations/resource-policy`, and `/api/operations/outsourcing-requests`.
+- Result:
+  - Floating infrastructure image tags in the main Compose stack were replaced with immutable digests.
+  - FOSS/resource policy scan now passes with no floating-image warnings.
+  - Outsourcing request dedupe was added to backend and owner console; live staging open outsourcing requests were reduced from 32 duplicated rows to 8 unique open requests.
+  - Future tool proposals now include FOSS-only resource metadata by default.
+  - Existing live staging tool proposals were annotated with license/cost/self-hostability/data-sharing metadata.
+  - Resource-policy API now separates declared data-sharing `notices` from actual policy `warnings`.
+  - Final live staging verification:
+    - `/health`: `ok`, version `f1d1853`, build SHA `f1d1853e032effca4fa68dd2c39637483d388c6a`.
+    - `/ready`: `ready` for PostgreSQL, Redis, Qdrant, Temporal, and OPA.
+    - `/api/operations/readiness`: `ready`.
+    - `/api/operations/resource-policy`: `ready`, 0 blockers, 0 warnings, 6 declared notices.
+    - Outsourcing backlog: 8 open requests, 8 dedupe groups, 0 duplicate groups.
+  - Release gate for `f1d1853` passed:
+    - Backend lint/tests/compile/Alembic offline SQL/dependency audit.
+    - Frontend build/typecheck/tests/dependency audit.
+    - Compose config, secret scan, FOSS/resource scan, migration rehearsal, Docker Compose smoke.
+    - Trivy scans for `cyber-team-core:f1d1853` and `cyber-team-ui:f1d1853` reported 0 vulnerabilities.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/f1d1853.json`
+  - `/home/projects/cyber-team/dist/promotions/staging/f1d1853-20260705-063156.json`
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-f1d1853-20260705-063105.dump`
+  - `https://cyberteam.hyperailab.com/health`
+- Next step:
+  - Commit this progress evidence, push to GitHub, and watch GitHub CI for the hardening change set.
