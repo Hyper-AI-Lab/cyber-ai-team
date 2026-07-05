@@ -2395,3 +2395,37 @@
   - `https://cyberteam.hyperailab.com/health`
 - Next step:
   - Commit this progress evidence, push to GitHub, and watch GitHub CI for the hardening change set.
+
+### 2026-07-05T06:39:05Z — STEP-073 — Pushed hardening change set and verified GitHub CI
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+  - GitHub `main` branch updated through commit `c45318c`.
+- Commands run:
+  - `git push origin main`
+  - `gh run list --repo Hyper-AI-Lab/cyber-team --branch main --limit 5 --json databaseId,headSha,status,conclusion,workflowName,displayTitle,createdAt,event,url`
+  - `gh run watch 28732105082 --repo Hyper-AI-Lab/cyber-team --exit-status`
+  - `gh workflow run CI --repo Hyper-AI-Lab/cyber-team --ref main`
+  - `gh run watch 28732158934 --repo Hyper-AI-Lab/cyber-team --exit-status`
+  - `gh run view 28732105082 --repo Hyper-AI-Lab/cyber-team --json databaseId,headSha,status,conclusion,event,url,createdAt,updatedAt,jobs`
+  - `gh run view 28732158934 --repo Hyper-AI-Lab/cyber-team --json databaseId,headSha,status,conclusion,event,url,createdAt,updatedAt,jobs`
+- Result:
+  - Pushed commits:
+    - `f1d1853 chore: harden image pins and outsourcing backlog`
+    - `c45318c docs: record hardening verification`
+  - Push-triggered GitHub CI run `28732105082` completed successfully for:
+    - Backend
+    - Frontend
+    - Compose, Secrets, And Diff Hygiene
+  - Push-triggered Docker image scan, Docker Compose smoke, and observability jobs were skipped by workflow design because those run on manual/scheduled workflows.
+  - Manual GitHub CI run `28732158934` completed successfully for all jobs:
+    - Backend
+    - Frontend
+    - Compose, Secrets, And Diff Hygiene
+    - Observability Config
+    - Docker Compose Smoke
+    - Docker Image Scan
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28732105082`
+  - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28732158934`
+- Next step:
+  - No additional hardening implementation is pending for the requested image-pin/resource-policy/outsourcing-dedupe pass. The remaining 8 open outsourcing requests are unique capability requests and should be handled as future implementation decisions, not duplicate backlog noise.
