@@ -167,7 +167,7 @@ services:
 
   # ─── Qdrant (Vector DB) ───────────────────────────────────────────
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant@sha256:94728574965d17c6485dd361aa3c0818b325b9016dac5ea6afec7b4b2700865f
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-qdrant
     ports:
       - "${QDRANT_HTTP_PUBLISHED_PORT:-6333}:6333"
@@ -178,7 +178,7 @@ services:
 
   # ─── Temporal ──────────────────────────────────────────────────────
   temporal:
-    image: temporalio/auto-setup:latest
+    image: temporalio/auto-setup@sha256:9be7b8d98f60d00f4f2ff74731c071a17848d8182bbc8429e314a24c94ea105b
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-temporal
     environment:
       - DB=postgres12
@@ -197,7 +197,7 @@ services:
     restart: unless-stopped
 
   temporal-admin-tools:
-    image: temporalio/admin-tools:latest
+    image: temporalio/admin-tools@sha256:0fa94393f6254dea05df1cdacb7a8ee95f6fb51a2ffbde0c6847a73037f788c7
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-temporal-admin
     profiles: ["admin"]
     environment:
@@ -208,7 +208,7 @@ services:
 
   # ─── OPA (Policy Engine) ──────────────────────────────────────────
   opa:
-    image: openpolicyagent/opa:latest
+    image: openpolicyagent/opa@sha256:c6f9910d5e982df13fa4c65f02cfa7f65f9cfdbef9fbaf80d6547f840294aa02
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-opa
     command: run --server --addr=0.0.0.0:8181 /policies
     ports:
@@ -219,7 +219,7 @@ services:
 
   # ─── OpenFGA (Authorization) ──────────────────────────────────────
   openfga:
-    image: openfga/openfga:latest
+    image: openfga/openfga@sha256:efde89d24487da1a8bc37d85b61341f1fb7024943a1ded65f4b7d51a75666688
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-openfga
     profiles: ["iam"]
     command: run
@@ -277,7 +277,7 @@ services:
 
   # ─── Grafana ───────────────────────────────────────────────────────
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-grafana
     profiles: ["observability"]
     environment:
@@ -295,7 +295,7 @@ services:
 
   # ─── Prometheus ────────────────────────────────────────────────────
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus@sha256:e4254400b85610324913f0dc4acf92603d9984e7519414c5a12811aa6146acc3
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-prometheus
     profiles: ["observability"]
     ports:
@@ -307,7 +307,7 @@ services:
     restart: unless-stopped
 
   alertmanager:
-    image: prom/alertmanager:latest
+    image: prom/alertmanager@sha256:af26fbe4dd1886ac0efd7bd55cd9027da262e105b137a376522b7c14c3626e4a
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-alertmanager
     profiles: ["observability"]
     env_file: ${CYBERTEAM_ENV_FILE:-.env}
@@ -519,7 +519,7 @@ services:
 
   # ─── Asterisk (Telephony) ─────────────────────────────────────────
   asterisk:
-    image: andrius/asterisk:latest
+    image: andrius/asterisk@sha256:f3a80e49f0ac2614a09c4e17f8cb93fa35013c607903c1cda46ee42c9abec20b
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-asterisk
     profiles: ["telephony"]
     ports:
@@ -534,7 +534,7 @@ services:
 
   # ─── Jasmin SMS Gateway ────────────────────────────────────────────
   jasmin:
-    image: jookies/jasmin:latest
+    image: jookies/jasmin@sha256:3f049692d22fd66ab08a55073f79db96fe442473ede9615e8ac085ac505a1064
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-jasmin
     profiles: ["telephony"]
     ports:

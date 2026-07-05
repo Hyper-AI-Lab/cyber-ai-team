@@ -39,6 +39,7 @@ const statusClass: Record<string, string> = {
   blocked: 'bg-red-600/20 text-red-300',
   waiting: 'bg-slate-600/30 text-slate-300',
   paused: 'bg-amber-600/20 text-amber-300',
+  deduplicated: 'bg-slate-600/30 text-slate-300',
   approval_required: 'bg-amber-600/20 text-amber-300',
   outsourcing_required: 'bg-purple-600/20 text-purple-300',
   attention: 'bg-amber-600/20 text-amber-300',
@@ -164,6 +165,8 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   const [operationGraph, setOperationGraph] = useState<any | null>(null)
   const [observerReviews, setObserverReviews] = useState<any[]>([])
   const [outsourcingRequests, setOutsourcingRequests] = useState<any[]>([])
+  const [outsourcingDedupeLoading, setOutsourcingDedupeLoading] = useState(false)
+  const [outsourcingDedupeResult, setOutsourcingDedupeResult] = useState<any | null>(null)
   const [autonomyPolicy, setAutonomyPolicy] = useState<any | null>(null)
   const [resourcePolicy, setResourcePolicy] = useState<any | null>(null)
   const [executiveLoading, setExecutiveLoading] = useState(false)
@@ -425,6 +428,20 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       setError(e.message || 'Observer review failed')
     } finally {
       setObserverRunning(false)
+    }
+  }
+
+  const deduplicateOutsourcing = async () => {
+    setOutsourcingDedupeLoading(true)
+    setError(null)
+    try {
+      const result = await api.deduplicateOutsourcingRequests({ dryRun: false })
+      setOutsourcingDedupeResult(result)
+      await Promise.all([loadExecutive(), loadReadiness()])
+    } catch (e: any) {
+      setError(e.message || 'Outsourcing backlog dedupe failed')
+    } finally {
+      setOutsourcingDedupeLoading(false)
     }
   }
 
@@ -1166,7 +1183,11 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                 detail={
                   resourcePolicy?.blockers?.length
                     ? `${resourcePolicy.blockers.length} FOSS blocker(s)`
-                    : resourcePolicy?.detail || 'FOSS-only status unavailable'
+                    : resourcePolicy?.warnings?.length
+                      ? `${resourcePolicy.warnings.length} policy warning(s)`
+                      : resourcePolicy?.notices?.length
+                        ? `${resourcePolicy.notices.length} declared notice(s)`
+                        : resourcePolicy?.detail || 'FOSS-only status unavailable'
                 }
               />
               <ReadinessPanel
@@ -1386,7 +1407,26 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
               </div>
 
               <div className="space-y-3">
-                <h4 className="text-sm font-medium text-slate-200">Outsourcing Requests</h4>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-sm font-medium text-slate-200">Outsourcing Requests</h4>
+                  <button
+                    type="button"
+                    onClick={deduplicateOutsourcing}
+                    disabled={outsourcingDedupeLoading}
+                    className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-200 hover:border-blue-400 hover:text-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    title="Collapse duplicate open outsourcing requests for the same source and tool"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${outsourcingDedupeLoading ? 'animate-spin' : ''}`} />
+                    Dedupe
+                  </button>
+                </div>
+                {outsourcingDedupeResult ? (
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3 text-xs text-slate-400">
+                    {outsourcingDedupeResult.duplicate_count || 0} duplicate request(s)
+                    across {outsourcingDedupeResult.group_count || 0} group(s) were
+                    {outsourcingDedupeResult.dry_run ? ' identified' : ' collapsed'}.
+                  </div>
+                ) : null}
                 {outsourcingRequests.length ? (
                   outsourcingRequests.slice(0, 8).map((item: any) => (
                     <div

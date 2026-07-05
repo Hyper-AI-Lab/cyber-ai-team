@@ -174,5 +174,10 @@ async def test_governor_creates_idempotent_tool_proposal_from_role_gap(
     assert len(proposals) == 1
     assert proposals[0].capability == "analytics"
     assert proposals[0].sandbox_result["status"] == "not_executed"
+    assert (
+        proposals[0].sandbox_result["resource_policy"]["cost_model"]
+        == "free_self_hosted_only"
+    )
+    assert "mit" in proposals[0].sandbox_result["resource_policy"]["license"].lower()
     assert audit.events[0]["event_type"] == "orchestration_governor.run"
     assert audit.evidence[0]["control_id"] == "autonomy.governor_run"

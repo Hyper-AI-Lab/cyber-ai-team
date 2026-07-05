@@ -10,6 +10,7 @@ from cyber_team.db.models import (
     ApprovalRequest,
     AutonomousExecutionRecord,
     OperationGraphNode,
+    OrchestrationToolProposal,
     OutsourcingRequest,
 )
 from cyber_team.operations import executive as executive_module
@@ -260,6 +261,133 @@ async def test_missing_tool_capability_creates_outsourcing_request_not_fake_succ
     async with executive_session_factory() as session:
         requests = (await session.execute(select(OutsourcingRequest))).scalars().all()
     assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_outsourcing_deduplicate_preserves_canonical_open_request(
+    executive_session_factory,
+):
+    service = build_service()
+    async with executive_session_factory() as session:
+        for index in range(3):
+            session.add(
+                OutsourcingRequest(
+                    id=f"out_dup_{index}",
+                    title="Outsource complex capability design: email_send",
+                    status="open",
+                    complexity_reason="Duplicate request",
+                    task_spec={"tool_or_skill": "email_send"},
+                    context_pack={},
+                    acceptance_tests=[],
+                    foss_constraints=[],
+                    security_constraints=[],
+                    files_involved=[],
+                    expected_artifact="Reviewed patch",
+                    replay_instructions="Use normal code review.",
+                    source_type="role_gap",
+                    source_id="gap_email",
+                    created_by="chief_operating_agent",
+                    resolution={},
+                )
+            )
+        await session.commit()
+
+    dry_run = await service.deduplicate_outsourcing_requests(
+        actor="owner@example.com",
+        dry_run=True,
+    )
+    assert dry_run["duplicate_count"] == 2
+    async with executive_session_factory() as session:
+        open_count = (
+            await session.execute(
+                select(OutsourcingRequest).where(OutsourcingRequest.status == "open")
+            )
+        ).scalars().all()
+    assert len(open_count) == 3
+
+    result = await service.deduplicate_outsourcing_requests(
+        actor="owner@example.com",
+        dry_run=False,
+    )
+    assert result["duplicate_count"] == 2
+    assert result["groups"][0]["canonical_request_id"] == "out_dup_0"
+    async with executive_session_factory() as session:
+        requests = (
+            await session.execute(
+                select(OutsourcingRequest).order_by(OutsourcingRequest.id)
+            )
+        ).scalars().all()
+    assert [item.status for item in requests].count("open") == 1
+    assert [item.status for item in requests].count("deduplicated") == 2
+    assert requests[1].resolution["canonical_request_id"] == "out_dup_0"
+
+
+@pytest.mark.asyncio
+async def test_resource_policy_declared_data_sharing_is_notice_not_warning(
+    executive_session_factory,
+):
+    service = build_service()
+    async with executive_session_factory() as session:
+        session.add(
+            OrchestrationToolProposal(
+                id="toolprop_email",
+                title="Tool proposal: email_send",
+                capability="communications",
+                status="proposed",
+                risk_level="medium",
+                side_effects=True,
+                purpose="Send owner-approved email.",
+                input_schema={},
+                output_schema={},
+                required_credentials=["SMTP_SERVER"],
+                executor_kind="proposed_executor",
+                tests_required=["email delivery test"],
+                rollback_notes="Disable executor.",
+                readiness_checks=["smtp configured"],
+                sandbox_mode="sandbox_draft",
+                sandbox_result={
+                    "resource_policy": {
+                        "license": "Apache-2.0 OR MIT-compatible implementation required",
+                        "cost_model": "free_self_hosted_only",
+                        "self_hostable": True,
+                        "hosted_service_required": False,
+                        "data_sharing_risk": True,
+                    },
+                },
+                idempotency_key="tool-proposal:email",
+            )
+        )
+        session.add(
+            OrchestrationToolProposal(
+                id="toolprop_unknown",
+                title="Tool proposal: unknown_tool",
+                capability="automation",
+                status="proposed",
+                risk_level="medium",
+                side_effects=False,
+                purpose="Unknown tool proposal.",
+                input_schema={},
+                output_schema={},
+                required_credentials=[],
+                executor_kind="proposed_executor",
+                tests_required=[],
+                rollback_notes="Disable proposal.",
+                readiness_checks=[],
+                sandbox_mode="sandbox_draft",
+                sandbox_result={},
+                idempotency_key="tool-proposal:unknown",
+            )
+        )
+        await session.commit()
+
+    status = await service.resource_policy_status()
+
+    assert status["status"] == "ready"
+    assert status["blockers"] == []
+    assert len(status["warnings"]) == 1
+    assert status["warnings"][0]["proposal_id"] == "toolprop_unknown"
+    assert len(status["notices"]) == 1
+    assert status["notices"][0]["proposal_id"] == "toolprop_email"
 
 
 @pytest.mark.asyncio

@@ -239,6 +239,10 @@ def test_executive_company_os_routes_call_service(monkeypatch):
         "id": "out_2",
         "status": "resolved",
     }
+    app.state.executive_company_os_service.deduplicate_outsourcing_requests.return_value = {
+        "duplicate_count": 2,
+        "group_count": 1,
+    }
 
     async def mock_get_current_principal():
         return owner_principal()
@@ -271,6 +275,10 @@ def test_executive_company_os_routes_call_service(monkeypatch):
     assert client.get("/api/operations/outsourcing-requests").json()["items"][0][
         "id"
     ] == "out_1"
+    assert client.post(
+        "/api/operations/outsourcing-requests/deduplicate",
+        json={"dry_run": False},
+    ).json()["duplicate_count"] == 2
     assert client.get("/api/operations/resource-policy").json()["status"] == "ready"
     assert client.post(
         "/api/operations/governor/instruct",

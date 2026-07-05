@@ -1027,6 +1027,83 @@ class ExecutiveCompanyOSService:
             counts[item["status"]] = counts.get(item["status"], 0) + 1
         return {"items": items, "count": len(items), "counts": counts, "limit": safe_limit}
 
+    async def deduplicate_outsourcing_requests(
+        self,
+        *,
+        actor: str,
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        async with async_session() as session:
+            result = await session.execute(
+                select(OutsourcingRequest)
+                .where(OutsourcingRequest.status == "open")
+                .order_by(OutsourcingRequest.created_at, OutsourcingRequest.id)
+            )
+            items = list(result.scalars())
+            groups: dict[tuple[str | None, str | None, str], list[OutsourcingRequest]] = {}
+            for item in items:
+                key = self._outsourcing_dedupe_key(item)
+                groups.setdefault(key, []).append(item)
+
+            duplicate_groups = []
+            duplicates: list[OutsourcingRequest] = []
+            for (source_type, source_id, tool), group in groups.items():
+                if len(group) <= 1:
+                    continue
+                canonical = group[0]
+                duplicate_items = group[1:]
+                duplicates.extend(duplicate_items)
+                duplicate_groups.append(
+                    {
+                        "source_type": source_type,
+                        "source_id": source_id,
+                        "tool_or_skill": tool,
+                        "canonical_request_id": canonical.id,
+                        "duplicate_request_ids": [item.id for item in duplicate_items],
+                        "duplicate_count": len(duplicate_items),
+                    }
+                )
+
+            if not dry_run:
+                now = utc_now()
+                for item in duplicates:
+                    canonical_id = next(
+                        group["canonical_request_id"]
+                        for group in duplicate_groups
+                        if item.id in group["duplicate_request_ids"]
+                    )
+                    item.status = "deduplicated"
+                    item.resolution = {
+                        "status": "deduplicated",
+                        "canonical_request_id": canonical_id,
+                        "reason": (
+                            "Exact duplicate open outsourcing request for the same "
+                            "source and tool/skill."
+                        ),
+                        "resolved_by": actor,
+                    }
+                    item.updated_at = now
+                    item.resolved_at = now
+                await session.commit()
+
+        if duplicate_groups and not dry_run:
+            await self._record_audit(
+                event_type="outsourcing_request.deduplicated",
+                actor=actor,
+                resource_id="outsourcing_requests",
+                metadata={
+                    "duplicate_count": len(duplicates),
+                    "group_count": len(duplicate_groups),
+                },
+            )
+        return {
+            "dry_run": dry_run,
+            "group_count": len(duplicate_groups),
+            "duplicate_count": len(duplicates),
+            "groups": duplicate_groups,
+            "status": "ready" if not duplicates else "duplicates_found",
+        }
+
     async def resolve_outsourcing_request(
         self,
         request_id: str,
@@ -1053,10 +1130,18 @@ class ExecutiveCompanyOSService:
         )
         return output
 
+    @staticmethod
+    def _outsourcing_dedupe_key(
+        item: OutsourcingRequest,
+    ) -> tuple[str | None, str | None, str]:
+        tool = str((item.task_spec or {}).get("tool_or_skill") or item.title).strip()
+        return (item.source_type, item.source_id, tool)
+
     async def resource_policy_status(self) -> dict[str, Any]:
         policy = await self.get_policy()
         blockers = []
         warnings = []
+        notices = []
         proposals = []
         async with async_session() as session:
             result = await session.execute(
@@ -1084,11 +1169,14 @@ class ExecutiveCompanyOSService:
                     }
                 )
             if analysis["data_sharing_risk"]:
-                warnings.append(
+                notices.append(
                     {
                         "proposal_id": proposal["id"],
                         "title": proposal["title"],
-                        "reason": "Proposal may share data with an external service.",
+                        "reason": (
+                            "Proposal declares external data-sharing risk; owner "
+                            "approval is still required before activation."
+                        ),
                     }
                 )
         status = "ready" if not blockers else "blocked"
@@ -1099,6 +1187,7 @@ class ExecutiveCompanyOSService:
             "foss_only": policy["resource_policy"] == "foss_only",
             "blockers": blockers,
             "warnings": warnings,
+            "notices": notices,
             "proposal_count": len(proposals),
             "checked_at": utc_now().isoformat(),
             "detail": (

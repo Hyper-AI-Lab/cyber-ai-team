@@ -829,6 +829,13 @@ class ApiClient {
     });
   }
 
+  async deduplicateOutsourcingRequests(options: { dryRun?: boolean } = {}) {
+    return this.request('/api/operations/outsourcing-requests/deduplicate', {
+      method: 'POST',
+      body: JSON.stringify({ dry_run: options.dryRun ?? true }),
+    });
+  }
+
   async getResourcePolicy() {
     return this.request('/api/operations/resource-policy');
   }

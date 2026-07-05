@@ -156,6 +156,10 @@ class OutsourcingResolveRequest(BaseModel):
     acceptance_verified: bool = False
 
 
+class OutsourcingDeduplicateRequest(BaseModel):
+    dry_run: bool = True
+
+
 class CredentialRotationEvidenceRequest(BaseModel):
     scope: str = Field(default="staging", pattern="^[a-z0-9_.:-]{1,80}$")
     secret_names: list[str] = Field(default_factory=list, max_length=50)
@@ -778,6 +782,27 @@ async def create_outsourcing_request(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.post("/outsourcing-requests/deduplicate")
+async def deduplicate_outsourcing_requests(
+    data: OutsourcingDeduplicateRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "deduplicate",
+        "outsourcing_request",
+        context=data.model_dump(),
+    )
+    result = await _executive_service(request).deduplicate_outsourcing_requests(
+        actor=principal.email,
+        dry_run=data.dry_run,
+    )
     _clear_operations_readiness_cache(request)
     return result
 

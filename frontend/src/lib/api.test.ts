@@ -210,6 +210,7 @@ describe('ApiClient', () => {
     await client.listOutsourcingRequests({ status: 'open', limit: 5 })
     await client.createOutsourcingRequest({ title: 'Build connector' })
     await client.resolveOutsourcingRequest('out_1', { status: 'resolved' })
+    await client.deduplicateOutsourcingRequests({ dryRun: false })
     await client.getResourcePolicy()
 
     expect(fetchMock.mock.calls[0][0]).toBe(
@@ -278,6 +279,12 @@ describe('ApiClient', () => {
       'http://api.test/api/operations/outsourcing-requests/out_1/resolve',
     )
     expect(fetchMock.mock.calls[18][0]).toBe(
+      'http://api.test/api/operations/outsourcing-requests/deduplicate',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[18][1]?.body as string)).toEqual({
+      dry_run: false,
+    })
+    expect(fetchMock.mock.calls[19][0]).toBe(
       'http://api.test/api/operations/resource-policy',
     )
   })

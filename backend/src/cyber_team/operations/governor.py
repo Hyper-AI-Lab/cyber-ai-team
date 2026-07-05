@@ -836,6 +836,10 @@ class OrchestrationGovernorService:
                         "No live code was generated or loaded. This proposal is an "
                         "approval-gated implementation contract."
                     ),
+                    "resource_policy": self._default_tool_resource_policy(
+                        tool_name,
+                        payload,
+                    ),
                 },
                 idempotency_key=spec["idempotency_key"],
                 created_by=actor,
@@ -1202,6 +1206,27 @@ class OrchestrationGovernorService:
                 "readiness": readiness or {},
             },
         )
+
+    @staticmethod
+    def _default_tool_resource_policy(
+        tool_name: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        lowered = tool_name.lower()
+        data_sharing_risk = any(
+            marker in lowered
+            for marker in ("email", "sms", "call", "message", "crm", "customer")
+        )
+        return {
+            "license": "Apache-2.0 OR MIT-compatible implementation required",
+            "cost_model": "free_self_hosted_only",
+            "self_hostable": True,
+            "hosted_service_required": False,
+            "data_sharing_risk": data_sharing_risk,
+            "free_tier_limitations": "Paid or SaaS-only dependencies are blocked.",
+            "resource_policy": "foss_only",
+            "side_effects": bool(payload.get("side_effects", True)),
+        }
 
     @staticmethod
     def _required_credentials_for_tool(tool_name: str) -> list[str]:
