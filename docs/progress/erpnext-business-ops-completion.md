@@ -2268,3 +2268,46 @@
   - `frontend/src/components/OperationsView.tsx`
 - Next step:
   - Run a real PostgreSQL migration upgrade/rollback rehearsal, deploy the Executive Company OS v2 layer to staging, run live executive/Observer acceptance checks, then commit and push.
+
+### 2026-07-05T02:48:28Z — STEP-070 — Verified and deployed Autonomous Executive Company OS v2 to staging
+- Files/services changed:
+  - `backend/src/cyber_team/operations/executive.py`
+  - `backend/tests/test_executive_company_os.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+  - Staging services `core`, `worker`, and `ui` promoted to `7069913`.
+- Commands run:
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/operations/executive.py backend/tests/test_executive_company_os.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_executive_company_os.py -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src backend/tests backend/alembic`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m compileall -q backend/src backend/tests backend/alembic`
+  - `cd frontend && npx -y node@20 ./node_modules/typescript/bin/tsc --noEmit --incremental false`
+  - `cd frontend && npx -y node@20 ./node_modules/vitest/vitest.mjs run`
+  - `git diff --check`
+  - `git commit --amend --no-edit`
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 CYBERTEAM_CONTAINER_PREFIX=cyberteam-smoke-$(git rev-parse --short HEAD) API_PUBLISHED_PORT=127.0.0.1:28080 UI_PUBLISHED_PORT=127.0.0.1:23081 POSTGRES_PUBLISHED_PORT=127.0.0.1:25432 REDIS_PUBLISHED_PORT=127.0.0.1:26379 QDRANT_HTTP_PUBLISHED_PORT=127.0.0.1:26333 QDRANT_GRPC_PUBLISHED_PORT=127.0.0.1:26334 TEMPORAL_PUBLISHED_PORT=127.0.0.1:27233 OPA_PUBLISHED_PORT=127.0.0.1:28181 API_BASE=http://localhost:28080 UI_BASE=http://localhost:23081 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=$(git rev-parse --short HEAD) ./scripts/promote-staging.sh`
+  - Live authenticated acceptance checks against `https://cyberteam.hyperailab.com`: `/health`, `/ready`, `/api/operations/readiness?refresh=true`, `POST /api/operations/governor/run` in executive dry/safe modes, synthetic large-impact gate, `POST /api/operations/observer/run`, executive brief, operation graph, outsourcing requests, and resource policy.
+- Result:
+  - Corrected the v2 acceptance behavior before deployment: synthetic large-impact actions are prioritized ahead of the action cap, governor run responses expose `approvals_created`, and repeated executive runs reuse an existing open outsourcing request for the same source/tool instead of creating duplicates.
+  - Focused executive tests: `6 passed`.
+  - Full backend tests: `180 passed`.
+  - Frontend tests: `22 passed`.
+  - Frontend typecheck passed.
+  - Release quality gate passed, including real PostgreSQL migration rehearsal, Docker Compose smoke, dependency audits, secret scan, FOSS/resource policy scan, and `git diff --check`.
+  - Trivy image scans reported zero vulnerabilities for `cyber-team-core:7069913` and `cyber-team-ui:7069913`.
+  - Staging promotion created backup `/home/projects/cyber-team/backups/staging/cyberteam-staging-7069913-20260705-024645.dump`, updated the staging deployment manifest, recreated `core`, `worker`, and `ui`, and passed live compose smoke.
+  - Live staging health reports version `7069913` and build SHA `7069913b939012b9cf605c534aca33fe3d2d92d5`.
+  - Live readiness reports overall `ready`, Executive Autonomy `ready`, Observer `ready`, and FOSS/resource policy `ready`.
+  - Live executive safe run completed with autonomous internal executions and outsourcing-required records only; no external side effects were executed without approval.
+  - Live synthetic large-impact action was first in the capped run and returned `approval_required` with an approval ID, proving threshold gating.
+  - Live Observer run returned `disagreed` with one medium finding and zero unresolved objections.
+  - Live operation graph returned 100 nodes and 94 edges in the sampled response.
+  - Resource policy remains ready with zero blockers and warnings for existing floating Docker image tags.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/7069913.json`
+  - `/home/projects/cyber-team/dist/promotions/staging/7069913-20260705-024726.json`
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-7069913-20260705-024645.dump`
+  - `https://cyberteam.hyperailab.com/health`
+- Next step:
+  - Commit this progress evidence, push to GitHub, and watch GitHub CI for the pushed v2 change set.
