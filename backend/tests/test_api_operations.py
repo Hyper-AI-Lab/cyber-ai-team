@@ -160,6 +160,143 @@ def test_governor_routes_call_service(monkeypatch):
     )
 
 
+def test_executive_company_os_routes_call_service(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    app.state.orchestration_governor_service = AsyncMock()
+    app.state.orchestration_governor_service.latest_run.return_value = None
+    app.state.executive_company_os_service = AsyncMock()
+    app.state.executive_company_os_service.run_executive_cycle.return_value = {
+        "run_id": "exegov_1",
+        "status": "completed",
+        "counts": {"executions": 1},
+    }
+    app.state.executive_company_os_service.executive_brief.return_value = {
+        "latest_run": {"run_id": "exegov_1"},
+        "objectives": {"count": 1, "items": []},
+        "kpis": {"count": 1, "items": []},
+        "benchmarks": {"latest_results": {"count": 1, "items": []}},
+        "observer": {"latest_review": None},
+    }
+    app.state.executive_company_os_service.operation_graph.return_value = {
+        "nodes": [{"id": "node_1"}],
+        "edges": [],
+        "count": 1,
+    }
+    app.state.executive_company_os_service.list_observer_reviews.return_value = {
+        "items": [{"id": "obs_1"}],
+    }
+    app.state.executive_company_os_service.list_outsourcing_requests.return_value = {
+        "items": [{"id": "out_1"}],
+    }
+    app.state.executive_company_os_service.get_policy.return_value = {
+        "id": "default",
+        "paused": False,
+    }
+    app.state.executive_company_os_service.resource_policy_status.return_value = {
+        "status": "ready",
+    }
+    app.state.executive_company_os_service.update_policy.return_value = {
+        "id": "default",
+        "paused": True,
+    }
+    app.state.executive_company_os_service.pause.return_value = {
+        "id": "default",
+        "paused": True,
+    }
+    app.state.executive_company_os_service.resume.return_value = {
+        "id": "default",
+        "paused": False,
+    }
+    app.state.executive_company_os_service.run_observer_review.return_value = {
+        "id": "obs_2",
+        "status": "agreed",
+    }
+    app.state.executive_company_os_service.list_objectives.return_value = {
+        "items": [{"id": "objective_1"}],
+        "count": 1,
+    }
+    app.state.executive_company_os_service.replace_objectives.return_value = {
+        "items": [{"id": "objective_1"}],
+        "count": 1,
+    }
+    app.state.executive_company_os_service.list_reflections.return_value = {
+        "items": [{"id": "refl_1"}],
+    }
+    app.state.executive_company_os_service.list_benchmarks.return_value = {
+        "items": [{"id": "bench_1"}],
+    }
+    app.state.executive_company_os_service.create_benchmark.return_value = {
+        "id": "bench_2",
+    }
+    app.state.executive_company_os_service.list_benchmark_results.return_value = {
+        "items": [{"id": "benchres_1"}],
+    }
+    app.state.executive_company_os_service.create_outsourcing_request.return_value = {
+        "id": "out_2",
+    }
+    app.state.executive_company_os_service.resolve_outsourcing_request.return_value = {
+        "id": "out_2",
+        "status": "resolved",
+    }
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+    client = TestClient(app)
+
+    assert client.post(
+        "/api/operations/governor/run",
+        json={
+            "mode": "executive",
+            "dry_run": True,
+            "owner_instruction": "Summarize objectives",
+        },
+    ).json()["run_id"] == "exegov_1"
+    assert client.get("/api/operations/executive-brief").json()["latest_run"][
+        "run_id"
+    ] == "exegov_1"
+    assert client.get("/api/operations/operation-graph?limit=5").json()["count"] == 1
+    assert client.get("/api/operations/observer/reviews").json()["items"][0][
+        "id"
+    ] == "obs_1"
+    assert client.get("/api/operations/outsourcing-requests").json()["items"][0][
+        "id"
+    ] == "out_1"
+    assert client.get("/api/operations/resource-policy").json()["status"] == "ready"
+    assert client.post(
+        "/api/operations/governor/instruct",
+        json={"instruction": "Review the KPI scorecard."},
+    ).json()["run_id"] == "exegov_1"
+    assert client.post("/api/operations/governor/pause", json={"reason": "test"}).json()[
+        "paused"
+    ] is True
+    assert client.post(
+        "/api/operations/observer/run",
+        json={"run_id": "exegov_1"},
+    ).json()["status"] == "agreed"
+
+    app.state.executive_company_os_service.run_executive_cycle.assert_any_await(
+        actor="owner@example.com",
+        dry_run=True,
+        auto_apply_low_risk=None,
+        max_actions=None,
+        force_reflection=False,
+        force_benchmark_refresh=False,
+        owner_instruction="Summarize objectives",
+        observer_review=True,
+        synthetic_large_impact=False,
+    )
+
+
 def test_operations_readiness_reports_tool_and_integration_blockers(monkeypatch):
     app = FastAPI()
     app.include_router(operations_router, prefix="/api/operations")

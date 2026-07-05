@@ -510,6 +510,260 @@ class OrchestrationToolProposal(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
 
+class AutonomyPolicy(Base):
+    __tablename__ = "autonomy_policies"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(60), default="aggressive_threshold", index=True)
+    resource_policy: Mapped[str] = mapped_column(String(60), default="foss_only", index=True)
+    paused: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    thresholds: Mapped[dict] = mapped_column(JSON, default=dict)
+    policy: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_by: Mapped[str] = mapped_column(String(200), default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class CompanyObjective(Base):
+    __tablename__ = "company_objectives"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(String(240))
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    priority: Mapped[str] = mapped_column(String(20), default="medium", index=True)
+    target: Mapped[dict] = mapped_column(JSON, default=dict)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String(200), default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class OperatingKPIDefinition(Base):
+    __tablename__ = "operating_kpi_definitions"
+    __table_args__ = (
+        UniqueConstraint("key", name="uq_operating_kpi_definitions_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    key: Mapped[str] = mapped_column(String(120), index=True)
+    title: Mapped[str] = mapped_column(String(240))
+    description: Mapped[str] = mapped_column(Text, default="")
+    unit: Mapped[str] = mapped_column(String(40), default="count")
+    comparison: Mapped[str] = mapped_column(String(20), default="max")
+    target_value: Mapped[float] = mapped_column(Float, default=0.0)
+    source: Mapped[str] = mapped_column(String(100), default="governor_snapshot")
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class OperatingKPIObservation(Base):
+    __tablename__ = "operating_kpi_observations"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kpi_key: Mapped[str] = mapped_column(String(120), index=True)
+    value: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(String(30), default="recorded", index=True)
+    source_type: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
+class ExecutiveBenchmarkDefinition(Base):
+    __tablename__ = "executive_benchmark_definitions"
+    __table_args__ = (
+        UniqueConstraint("key", name="uq_executive_benchmark_definitions_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    key: Mapped[str] = mapped_column(String(120), index=True)
+    title: Mapped[str] = mapped_column(String(240))
+    description: Mapped[str] = mapped_column(Text, default="")
+    kpi_keys: Mapped[list] = mapped_column(JSON, default=list)
+    rule: Mapped[dict] = mapped_column(JSON, default=dict)
+    severity: Mapped[str] = mapped_column(String(20), default="medium", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    created_by: Mapped[str] = mapped_column(String(200), default="chief_operating_agent")
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class ExecutiveBenchmarkResult(Base):
+    __tablename__ = "executive_benchmark_results"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    benchmark_key: Mapped[str] = mapped_column(String(120), index=True)
+    run_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("orchestration_governor_runs.id"),
+        nullable=True,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(30), default="passed", index=True)
+    score: Mapped[float] = mapped_column(Float, default=1.0)
+    observed_value: Mapped[float] = mapped_column(Float, default=0.0)
+    threshold_value: Mapped[float] = mapped_column(Float, default=0.0)
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
+class OperationGraphNode(Base):
+    __tablename__ = "operation_graph_nodes"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_operation_graph_nodes_idempotency_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    node_type: Mapped[str] = mapped_column(String(80), index=True)
+    title: Mapped[str] = mapped_column(String(240))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    source_type: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    agent_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    workflow_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    tool_name: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    risk_level: Mapped[str] = mapped_column(String(20), default="low", index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    impact_score: Mapped[float] = mapped_column(Float, default=0.0)
+    memory_namespace: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    idempotency_key: Mapped[str] = mapped_column(String(240), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
+class OperationGraphEdge(Base):
+    __tablename__ = "operation_graph_edges"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_node_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("operation_graph_nodes.id"),
+        index=True,
+    )
+    target_node_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("operation_graph_nodes.id"),
+        index=True,
+    )
+    edge_type: Mapped[str] = mapped_column(String(80), default="related_to", index=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
+class ExecutiveReflection(Base):
+    __tablename__ = "executive_reflections"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("orchestration_governor_runs.id"),
+        nullable=True,
+        index=True,
+    )
+    summary: Mapped[str] = mapped_column(Text, default="")
+    what_changed: Mapped[list] = mapped_column(JSON, default=list)
+    repeated_patterns: Mapped[list] = mapped_column(JSON, default=list)
+    failures: Mapped[list] = mapped_column(JSON, default=list)
+    memory_gaps: Mapped[list] = mapped_column(JSON, default=list)
+    next_watch_items: Mapped[list] = mapped_column(JSON, default=list)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
+class ObserverReview(Base):
+    __tablename__ = "observer_reviews"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("orchestration_governor_runs.id"),
+        nullable=True,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(30), default="agreed", index=True)
+    critique: Mapped[str] = mapped_column(Text, default="")
+    findings: Mapped[list] = mapped_column(JSON, default=list)
+    consensus_log: Mapped[list] = mapped_column(JSON, default=list)
+    unresolved_objections: Mapped[list] = mapped_column(JSON, default=list)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
+class AutonomousExecutionRecord(Base):
+    __tablename__ = "autonomous_execution_records"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_autonomous_execution_records_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("orchestration_governor_runs.id"),
+        nullable=True,
+        index=True,
+    )
+    action_type: Mapped[str] = mapped_column(String(80), index=True)
+    title: Mapped[str] = mapped_column(String(240))
+    status: Mapped[str] = mapped_column(String(30), default="planned", index=True)
+    risk_level: Mapped[str] = mapped_column(String(20), default="low", index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    impact: Mapped[dict] = mapped_column(JSON, default=dict)
+    approval_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("approval_requests.id"),
+        nullable=True,
+        index=True,
+    )
+    operation_node_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("operation_graph_nodes.id"),
+        nullable=True,
+        index=True,
+    )
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(240), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class OutsourcingRequest(Base):
+    __tablename__ = "outsourcing_requests"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(String(240))
+    status: Mapped[str] = mapped_column(String(30), default="open", index=True)
+    complexity_reason: Mapped[str] = mapped_column(Text, default="")
+    task_spec: Mapped[dict] = mapped_column(JSON, default=dict)
+    context_pack: Mapped[dict] = mapped_column(JSON, default=dict)
+    acceptance_tests: Mapped[list] = mapped_column(JSON, default=list)
+    foss_constraints: Mapped[list] = mapped_column(JSON, default=list)
+    security_constraints: Mapped[list] = mapped_column(JSON, default=list)
+    files_involved: Mapped[list] = mapped_column(JSON, default=list)
+    expected_artifact: Mapped[str] = mapped_column(Text, default="")
+    replay_instructions: Mapped[str] = mapped_column(Text, default="")
+    source_type: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    approval_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("approval_requests.id"),
+        nullable=True,
+        index=True,
+    )
+    created_by: Mapped[str] = mapped_column(String(200), default="chief_operating_agent")
+    resolution: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class AutonomousPlan(Base):
     __tablename__ = "autonomous_plans"
 

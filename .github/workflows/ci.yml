@@ -108,6 +108,8 @@ jobs:
           test -z "$(find monitoring \( -type f ! -perm -004 -o -type d ! -perm -001 \) -print)"
       - name: Secret scan
         run: python scripts/secret-scan.py
+      - name: FOSS/resource policy scan
+        run: python scripts/resource-policy-check.py
       - name: Diff hygiene
         run: git diff --check
 

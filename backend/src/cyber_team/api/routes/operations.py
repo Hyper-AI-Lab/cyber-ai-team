@@ -84,10 +84,76 @@ class GovernorRunRequest(BaseModel):
     auto_apply_low_risk: bool | None = None
     max_actions: int | None = Field(default=None, ge=1, le=50)
     continue_on_error: bool = True
+    mode: str = Field(default="standard", pattern="^(standard|executive)$")
+    force_reflection: bool = False
+    force_benchmark_refresh: bool = False
+    owner_instruction: str = Field(default="", max_length=4000)
+    observer_review: bool = True
+    synthetic_large_impact: bool = False
 
 
 class ToolProposalApprovalRequest(BaseModel):
     note: str = Field(default="", max_length=2000)
+
+
+class CompanyObjectivesRequest(BaseModel):
+    objectives: list[dict[str, Any]] = Field(default_factory=list, min_length=1)
+
+
+class AutonomyPolicyRequest(BaseModel):
+    mode: str | None = Field(default=None, max_length=60)
+    resource_policy: str | None = Field(default=None, max_length=60)
+    paused: bool | None = None
+    thresholds: dict[str, Any] = Field(default_factory=dict)
+    policy: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovernorInstructionRequest(BaseModel):
+    instruction: str = Field(..., min_length=1, max_length=4000)
+    dry_run: bool = False
+    observer_review: bool = True
+
+
+class GovernorPauseRequest(BaseModel):
+    reason: str = Field(default="", max_length=2000)
+
+
+class ExecutiveBenchmarkRequest(BaseModel):
+    key: str = Field(..., min_length=1, max_length=120)
+    title: str = Field(..., min_length=1, max_length=240)
+    description: str = Field(default="", max_length=4000)
+    kpi_keys: list[str] = Field(default_factory=list, max_length=20)
+    rule: dict[str, Any]
+    severity: str = Field(default="medium", max_length=20)
+    status: str = Field(default="active", max_length=30)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ObserverRunRequest(BaseModel):
+    run_id: str | None = Field(default=None, max_length=80)
+    owner_instruction: str = Field(default="", max_length=4000)
+
+
+class OutsourcingRequestCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=240)
+    complexity_reason: str = Field(default="", max_length=4000)
+    task_spec: dict[str, Any] = Field(default_factory=dict)
+    context_pack: dict[str, Any] = Field(default_factory=dict)
+    acceptance_tests: list[str] = Field(default_factory=list, max_length=50)
+    foss_constraints: list[str] = Field(default_factory=list, max_length=50)
+    security_constraints: list[str] = Field(default_factory=list, max_length=50)
+    files_involved: list[str] = Field(default_factory=list, max_length=100)
+    expected_artifact: str = Field(default="", max_length=4000)
+    replay_instructions: str = Field(default="", max_length=4000)
+    source_type: str | None = Field(default=None, max_length=80)
+    source_id: str | None = Field(default=None, max_length=200)
+
+
+class OutsourcingResolveRequest(BaseModel):
+    status: str = Field(default="resolved", max_length=30)
+    note: str = Field(default="", max_length=4000)
+    artifact_reference: str = Field(default="", max_length=500)
+    acceptance_verified: bool = False
 
 
 class CredentialRotationEvidenceRequest(BaseModel):
@@ -184,6 +250,13 @@ def _governor_service(request: Request):
     return service
 
 
+def _executive_service(request: Request):
+    service = getattr(request.app.state, "executive_company_os_service", None)
+    if not service:
+        raise HTTPException(503, "Executive Company OS service is not available")
+    return service
+
+
 @router.post("/autonomous-cycle", response_model=AutonomousCycleResponse)
 async def run_autonomous_cycle(
     data: AutonomousCycleRequest,
@@ -226,13 +299,26 @@ async def run_orchestration_governor(
         "cycle",
         context=data.model_dump(),
     )
-    result = await _governor_service(request).run_once(
-        actor=principal.email,
-        dry_run=data.dry_run,
-        auto_apply_low_risk=data.auto_apply_low_risk,
-        max_actions=data.max_actions,
-        continue_on_error=data.continue_on_error,
-    )
+    if data.mode == "executive":
+        result = await _executive_service(request).run_executive_cycle(
+            actor=principal.email,
+            dry_run=data.dry_run,
+            auto_apply_low_risk=data.auto_apply_low_risk,
+            max_actions=data.max_actions,
+            force_reflection=data.force_reflection,
+            force_benchmark_refresh=data.force_benchmark_refresh,
+            owner_instruction=data.owner_instruction,
+            observer_review=data.observer_review,
+            synthetic_large_impact=data.synthetic_large_impact,
+        )
+    else:
+        result = await _governor_service(request).run_once(
+            actor=principal.email,
+            dry_run=data.dry_run,
+            auto_apply_low_risk=data.auto_apply_low_risk,
+            max_actions=data.max_actions,
+            continue_on_error=data.continue_on_error,
+        )
     _clear_operations_readiness_cache(request)
     return result
 
@@ -250,7 +336,37 @@ async def latest_orchestration_governor_run(
         "latest",
     )
     latest = await _governor_service(request).latest_run()
-    return latest or {
+    executive = getattr(request.app.state, "executive_company_os_service", None)
+    executive_latest = await executive.latest_run() if executive else None
+    executive_brief = (
+        await executive.executive_brief()
+        if executive and executive_latest
+        else None
+    )
+    if latest or executive_latest:
+        payload = latest or {}
+        return {
+            **payload,
+            "executive": executive_latest,
+            "objective_summary": (
+                executive_brief.get("objectives") if executive_brief else None
+            ),
+            "kpi_summary": executive_brief.get("kpis") if executive_brief else None,
+            "benchmark_summary": (
+                executive_brief.get("benchmarks") if executive_brief else None
+            ),
+            "observer_review": (
+                executive_brief.get("observer", {}).get("latest_review")
+                if executive_brief
+                else None
+            ),
+            "operation_graph_links": {
+                "latest": "/api/operations/operation-graph",
+                "reflections": "/api/operations/governor/reflections",
+                "observer": "/api/operations/observer/reviews",
+            },
+        }
+    return {
         "status": "waiting",
         "detail": "Chief Operating Agent governor has not run yet.",
     }
@@ -344,6 +460,362 @@ async def request_orchestration_tool_proposal_approval(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/company-objectives")
+async def get_company_objectives(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "company_objectives")
+    return await _executive_service(request).list_objectives()
+
+
+@router.put("/company-objectives")
+async def update_company_objectives(
+    data: CompanyObjectivesRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "update",
+        "company_objectives",
+        context={"count": len(data.objectives)},
+    )
+    result = await _executive_service(request).replace_objectives(
+        actor=principal.email,
+        objectives=data.objectives,
+    )
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.get("/executive-brief")
+async def get_executive_brief(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "executive_brief")
+    return await _executive_service(request).executive_brief()
+
+
+@router.get("/operation-graph")
+async def get_operation_graph(
+    request: Request,
+    node_type: str | None = None,
+    source_type: str | None = None,
+    risk_level: str | None = None,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    safe_limit = max(1, min(limit, 500))
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "operation_graph",
+        context={
+            "node_type": node_type,
+            "source_type": source_type,
+            "risk_level": risk_level,
+            "limit": safe_limit,
+        },
+    )
+    return await _executive_service(request).operation_graph(
+        node_type=node_type,
+        source_type=source_type,
+        risk_level=risk_level,
+        limit=safe_limit,
+    )
+
+
+@router.get("/governor/reflections")
+async def list_governor_reflections(
+    request: Request,
+    limit: int = 50,
+    principal: Principal = Depends(get_current_principal),
+):
+    safe_limit = max(1, min(limit, 200))
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "executive_reflection",
+        context={"limit": safe_limit},
+    )
+    return await _executive_service(request).list_reflections(limit=safe_limit)
+
+
+@router.get("/governor/benchmarks")
+async def list_governor_benchmarks(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "executive_benchmark")
+    return await _executive_service(request).list_benchmarks()
+
+
+@router.post("/governor/benchmarks")
+async def create_governor_benchmark(
+    data: ExecutiveBenchmarkRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "upsert",
+        "executive_benchmark",
+        data.key,
+        context=data.model_dump(),
+    )
+    try:
+        result = await _executive_service(request).create_benchmark(
+            actor=principal.email,
+            data=data.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.get("/governor/benchmark-results")
+async def list_governor_benchmark_results(
+    request: Request,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    safe_limit = max(1, min(limit, 500))
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "executive_benchmark_result",
+        context={"limit": safe_limit},
+    )
+    return await _executive_service(request).list_benchmark_results(limit=safe_limit)
+
+
+@router.get("/governor/autonomy-policy")
+async def get_governor_autonomy_policy(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "autonomy_policy")
+    return await _executive_service(request).get_policy()
+
+
+@router.put("/governor/autonomy-policy")
+async def update_governor_autonomy_policy(
+    data: AutonomyPolicyRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "update",
+        "autonomy_policy",
+        "default",
+        context=data.model_dump(exclude_none=True),
+    )
+    result = await _executive_service(request).update_policy(
+        actor=principal.email,
+        updates=data.model_dump(exclude_none=True),
+    )
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.post("/governor/instruct")
+async def instruct_governor(
+    data: GovernorInstructionRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "instruct",
+        "executive_governor",
+        context={
+            "dry_run": data.dry_run,
+            "observer_review": data.observer_review,
+        },
+    )
+    result = await _executive_service(request).run_executive_cycle(
+        actor=principal.email,
+        dry_run=data.dry_run,
+        owner_instruction=data.instruction,
+        observer_review=data.observer_review,
+    )
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.post("/governor/pause")
+async def pause_governor(
+    data: GovernorPauseRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "pause",
+        "executive_governor",
+        context={"reason": data.reason},
+    )
+    result = await _executive_service(request).pause(
+        actor=principal.email,
+        reason=data.reason,
+    )
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.post("/governor/resume")
+async def resume_governor(
+    data: GovernorPauseRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "resume",
+        "executive_governor",
+        context={"reason": data.reason},
+    )
+    result = await _executive_service(request).resume(
+        actor=principal.email,
+        reason=data.reason,
+    )
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.get("/observer/reviews")
+async def list_observer_reviews(
+    request: Request,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    safe_limit = max(1, min(limit, 500))
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "observer_review",
+        context={"limit": safe_limit},
+    )
+    return await _executive_service(request).list_observer_reviews(limit=safe_limit)
+
+
+@router.post("/observer/run")
+async def run_observer_review(
+    data: ObserverRunRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "run",
+        "observer_review",
+        context=data.model_dump(),
+    )
+    result = await _executive_service(request).run_observer_review(
+        actor=principal.email,
+        run_id=data.run_id,
+        owner_instruction=data.owner_instruction,
+    )
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.get("/outsourcing-requests")
+async def list_outsourcing_requests(
+    request: Request,
+    status: str | None = None,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    safe_limit = max(1, min(limit, 500))
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "outsourcing_request",
+        context={"status": status, "limit": safe_limit},
+    )
+    return await _executive_service(request).list_outsourcing_requests(
+        status=status,
+        limit=safe_limit,
+    )
+
+
+@router.post("/outsourcing-requests")
+async def create_outsourcing_request(
+    data: OutsourcingRequestCreate,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "create",
+        "outsourcing_request",
+        context={"title": data.title},
+    )
+    try:
+        result = await _executive_service(request).create_outsourcing_request(
+            actor=principal.email,
+            data=data.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.post("/outsourcing-requests/{request_id}/resolve")
+async def resolve_outsourcing_request(
+    request_id: str,
+    data: OutsourcingResolveRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "resolve",
+        "outsourcing_request",
+        request_id,
+        context=data.model_dump(),
+    )
+    try:
+        result = await _executive_service(request).resolve_outsourcing_request(
+            request_id,
+            actor=principal.email,
+            resolution=data.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.get("/resource-policy")
+async def get_resource_policy(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "resource_policy")
+    return await _executive_service(request).resource_policy_status()
 
 
 @router.get("/plans")
@@ -1119,6 +1591,25 @@ async def operations_readiness(
             },
         ),
     }
+    executive_service = getattr(request.app.state, "executive_company_os_service", None)
+    if executive_service:
+        executive_status = await executive_service.readiness()
+    else:
+        executive_status = {
+            "status": "unavailable",
+            "blocking": False,
+            "enabled": False,
+            "detail": "Executive Company OS service is not available.",
+            "resource_policy": {"status": "unavailable", "blocking": True},
+            "observer": {"status": "unavailable", "agent_present": False},
+            "operation_graph": {
+                "indexing_enabled": settings.operation_graph_indexing_enabled,
+                "latest_node_present": False,
+            },
+            "benchmark_freshness": {"status": "waiting", "stale": True},
+            "reflection_freshness": {"status": "waiting", "stale": True},
+            "outsourcing": {"status": "unavailable", "open_count": 0},
+        }
 
     production_evidence = await _readiness_evidence_service(request).summary()
 
@@ -1169,6 +1660,13 @@ async def operations_readiness(
         }
         if governor_status.get("blocking")
         else None,
+        {
+            "area": "executive_autonomy",
+            "mode": executive_status.get("status"),
+            "reason": "Executive Company OS readiness is blocked.",
+        }
+        if executive_status.get("blocking")
+        else None,
     ]
     blockers = (
         side_effect_blockers
@@ -1218,6 +1716,13 @@ async def operations_readiness(
         "workflow_templates": workflow_templates_status,
         "interop": interop_status,
         "governor": governor_status,
+        "executive_autonomy": executive_status,
+        "resource_policy": executive_status.get("resource_policy"),
+        "observer": executive_status.get("observer"),
+        "operation_graph": executive_status.get("operation_graph"),
+        "benchmark_freshness": executive_status.get("benchmark_freshness"),
+        "reflection_freshness": executive_status.get("reflection_freshness"),
+        "outsourcing": executive_status.get("outsourcing"),
         "ci": production_evidence["ci"],
         "alerts": production_evidence["alerts"],
         "backup_restore": production_evidence["backup_restore"],

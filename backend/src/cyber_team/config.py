@@ -55,6 +55,15 @@ class Settings(BaseSettings):
     governor_auto_apply_low_risk: bool = True
     governor_max_actions_per_cycle: int = 10
     governor_tool_creation_mode: str = "sandbox_draft"
+    autonomy_resource_policy: str = "foss_only"
+    governor_autonomy_mode: str = "aggressive_threshold"
+    governor_min_confidence: float = 0.72
+    governor_financial_action_limit_usd: float = 500.0
+    governor_financial_daily_limit_usd: float = 2000.0
+    governor_bulk_recipient_daily_limit: int = 25
+    observer_enabled: bool = True
+    observer_review_required: bool = True
+    operation_graph_indexing_enabled: bool = True
     operating_cadence_scheduler_enabled: bool = True
     operating_cadence_scheduler_initial_delay_seconds: int = 120
     operating_cadence_scheduler_interval_seconds: int = 900
@@ -266,6 +275,11 @@ class Settings(BaseSettings):
             "REDIS_PASSWORD": self.redis_password == "changeme-redis-password",
             "COMMUNICATIONS_ALLOW_SIMULATION": self.communications_allow_simulation,
             "AUTONOMY_SIDE_EFFECT_MODE": self.autonomy_side_effect_mode != "manual_only",
+            "AUTONOMY_RESOURCE_POLICY": self.autonomy_resource_policy != "foss_only",
+            "GOVERNOR_AUTONOMY_MODE": self.governor_autonomy_mode
+            != "aggressive_threshold",
+            "OBSERVER_ENABLED": not self.observer_enabled,
+            "OBSERVER_REVIEW_REQUIRED": not self.observer_review_required,
             "REQUIRE_LIVE_TOOL_EXECUTORS": not self.require_live_tool_executors,
         }
         invalid = [name for name, is_invalid in insecure_values.items() if is_invalid]

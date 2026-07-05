@@ -2187,3 +2187,84 @@
   - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28699533661`
   - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28699587898`
 - Next step: governor v1 milestone is complete; continue with a future milestone for automatic PR drafting or internal MCP/A2A adapter surfaces if/when authorized.
+
+### 2026-07-05T01:37:44Z — STEP-067 — Started Autonomous Executive Company OS v2 implementation
+- Files/services changed: none yet; starting implementation of the executive autonomy, Observer, operation graph, FOSS resource policy, outsourcing request, and architecture-document milestone.
+- Commands run:
+  - `rg -n "Chief Operating Agent|Governor|governor|orchestrator|autonomous|vision|architecture|operating principles|memory|benchmark|evaluation|metric" docs request backend/src/cyber_team frontend/src`
+  - `sed -n '1,260p' backend/src/cyber_team/operations/governor.py`
+  - `sed -n '1,260p' backend/src/cyber_team/operations/planning.py`
+  - `sed -n '1,260p' backend/src/cyber_team/db/models.py`
+  - `sed -n '1,340p' backend/src/cyber_team/api/__init__.py`
+  - `sed -n '620,760p' frontend/src/lib/api.ts`
+- Result: confirmed the v2 layer should be additive over Governor v1, autonomous planning, memory traces, readiness evidence, and the existing Operations owner console.
+- Evidence: current repository inspection; no generated artifacts.
+- Next step: add architecture documentation, config defaults, persistence models, migration, and backend executive service logic.
+
+### 2026-07-05T01:54:25Z — STEP-068 — Added Executive Company OS v2 backend persistence and service layer
+- Files/services changed:
+  - `docs/architecture/autonomous-company-os.md`
+  - `.env.example`
+  - `deploy/environments/staging.env.example`
+  - `deploy/environments/production.env.example`
+  - `backend/src/cyber_team/config.py`
+  - `backend/src/cyber_team/db/models.py`
+  - `backend/alembic/versions/0012_autonomous_executive_company_os.py`
+  - `backend/src/cyber_team/operations/executive.py`
+  - `backend/src/cyber_team/operations/__init__.py`
+  - `backend/src/cyber_team/api/__init__.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+- Commands run:
+  - `git status --short && git diff --stat`
+  - `rg -n "class AutonomyPolicy|class OperationGraphNode|class AutonomousPlan|class OrchestrationToolProposal" backend/src/cyber_team/db/models.py`
+  - `python3 -m compileall backend/src/cyber_team/operations/executive.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/api/__init__.py backend/src/cyber_team/db/models.py`
+- Result:
+  - Added the source-of-truth architecture/vision document, v2 autonomy/Observer/FOSS env defaults, durable executive models, Alembic migration, Executive Company OS service, startup wiring, scheduler integration, and public operations API endpoints for objectives, executive brief, operation graph, reflections, benchmarks, autonomy policy, instructions, pause/resume, Observer reviews, outsourcing requests, and resource policy.
+  - Compile check passed for the changed backend modules.
+- Evidence:
+  - `backend/alembic/versions/0012_autonomous_executive_company_os.py`
+  - `backend/src/cyber_team/operations/executive.py`
+- Next step:
+  - Extend the owner-console frontend/API client, add tests, and run local quality gates.
+
+### 2026-07-05T02:11:06Z — STEP-069 — Added Executive Cockpit UI, policy scan, tests, and local quality-gate evidence
+- Files/services changed:
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/OperationsView.tsx`
+  - `backend/tests/test_executive_company_os.py`
+  - `backend/tests/test_api_operations.py`
+  - `scripts/resource-policy-check.py`
+  - `scripts/quality-gate.sh`
+  - `.github/workflows/ci.yml`
+- Commands run:
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/operations/executive.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/api/__init__.py backend/tests/test_executive_company_os.py backend/tests/test_api_operations.py backend/alembic/versions/0012_autonomous_executive_company_os.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_executive_company_os.py backend/tests/test_api_operations.py -q`
+  - `python3 scripts/resource-policy-check.py`
+  - `cd frontend && npx -y node@20 ./node_modules/typescript/bin/tsc --noEmit --incremental false`
+  - `cd frontend && npx -y node@20 ./node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+  - `cd backend && PYTHONPATH=src ../.venv-quality/bin/alembic upgrade head --sql >/tmp/cyberteam-alembic-executive.sql`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m compileall -q backend/src backend/tests backend/alembic`
+  - `git diff --check`
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src backend/tests backend/alembic`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `cd frontend && npx -y node@20 ./node_modules/vitest/vitest.mjs run`
+  - `cd frontend && npx -y node@20 ./node_modules/next/dist/bin/next build`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_FRONTEND_BUILD=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 ./scripts/quality-gate.sh`
+- Result:
+  - Executive Cockpit frontend/API client was added for objectives, KPI scorecard, benchmarks, operation graph timeline, Observer reviews, consensus, pause/resume, owner instructions, and outsourcing backlog.
+  - Backend tests: `179 passed`.
+  - Frontend tests: `22 passed`.
+  - Frontend typecheck and production build passed.
+  - Alembic offline SQL generation passed.
+  - Backend dependency audit found no known vulnerabilities.
+  - Frontend dependency audit found zero vulnerabilities.
+  - Secret scan found no high-confidence secrets.
+  - FOSS/resource policy scan passed and reported floating Docker image warnings for existing `:latest` tags in optional/infrastructure services.
+  - Consolidated quality gate passed.
+- Evidence:
+  - `/tmp/cyberteam-alembic-executive.sql`
+  - `scripts/resource-policy-check.py`
+  - `frontend/src/components/OperationsView.tsx`
+- Next step:
+  - Run a real PostgreSQL migration upgrade/rollback rehearsal, deploy the Executive Company OS v2 layer to staging, run live executive/Observer acceptance checks, then commit and push.

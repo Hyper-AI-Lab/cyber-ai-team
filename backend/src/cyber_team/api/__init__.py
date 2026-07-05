@@ -48,6 +48,7 @@ from cyber_team.llm.gateway import LLMGateway
 from cyber_team.memory.service import MemoryService
 from cyber_team.observability.metrics import MetricsService
 from cyber_team.operations.autonomous import AutonomousOperationsService
+from cyber_team.operations.executive import ExecutiveCompanyOSService
 from cyber_team.operations.governor import OrchestrationGovernorService
 from cyber_team.operations.memory_steward import MemoryStewardService
 from cyber_team.operations.owner_attention import OwnerAttentionNotificationService
@@ -164,6 +165,15 @@ async def lifespan(app: FastAPI):
         comms_gateway=app.state.comms_gateway,
         erpnext=app.state.erpnext,
     )
+    app.state.executive_company_os_service = ExecutiveCompanyOSService(
+        governor_service=app.state.orchestration_governor_service,
+        agent_manager=app.state.agent_manager,
+        memory_service=app.state.memory_service,
+        audit_service=app.state.audit_service,
+        tool_registry=app.state.tool_registry,
+        planning_service=app.state.autonomous_planning_service,
+        readiness_evidence_service=app.state.readiness_evidence_service,
+    )
     app.state.autonomous_operations_service = AutonomousOperationsService(
         supervisor_review_service=app.state.supervisor_review_service,
         memory_steward_service=app.state.memory_steward_service,
@@ -188,6 +198,10 @@ async def lifespan(app: FastAPI):
     await app.state.memory_service.startup()
     await load_default_roles()
     await app.state.orchestration_governor_service.ensure_chief_operating_agent()
+    await app.state.executive_company_os_service.ensure_observer_agent()
+    await app.state.executive_company_os_service.ensure_default_policy()
+    await app.state.executive_company_os_service.ensure_default_objectives()
+    await app.state.executive_company_os_service.ensure_default_benchmarks()
     await app.state.workflow_template_service.ensure_core_templates()
     await app.state.workflow_template_service.ensure_core_workflows()
     app.state.autonomous_operations_task = None
@@ -392,6 +406,11 @@ def _initial_owner_attention_notification_status() -> dict:
 
 def _initial_orchestration_governor_scheduler_status() -> dict:
     enabled = settings.governor_enabled
+    mode = (
+        "executive"
+        if settings.governor_autonomy_mode == "aggressive_threshold"
+        else "standard"
+    )
     return {
         "enabled": enabled,
         "status": "idle" if enabled else "disabled",
@@ -401,6 +420,7 @@ def _initial_orchestration_governor_scheduler_status() -> dict:
             else "Chief Operating Agent governor is disabled."
         ),
         "actor": "chief_operating_agent_scheduler",
+        "mode": mode,
         "interval_seconds": max(300, settings.governor_interval_seconds),
         "max_actions": settings.governor_max_actions_per_cycle,
         "auto_apply_low_risk": settings.governor_auto_apply_low_risk,
@@ -489,11 +509,17 @@ async def _run_owner_attention_notification_once(
 async def _run_orchestration_governor_once(app: FastAPI) -> dict:
     started_at = utc_now()
     actor = "chief_operating_agent_scheduler"
+    mode = (
+        "executive"
+        if settings.governor_autonomy_mode == "aggressive_threshold"
+        else "standard"
+    )
     status = {
         "enabled": settings.governor_enabled,
         "status": "running",
         "detail": "Chief Operating Agent governor run is in progress.",
         "actor": actor,
+        "mode": mode,
         "interval_seconds": max(300, settings.governor_interval_seconds),
         "max_actions": settings.governor_max_actions_per_cycle,
         "auto_apply_low_risk": settings.governor_auto_apply_low_risk,
@@ -504,12 +530,21 @@ async def _run_orchestration_governor_once(app: FastAPI) -> dict:
     }
     app.state.orchestration_governor_scheduler_status = status
     try:
-        result = await app.state.orchestration_governor_service.run_once(
-            actor=actor,
-            dry_run=False,
-            auto_apply_low_risk=settings.governor_auto_apply_low_risk,
-            max_actions=settings.governor_max_actions_per_cycle,
-        )
+        if mode == "executive":
+            result = await app.state.executive_company_os_service.run_executive_cycle(
+                actor=actor,
+                dry_run=False,
+                auto_apply_low_risk=settings.governor_auto_apply_low_risk,
+                max_actions=settings.governor_max_actions_per_cycle,
+                observer_review=settings.observer_review_required,
+            )
+        else:
+            result = await app.state.orchestration_governor_service.run_once(
+                actor=actor,
+                dry_run=False,
+                auto_apply_low_risk=settings.governor_auto_apply_low_risk,
+                max_actions=settings.governor_max_actions_per_cycle,
+            )
         completed_at = utc_now()
         final_status = {
             **status,

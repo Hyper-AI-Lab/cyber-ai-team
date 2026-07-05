@@ -694,6 +694,145 @@ class ApiClient {
     });
   }
 
+  async getCompanyObjectives() {
+    return this.request('/api/operations/company-objectives');
+  }
+
+  async updateCompanyObjectives(objectives: any[]) {
+    return this.request('/api/operations/company-objectives', {
+      method: 'PUT',
+      body: JSON.stringify({ objectives }),
+    });
+  }
+
+  async getExecutiveBrief() {
+    return this.request('/api/operations/executive-brief');
+  }
+
+  async getOperationGraph(filters: {
+    nodeType?: string;
+    sourceType?: string;
+    riskLevel?: string;
+    limit?: number;
+  } = {}) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 100) });
+    if (filters.nodeType) {
+      params.set('node_type', filters.nodeType);
+    }
+    if (filters.sourceType) {
+      params.set('source_type', filters.sourceType);
+    }
+    if (filters.riskLevel) {
+      params.set('risk_level', filters.riskLevel);
+    }
+    return this.request(`/api/operations/operation-graph?${params.toString()}`);
+  }
+
+  async listGovernorReflections(limit: number = 50) {
+    return this.request(`/api/operations/governor/reflections?limit=${limit}`);
+  }
+
+  async listGovernorBenchmarks() {
+    return this.request('/api/operations/governor/benchmarks');
+  }
+
+  async createGovernorBenchmark(data: Record<string, any>) {
+    return this.request('/api/operations/governor/benchmarks', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listGovernorBenchmarkResults(limit: number = 100) {
+    return this.request(`/api/operations/governor/benchmark-results?limit=${limit}`);
+  }
+
+  async getAutonomyPolicy() {
+    return this.request('/api/operations/governor/autonomy-policy');
+  }
+
+  async updateAutonomyPolicy(data: Record<string, any>) {
+    return this.request('/api/operations/governor/autonomy-policy', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async instructGovernor(options: {
+    instruction: string;
+    dryRun?: boolean;
+    observerReview?: boolean;
+  }) {
+    return this.request('/api/operations/governor/instruct', {
+      method: 'POST',
+      body: JSON.stringify({
+        instruction: options.instruction,
+        dry_run: options.dryRun ?? false,
+        observer_review: options.observerReview ?? true,
+      }),
+    });
+  }
+
+  async pauseGovernor(reason: string = '') {
+    return this.request('/api/operations/governor/pause', {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async resumeGovernor(reason: string = '') {
+    return this.request('/api/operations/governor/resume', {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async listObserverReviews(limit: number = 100) {
+    return this.request(`/api/operations/observer/reviews?limit=${limit}`);
+  }
+
+  async runObserverReview(options: {
+    runId?: string;
+    ownerInstruction?: string;
+  } = {}) {
+    return this.request('/api/operations/observer/run', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...(options.runId ? { run_id: options.runId } : {}),
+        owner_instruction: options.ownerInstruction ?? '',
+      }),
+    });
+  }
+
+  async listOutsourcingRequests(filters: {
+    status?: string;
+    limit?: number;
+  } = {}) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 100) });
+    if (filters.status) {
+      params.set('status', filters.status);
+    }
+    return this.request(`/api/operations/outsourcing-requests?${params.toString()}`);
+  }
+
+  async createOutsourcingRequest(data: Record<string, any>) {
+    return this.request('/api/operations/outsourcing-requests', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async resolveOutsourcingRequest(requestId: string, data: Record<string, any>) {
+    return this.request(`/api/operations/outsourcing-requests/${requestId}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getResourcePolicy() {
+    return this.request('/api/operations/resource-policy');
+  }
+
   async getOperationsReadiness() {
     return this.request('/api/operations/readiness');
   }

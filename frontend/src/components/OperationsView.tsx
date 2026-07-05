@@ -10,11 +10,14 @@ import {
   CalendarClock,
   CheckCircle,
   Clock,
+  Eye,
   GitBranch,
+  Pause,
   Play,
   RefreshCw,
   Send,
   ShieldCheck,
+  Target,
   XCircle,
 } from 'lucide-react'
 
@@ -34,6 +37,14 @@ const statusClass: Record<string, string> = {
   running: 'bg-blue-600/20 text-blue-300',
   waiting_approval: 'bg-amber-600/20 text-amber-300',
   blocked: 'bg-red-600/20 text-red-300',
+  waiting: 'bg-slate-600/30 text-slate-300',
+  paused: 'bg-amber-600/20 text-amber-300',
+  approval_required: 'bg-amber-600/20 text-amber-300',
+  outsourcing_required: 'bg-purple-600/20 text-purple-300',
+  attention: 'bg-amber-600/20 text-amber-300',
+  agreed: 'bg-green-600/20 text-green-300',
+  disagreed: 'bg-amber-600/20 text-amber-300',
+  escalated: 'bg-red-600/20 text-red-300',
 }
 
 const riskClass: Record<string, string> = {
@@ -149,6 +160,17 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   const [governorLoading, setGovernorLoading] = useState(false)
   const [governorRunning, setGovernorRunning] = useState(false)
   const [governorResult, setGovernorResult] = useState<any | null>(null)
+  const [executiveBrief, setExecutiveBrief] = useState<any | null>(null)
+  const [operationGraph, setOperationGraph] = useState<any | null>(null)
+  const [observerReviews, setObserverReviews] = useState<any[]>([])
+  const [outsourcingRequests, setOutsourcingRequests] = useState<any[]>([])
+  const [autonomyPolicy, setAutonomyPolicy] = useState<any | null>(null)
+  const [resourcePolicy, setResourcePolicy] = useState<any | null>(null)
+  const [executiveLoading, setExecutiveLoading] = useState(false)
+  const [executiveRunning, setExecutiveRunning] = useState(false)
+  const [observerRunning, setObserverRunning] = useState(false)
+  const [executiveInstruction, setExecutiveInstruction] = useState('')
+  const [executiveResult, setExecutiveResult] = useState<any | null>(null)
   const [toolProposalAction, setToolProposalAction] = useState<string | null>(null)
   const [alertTestResult, setAlertTestResult] = useState<any | null>(null)
   const [operatingCadenceLoading, setOperatingCadenceLoading] = useState(false)
@@ -266,6 +288,31 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
     }
   }
 
+  const loadExecutive = async () => {
+    setExecutiveLoading(true)
+    setError(null)
+    try {
+      const [brief, graph, reviews, outsourcing, policy, resource] = await Promise.all([
+        api.getExecutiveBrief(),
+        api.getOperationGraph({ limit: 50 }),
+        api.listObserverReviews(25),
+        api.listOutsourcingRequests({ status: 'open', limit: 25 }),
+        api.getAutonomyPolicy(),
+        api.getResourcePolicy(),
+      ])
+      setExecutiveBrief(brief)
+      setOperationGraph(graph)
+      setObserverReviews(reviews.items || [])
+      setOutsourcingRequests(outsourcing.items || [])
+      setAutonomyPolicy(policy)
+      setResourcePolicy(resource)
+    } catch (e: any) {
+      setError(e.message || 'Failed to load Executive Cockpit')
+    } finally {
+      setExecutiveLoading(false)
+    }
+  }
+
   const runGovernor = async (dryRun = false) => {
     setGovernorRunning(true)
     setError(null)
@@ -282,11 +329,102 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
         loadOwnerAttention(),
         loadPlans(),
         loadTimeline(),
+        loadExecutive(),
       ])
     } catch (e: any) {
       setError(e.message || 'Chief Operating Agent run failed')
     } finally {
       setGovernorRunning(false)
+    }
+  }
+
+  const runExecutiveGovernor = async (dryRun = false) => {
+    setExecutiveRunning(true)
+    setError(null)
+    try {
+      const result = await api.runGovernor({
+        mode: 'executive',
+        dry_run: dryRun,
+        max_actions: 10,
+        auto_apply_low_risk: true,
+        observer_review: true,
+        force_reflection: true,
+        force_benchmark_refresh: true,
+      })
+      setExecutiveResult(result)
+      await Promise.all([
+        loadGovernor(),
+        loadReadiness(),
+        loadOwnerAttention(),
+        loadPlans(),
+        loadTimeline(),
+        loadExecutive(),
+      ])
+    } catch (e: any) {
+      setError(e.message || 'Executive governor run failed')
+    } finally {
+      setExecutiveRunning(false)
+    }
+  }
+
+  const instructExecutiveGovernor = async () => {
+    const instruction = executiveInstruction.trim()
+    if (!instruction) return
+    setExecutiveRunning(true)
+    setError(null)
+    try {
+      const result = await api.instructGovernor({
+        instruction,
+        dryRun: false,
+        observerReview: true,
+      })
+      setExecutiveResult(result)
+      setExecutiveInstruction('')
+      await Promise.all([
+        loadGovernor(),
+        loadReadiness(),
+        loadOwnerAttention(),
+        loadPlans(),
+        loadTimeline(),
+        loadExecutive(),
+      ])
+    } catch (e: any) {
+      setError(e.message || 'Governor instruction failed')
+    } finally {
+      setExecutiveRunning(false)
+    }
+  }
+
+  const toggleExecutivePause = async () => {
+    setExecutiveRunning(true)
+    setError(null)
+    try {
+      if (autonomyPolicy?.paused) {
+        await api.resumeGovernor('Owner resumed executive autonomy from cockpit')
+      } else {
+        await api.pauseGovernor('Owner paused executive autonomy from cockpit')
+      }
+      await Promise.all([loadExecutive(), loadReadiness()])
+    } catch (e: any) {
+      setError(e.message || 'Failed to update executive autonomy mode')
+    } finally {
+      setExecutiveRunning(false)
+    }
+  }
+
+  const runObserver = async () => {
+    setObserverRunning(true)
+    setError(null)
+    try {
+      await api.runObserverReview({
+        runId: executiveBrief?.latest_run?.run_id,
+        ownerInstruction: executiveInstruction,
+      })
+      await Promise.all([loadExecutive(), loadReadiness()])
+    } catch (e: any) {
+      setError(e.message || 'Observer review failed')
+    } finally {
+      setObserverRunning(false)
     }
   }
 
@@ -366,6 +504,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
     loadReadiness()
     loadOwnerAttention()
     loadGovernor()
+    loadExecutive()
     loadOperatingCadence()
     loadTimeline()
   }, [])
@@ -394,6 +533,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadReadiness()
       await loadOwnerAttention()
       await loadGovernor()
+      await loadExecutive()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -421,6 +561,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadReadiness()
       await loadOwnerAttention()
       await loadGovernor()
+      await loadExecutive()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -445,6 +586,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadReadiness()
       await loadOwnerAttention()
       await loadGovernor()
+      await loadExecutive()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -466,6 +608,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadReadiness()
       await loadOwnerAttention()
       await loadGovernor()
+      await loadExecutive()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -498,6 +641,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadReadiness()
       await loadOwnerAttention()
       await loadGovernor()
+      await loadExecutive()
       await loadFollowUps()
       await loadTimeline()
     } catch (e: any) {
@@ -521,6 +665,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
       await loadReadiness()
       await loadOwnerAttention()
       await loadGovernor()
+      await loadExecutive()
       await loadOperatingCadence()
       await loadFollowUps()
       await loadTimeline()
@@ -770,6 +915,64 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                 }
               />
               <ReadinessPanel
+                title="Executive Autonomy"
+                value={readiness.executive_autonomy?.status || 'unavailable'}
+                detail={
+                  readiness.executive_autonomy?.latest_run?.completed_at
+                    ? `last run ${formatDate(
+                        readiness.executive_autonomy.latest_run.completed_at,
+                      )}`
+                    : readiness.executive_autonomy?.paused
+                      ? 'paused by owner'
+                      : 'executive cycle waiting for first run'
+                }
+              />
+              <ReadinessPanel
+                title="Observer"
+                value={readiness.observer?.status || 'unavailable'}
+                detail={
+                  readiness.observer?.latest_review?.created_at
+                    ? `${readiness.observer.latest_review.status} ${formatDate(
+                        readiness.observer.latest_review.created_at,
+                      )}`
+                    : readiness.observer?.agent_present
+                      ? 'read-only Observer agent is active'
+                      : 'Observer agent not initialized'
+                }
+              />
+              <ReadinessPanel
+                title="FOSS Policy"
+                value={readiness.resource_policy?.status || 'unavailable'}
+                detail={
+                  readiness.resource_policy?.blockers?.length
+                    ? `${readiness.resource_policy.blockers.length} policy blocker(s)`
+                    : readiness.resource_policy?.detail || 'resource policy not checked'
+                }
+              />
+              <ReadinessPanel
+                title="Operation Graph"
+                value={readiness.operation_graph?.latest_node_present ? 'indexed' : 'waiting'}
+                detail={
+                  readiness.operation_graph?.indexing_enabled
+                    ? 'operation graph indexing enabled'
+                    : 'operation graph indexing disabled'
+                }
+              />
+              <ReadinessPanel
+                title="Benchmarks"
+                value={readiness.benchmark_freshness?.status || 'waiting'}
+                detail={
+                  readiness.benchmark_freshness?.latest_count
+                    ? `${readiness.benchmark_freshness.latest_count} recent results`
+                    : 'benchmark results waiting for first run'
+                }
+              />
+              <ReadinessPanel
+                title="Outsourcing"
+                value={readiness.outsourcing?.status || 'unavailable'}
+                detail={`${readiness.outsourcing?.open_count || 0} open request(s)`}
+              />
+              <ReadinessPanel
                 title="ERPNext Drift"
                 value={
                   readiness.company_context?.drift_detection?.latest_drift?.status
@@ -863,6 +1066,364 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
         ) : (
           <div className="py-8 text-center text-slate-500">
             {readinessLoading ? 'Loading readiness...' : 'Readiness data unavailable.'}
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Target className="h-5 w-5 text-emerald-300" />
+            <div>
+              <h3 className="text-lg font-semibold">Executive Cockpit</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Objectives, thresholds, benchmarks, Observer consensus, operation graph, and autonomous work.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={loadExecutive}
+              disabled={executiveLoading}
+              className="btn-secondary flex items-center gap-2 text-sm"
+            >
+              <RefreshCw className={`h-4 w-4 ${executiveLoading ? 'animate-spin' : ''}`} />
+              Refresh Cockpit
+            </button>
+            <button
+              onClick={() => runExecutiveGovernor(true)}
+              disabled={executiveRunning}
+              className="btn-secondary flex items-center gap-2 text-sm"
+            >
+              <Eye className="h-4 w-4" />
+              Executive Dry Run
+            </button>
+            <button
+              onClick={() => runExecutiveGovernor(false)}
+              disabled={executiveRunning}
+              className="btn-primary flex items-center gap-2 text-sm"
+            >
+              <Play className={`h-4 w-4 ${executiveRunning ? 'animate-pulse' : ''}`} />
+              {executiveRunning ? 'Running...' : 'Run Executive'}
+            </button>
+            <button
+              onClick={toggleExecutivePause}
+              disabled={executiveRunning || !autonomyPolicy}
+              className="btn-secondary flex items-center gap-2 text-sm"
+            >
+              {autonomyPolicy?.paused ? (
+                <Play className="h-4 w-4" />
+              ) : (
+                <Pause className="h-4 w-4" />
+              )}
+              {autonomyPolicy?.paused ? 'Resume' : 'Pause'}
+            </button>
+          </div>
+        </div>
+
+        {executiveBrief ? (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
+              <Metric
+                label="Objectives"
+                value={executiveBrief.objectives?.count || 0}
+              />
+              <Metric
+                label="KPIs"
+                value={executiveBrief.kpis?.count || 0}
+              />
+              <Metric
+                label="Benchmarks"
+                value={executiveBrief.benchmarks?.latest_results?.count || 0}
+              />
+              <Metric
+                label="Graph nodes"
+                value={operationGraph?.count || executiveBrief.operation_graph?.count || 0}
+              />
+              <Metric
+                label="Observer findings"
+                value={observerReviews[0]?.findings?.length || 0}
+              />
+              <Metric
+                label="Outsourced"
+                value={outsourcingRequests.length}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+              <ReadinessPanel
+                title="Autonomy Mode"
+                value={autonomyPolicy?.paused ? 'paused' : autonomyPolicy?.mode || 'unknown'}
+                detail={
+                  autonomyPolicy?.thresholds
+                    ? `confidence ${autonomyPolicy.thresholds.min_confidence} · $${autonomyPolicy.thresholds.financial_action_limit_usd}/action`
+                    : 'policy thresholds unavailable'
+                }
+              />
+              <ReadinessPanel
+                title="Resource Policy"
+                value={resourcePolicy?.status || 'unavailable'}
+                detail={
+                  resourcePolicy?.blockers?.length
+                    ? `${resourcePolicy.blockers.length} FOSS blocker(s)`
+                    : resourcePolicy?.detail || 'FOSS-only status unavailable'
+                }
+              />
+              <ReadinessPanel
+                title="Consensus"
+                value={executiveResult?.consensus_state?.status || executiveBrief.observer?.latest_review?.status || 'waiting'}
+                detail={
+                  executiveBrief.observer?.latest_review?.critique
+                  || 'Observer review will appear after the next executive cycle.'
+                }
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(280px,0.9fr)_1.1fr]">
+              <div className="space-y-3">
+                <h4 className="text-sm font-medium text-slate-200">Company Objectives</h4>
+                {executiveBrief.objectives?.items?.length ? (
+                  executiveBrief.objectives.items.slice(0, 5).map((objective: any) => (
+                    <div
+                      key={objective.id}
+                      className="rounded-lg border border-slate-800 bg-slate-900/30 p-3"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-medium text-white">{objective.title}</div>
+                        <span
+                          className={`rounded-full px-2 py-1 text-xs ${
+                            statusClass[objective.status] || 'bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {objective.status}
+                        </span>
+                      </div>
+                      <div className="mt-1 line-clamp-2 text-sm text-slate-400">
+                        {objective.description}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-slate-500">
+                        <span>{objective.priority}</span>
+                        {(objective.tags || []).slice(0, 3).map((tag: string) => (
+                          <span key={tag}>{tag}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4 text-sm text-slate-500">
+                    Objectives are waiting for the executive service bootstrap.
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-sm font-medium text-slate-200">Owner Instruction</h4>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={runObserver}
+                      disabled={observerRunning}
+                      className="btn-secondary flex items-center gap-2 px-3 py-1.5 text-xs"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                      {observerRunning ? 'Reviewing...' : 'Run Observer'}
+                    </button>
+                    <button
+                      onClick={instructExecutiveGovernor}
+                      disabled={executiveRunning || !executiveInstruction.trim()}
+                      className="btn-primary flex items-center gap-2 px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      Send Instruction
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  value={executiveInstruction}
+                  onChange={(event) => setExecutiveInstruction(event.target.value)}
+                  rows={4}
+                  maxLength={4000}
+                  placeholder="Give the Chief Operating Agent a company-level instruction"
+                  className="w-full resize-none rounded-lg border border-slate-700 bg-slate-950/50 px-3 py-2 text-sm text-slate-100 outline-none focus:border-blue-500"
+                />
+                {executiveResult && (
+                  <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-blue-100">
+                    Executive run {executiveResult.run_id}: {executiveResult.status};{' '}
+                    {executiveResult.counts?.executions || 0} execution record(s),{' '}
+                    {executiveResult.counts?.benchmark_failed || 0} failed benchmark(s).
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+              <div className="space-y-3">
+                <h4 className="text-sm font-medium text-slate-200">KPI Scorecard</h4>
+                {executiveBrief.kpis?.items?.length ? (
+                  executiveBrief.kpis.items.slice(0, 8).map((kpi: any) => (
+                    <div
+                      key={kpi.kpi_key}
+                      className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/30 px-3 py-2 text-sm"
+                    >
+                      <span className="text-slate-300">{kpi.kpi_key.replace(/_/g, ' ')}</span>
+                      <span className="font-medium text-white">{kpi.value}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4 text-sm text-slate-500">
+                    KPI observations appear after an executive run.
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="text-sm font-medium text-slate-200">Benchmark Health</h4>
+                {executiveBrief.benchmarks?.latest_results?.items?.length ? (
+                  executiveBrief.benchmarks.latest_results.items.slice(0, 8).map((result: any) => (
+                    <div
+                      key={result.id}
+                      className="rounded-lg border border-slate-800 bg-slate-900/30 p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-white">
+                          {result.benchmark_key.replace(/_/g, ' ')}
+                        </span>
+                        <span
+                          className={`rounded-full px-2 py-1 text-xs ${
+                            statusClass[result.status] || 'bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {result.status}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        observed {result.observed_value} · threshold {result.threshold_value}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4 text-sm text-slate-500">
+                    Benchmark results are waiting for the next executive cycle.
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="text-sm font-medium text-slate-200">Observer Reviews</h4>
+                {observerReviews.length ? (
+                  observerReviews.slice(0, 5).map((review: any) => (
+                    <div
+                      key={review.id}
+                      className="rounded-lg border border-slate-800 bg-slate-900/30 p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={`rounded-full px-2 py-1 text-xs ${
+                            statusClass[review.status] || 'bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {review.status}
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          {formatDate(review.created_at)}
+                        </span>
+                      </div>
+                      <div className="mt-2 line-clamp-3 text-sm text-slate-300">
+                        {review.critique}
+                      </div>
+                      {review.unresolved_objections?.length > 0 && (
+                        <div className="mt-2 text-xs text-red-200">
+                          {review.unresolved_objections.length} unresolved objection(s)
+                        </div>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4 text-sm text-slate-500">
+                    Observer critiques appear after the first review.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <div className="space-y-3">
+                <h4 className="text-sm font-medium text-slate-200">Operation Graph Timeline</h4>
+                {operationGraph?.nodes?.length ? (
+                  operationGraph.nodes.slice(0, 8).map((node: any) => (
+                    <div
+                      key={node.id}
+                      className="rounded-lg border border-slate-800 bg-slate-900/30 p-3"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-medium text-white">{node.title}</div>
+                          <div className="mt-1 line-clamp-2 text-sm text-slate-400">
+                            {node.summary}
+                          </div>
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-1 text-xs ${
+                            riskClass[node.risk_level] || 'bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {node.risk_level}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-slate-500">
+                        <span>{node.node_type?.replace(/_/g, ' ')}</span>
+                        <span>{node.source_type || 'source'}:{node.source_id || '-'}</span>
+                        <span>confidence {node.confidence}</span>
+                        <span>{formatDate(node.created_at)}</span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4 text-sm text-slate-500">
+                    Operation graph nodes appear after the executive cycle records its first run.
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="text-sm font-medium text-slate-200">Outsourcing Requests</h4>
+                {outsourcingRequests.length ? (
+                  outsourcingRequests.slice(0, 8).map((item: any) => (
+                    <div
+                      key={item.id}
+                      className="rounded-lg border border-slate-800 bg-slate-900/30 p-3"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-medium text-white">{item.title}</div>
+                        <span
+                          className={`rounded-full px-2 py-1 text-xs ${
+                            statusClass[item.status] || 'bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {item.status}
+                        </span>
+                      </div>
+                      <div className="mt-1 line-clamp-2 text-sm text-slate-400">
+                        {item.complexity_reason || item.expected_artifact}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-slate-500">
+                        <span>{item.source_type || 'manual'}:{item.source_id || '-'}</span>
+                        <span>{item.acceptance_tests?.length || 0} acceptance tests</span>
+                        <span>{formatDate(item.created_at)}</span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4 text-sm text-slate-500">
+                    No open outsourcing requests. Complex work will appear here instead of fake success.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="py-8 text-center text-slate-500">
+            {executiveLoading ? 'Loading Executive Cockpit...' : 'Executive Cockpit data unavailable.'}
           </div>
         )}
       </section>

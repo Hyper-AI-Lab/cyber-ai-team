@@ -179,6 +179,109 @@ describe('ApiClient', () => {
     )
   })
 
+  it('manages executive company OS routes through the authenticated API client', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementation(() => Promise.resolve(
+        jsonResponse({ ok: true, items: [], nodes: [], edges: [] }),
+      ))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.getCompanyObjectives()
+    await client.updateCompanyObjectives([{ title: 'Operate autonomously' }])
+    await client.getExecutiveBrief()
+    await client.getOperationGraph({ nodeType: 'observer_review', limit: 7 })
+    await client.listGovernorReflections(3)
+    await client.listGovernorBenchmarks()
+    await client.createGovernorBenchmark({
+      key: 'memory_freshness',
+      title: 'Memory freshness',
+      rule: { comparison: 'max', threshold: 0 },
+    })
+    await client.listGovernorBenchmarkResults(4)
+    await client.getAutonomyPolicy()
+    await client.updateAutonomyPolicy({ paused: true })
+    await client.instructGovernor({ instruction: 'Review KPI drift' })
+    await client.pauseGovernor('maintenance')
+    await client.resumeGovernor('done')
+    await client.listObserverReviews(6)
+    await client.runObserverReview({ runId: 'exegov_1' })
+    await client.listOutsourcingRequests({ status: 'open', limit: 5 })
+    await client.createOutsourcingRequest({ title: 'Build connector' })
+    await client.resolveOutsourcingRequest('out_1', { status: 'resolved' })
+    await client.getResourcePolicy()
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://api.test/api/operations/company-objectives',
+    )
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/operations/company-objectives',
+    )
+    expect(fetchMock.mock.calls[1][1]?.method).toBe('PUT')
+    expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({
+      objectives: [{ title: 'Operate autonomously' }],
+    })
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/operations/executive-brief',
+    )
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      'http://api.test/api/operations/operation-graph?limit=7&node_type=observer_review',
+    )
+    expect(fetchMock.mock.calls[4][0]).toBe(
+      'http://api.test/api/operations/governor/reflections?limit=3',
+    )
+    expect(fetchMock.mock.calls[5][0]).toBe(
+      'http://api.test/api/operations/governor/benchmarks',
+    )
+    expect(fetchMock.mock.calls[6][0]).toBe(
+      'http://api.test/api/operations/governor/benchmarks',
+    )
+    expect(fetchMock.mock.calls[6][1]?.method).toBe('POST')
+    expect(fetchMock.mock.calls[7][0]).toBe(
+      'http://api.test/api/operations/governor/benchmark-results?limit=4',
+    )
+    expect(fetchMock.mock.calls[8][0]).toBe(
+      'http://api.test/api/operations/governor/autonomy-policy',
+    )
+    expect(fetchMock.mock.calls[9][0]).toBe(
+      'http://api.test/api/operations/governor/autonomy-policy',
+    )
+    expect(fetchMock.mock.calls[9][1]?.method).toBe('PUT')
+    expect(fetchMock.mock.calls[10][0]).toBe(
+      'http://api.test/api/operations/governor/instruct',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[10][1]?.body as string)).toEqual({
+      instruction: 'Review KPI drift',
+      dry_run: false,
+      observer_review: true,
+    })
+    expect(fetchMock.mock.calls[11][0]).toBe(
+      'http://api.test/api/operations/governor/pause',
+    )
+    expect(fetchMock.mock.calls[12][0]).toBe(
+      'http://api.test/api/operations/governor/resume',
+    )
+    expect(fetchMock.mock.calls[13][0]).toBe(
+      'http://api.test/api/operations/observer/reviews?limit=6',
+    )
+    expect(fetchMock.mock.calls[14][0]).toBe(
+      'http://api.test/api/operations/observer/run',
+    )
+    expect(fetchMock.mock.calls[15][0]).toBe(
+      'http://api.test/api/operations/outsourcing-requests?limit=5&status=open',
+    )
+    expect(fetchMock.mock.calls[16][0]).toBe(
+      'http://api.test/api/operations/outsourcing-requests',
+    )
+    expect(fetchMock.mock.calls[17][0]).toBe(
+      'http://api.test/api/operations/outsourcing-requests/out_1/resolve',
+    )
+    expect(fetchMock.mock.calls[18][0]).toBe(
+      'http://api.test/api/operations/resource-policy',
+    )
+  })
+
   it('manages team activation and agent capability grants through the API client', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ status: 'active' }))
