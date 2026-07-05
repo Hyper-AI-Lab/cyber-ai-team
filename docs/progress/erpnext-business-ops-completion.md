@@ -2311,3 +2311,34 @@
   - `https://cyberteam.hyperailab.com/health`
 - Next step:
   - Commit this progress evidence, push to GitHub, and watch GitHub CI for the pushed v2 change set.
+
+### 2026-07-05T02:57:13Z — STEP-071 — Pushed Executive Company OS v2 and verified GitHub CI
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+  - GitHub `main` branch updated through commit `3017a41`.
+- Commands run:
+  - `git push origin main`
+  - `gh run list --repo Hyper-AI-Lab/cyber-team --branch main --limit 5 --json databaseId,headSha,status,conclusion,workflowName,displayTitle,createdAt,event,url`
+  - `gh run watch 28727426035 --repo Hyper-AI-Lab/cyber-team --exit-status`
+  - `gh workflow run CI --repo Hyper-AI-Lab/cyber-team --ref main`
+  - `gh run watch 28727477082 --repo Hyper-AI-Lab/cyber-team --exit-status`
+  - `gh run view 28727426035 --repo Hyper-AI-Lab/cyber-team --json databaseId,headSha,status,conclusion,event,url,createdAt,updatedAt,jobs`
+  - `gh run view 28727477082 --repo Hyper-AI-Lab/cyber-team --json databaseId,headSha,status,conclusion,event,url,createdAt,updatedAt,jobs`
+- Result:
+  - Pushed commits:
+    - `7069913 feat: add autonomous executive company os`
+    - `3017a41 docs: record executive os staging verification`
+  - Push-triggered GitHub CI run `28727426035` completed successfully for Backend, Frontend, and Compose/Secrets/Diff Hygiene. Downstream image/smoke/observability jobs were skipped by workflow design because push events only run those jobs on manual or scheduled workflows.
+  - Manual GitHub CI run `28727477082` completed successfully for all jobs:
+    - Backend
+    - Frontend
+    - Compose, Secrets, And Diff Hygiene
+    - Observability Config
+    - Docker Compose Smoke
+    - Docker Image Scan
+  - The manual run is the complete GitHub-side release gate for this v2 change set.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28727426035`
+  - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28727477082`
+- Next step:
+  - No further implementation step is pending for the Autonomous Executive Company OS v2 milestone. Keep monitoring scheduled CI and runtime readiness; future work should focus on pinning existing floating infrastructure image tags and gradually resolving open outsourcing requests.
