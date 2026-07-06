@@ -107,6 +107,14 @@ class ToolResult(BaseModel):
 class ToolRegistry:
     """Central registry for executable tools that agents can invoke."""
 
+    TOOL_ALIASES = {
+        "call_make": "make_call",
+        "crm_lead_create": "erpnext_create_lead",
+        "email_send": "send_email",
+        "message_send": "send_message",
+        "sms_send": "send_sms",
+    }
+
     def __init__(self):
         self._tools: dict[str, ToolDefinition] = {}
         self._executors: dict[str, Callable] = {}
@@ -565,9 +573,10 @@ class ToolRegistry:
         tool: ToolDefinition,
         params: dict[str, Any],
     ) -> dict[str, Any] | None:
-        if tool.name in {"send_email", "send_sms", "make_call", "send_message"}:
-            return self._communications_readiness(tool, params)
-        if tool.name == "ci_trigger":
+        canonical_name = self._canonical_tool_name(tool.name)
+        if canonical_name in {"send_email", "send_sms", "make_call", "send_message"}:
+            return self._communications_readiness(tool, params, canonical_name)
+        if canonical_name == "ci_trigger":
             if settings.github_ci_configured:
                 return {
                     "state": "live",
@@ -603,6 +612,7 @@ class ToolRegistry:
         self,
         tool: ToolDefinition,
         params: dict[str, Any],
+        canonical_name: str,
     ) -> dict[str, Any]:
         if not self._comms_gateway:
             return {
@@ -623,11 +633,17 @@ class ToolRegistry:
             "send_sms": "sms",
             "make_call": "voice",
             "send_message": params.get("platform"),
-        }.get(tool.name)
-        candidates = [
-            item for item in statuses
-            if not channel or item.get("channel") == channel
-        ]
+        }.get(canonical_name)
+        if canonical_name == "send_message" and not channel:
+            messaging_channels = {"telegram", "whatsapp", "slack"}
+            candidates = [
+                item for item in statuses if item.get("channel") in messaging_channels
+            ]
+        else:
+            candidates = [
+                item for item in statuses
+                if not channel or item.get("channel") == channel
+            ]
         if any(item.get("mode") == "live" for item in candidates):
             return {
                 "state": "live",
@@ -650,6 +666,39 @@ class ToolRegistry:
             "readiness_reason": f"No configured {channel or 'communications'} provider.",
             "requires_configuration": True,
         }
+
+    def _canonical_tool_name(self, tool_name: str) -> str:
+        return self.TOOL_ALIASES.get(tool_name, tool_name)
+
+    def _register_tool_alias(self, alias: str, target_name: str) -> None:
+        target = self._tools[target_name]
+        target_executor = self._executors[target_name]
+        alias_tool = target.model_copy(
+            deep=True,
+            update={
+                "name": alias,
+                "description": f"Alias for {target_name}: {target.description}",
+                "readiness_reason": f"Delegates to canonical tool {target_name}.",
+            },
+        )
+
+        async def alias_executor(**params):
+            return await target_executor(**params)
+
+        self.register(alias_tool, alias_executor)
+
+    def _register_tool_aliases(self) -> None:
+        for alias, target_name in self.TOOL_ALIASES.items():
+            if alias in self._tools:
+                continue
+            if target_name not in self._tools:
+                logger.warning(
+                    "Skipping tool alias %s because canonical tool %s is unavailable",
+                    alias,
+                    target_name,
+                )
+                continue
+            self._register_tool_alias(alias, target_name)
 
     def _approval_required_for(self, tool: ToolDefinition) -> bool:
         if tool.requires_approval:
@@ -1097,6 +1146,8 @@ class ToolRegistry:
             ),
             self._tool_erpnext_create_lead,
         )
+
+        self._register_tool_aliases()
 
         self.register(
             ToolDefinition(

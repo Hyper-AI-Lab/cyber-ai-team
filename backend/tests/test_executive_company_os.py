@@ -264,6 +264,54 @@ async def test_missing_tool_capability_creates_outsourcing_request_not_fake_succ
 
 
 @pytest.mark.asyncio
+async def test_configuration_required_tool_records_owner_action_not_outsourcing(
+    executive_session_factory,
+):
+    snapshot = {
+        "memory": {"open_findings": 0},
+        "role_backlog": {"active": 1},
+        "role_gap_samples": [
+            {
+                "gap_id": "gap_sms",
+                "title": "Need SMS operator",
+                "capability": "communications",
+                "missing_tools": [],
+                "configuration_required_tools": [
+                    {
+                        "name": "sms_send",
+                        "state": "configuration_required",
+                        "readiness_reason": "No configured sms provider.",
+                    }
+                ],
+            }
+        ],
+        "workflows": {"recent_failed": 0},
+        "tools": {"side_effects_not_live": []},
+    }
+    service = build_service(snapshot=snapshot)
+
+    result = await service.run_executive_cycle(
+        actor="owner@example.com",
+        dry_run=False,
+        auto_apply_low_risk=True,
+        max_actions=10,
+    )
+
+    assert any(
+        item["status"] == "owner_action_required"
+        and item["action_type"] == "request_provider_configuration"
+        for item in result["autonomous_executions"]
+    )
+    assert not any(
+        item["status"] == "outsourcing_required"
+        for item in result["autonomous_executions"]
+    )
+    async with executive_session_factory() as session:
+        requests = (await session.execute(select(OutsourcingRequest))).scalars().all()
+    assert requests == []
+
+
+@pytest.mark.asyncio
 async def test_outsourcing_deduplicate_preserves_canonical_open_request(
     executive_session_factory,
 ):

@@ -6,6 +6,18 @@ import pytest
 from cyber_team.tools.registry import ToolRegistry
 
 
+class FakeCommsGateway:
+    def __init__(self):
+        self.sent_email = []
+
+    def integration_status(self):
+        return [{"channel": "email", "mode": "live"}]
+
+    async def send_email(self, data):
+        self.sent_email.append(data)
+        return {"status": "sent", "recipient": data.to_address}
+
+
 @pytest.mark.asyncio
 async def test_contract_draft_success():
     registry = ToolRegistry()
@@ -267,6 +279,119 @@ async def test_approved_lead_create_uses_standard_erpnext_write_result(monkeypat
     assert result.output["action"] == "created"
     assert result.output["record_id"] == "CRM-LEAD-0001"
     erpnext.create_lead.assert_awaited_once_with({"lead_name": "Smoke Lead"})
+
+
+@pytest.mark.asyncio
+async def test_alias_email_tool_delegates_with_alias_approval_target():
+    registry = ToolRegistry()
+    manager = AsyncMock()
+    manager.approval_is_executable.return_value = True
+    manager.consume_approval = AsyncMock()
+    comms = FakeCommsGateway()
+    registry.set_services(agent_manager=manager, comms=comms)
+
+    readiness = registry.get_tool_readiness("email_send")
+    assert readiness["state"] == "live"
+
+    result = await registry.execute(
+        "email_send",
+        {
+            "to_address": "customer@example.com",
+            "subject": "Hello",
+            "body": "<p>Welcome</p>",
+            "_approval_id": "approval-1",
+        },
+    )
+
+    assert result.success is True
+    assert result.output == {"status": "sent", "recipient": "customer@example.com"}
+    assert comms.sent_email[0].subject == "Hello"
+    manager.approval_is_executable.assert_awaited_once_with(
+        "approval-1",
+        target_type="tool",
+        target_id="email_send",
+    )
+    manager.consume_approval.assert_awaited_once_with(
+        "approval-1",
+        consumer="tool:email_send",
+        target_type="tool",
+        target_id="email_send",
+    )
+
+
+@pytest.mark.asyncio
+async def test_alias_crm_lead_create_delegates_to_erpnext(monkeypatch):
+    monkeypatch.setattr(
+        "cyber_team.tools.registry.settings.require_live_tool_executors",
+        True,
+    )
+    monkeypatch.setattr("cyber_team.tools.registry.settings.erpnext_api_key", "key")
+    monkeypatch.setattr("cyber_team.tools.registry.settings.erpnext_api_secret", "secret")
+    registry = ToolRegistry()
+    manager = AsyncMock()
+    manager.approval_is_executable.return_value = True
+    manager.consume_approval = AsyncMock()
+    erpnext = AsyncMock()
+    erpnext.create_lead.return_value = {
+        "name": "CRM-LEAD-0002",
+        "lead_name": "Alias Lead",
+    }
+    registry.set_services(agent_manager=manager, erpnext=erpnext)
+
+    readiness = registry.get_tool_readiness("crm_lead_create")
+    assert readiness["state"] == "live"
+
+    result = await registry.execute(
+        "crm_lead_create",
+        {
+            "lead_data": {"lead_name": "Alias Lead"},
+            "_approval_id": "approval-2",
+        },
+    )
+
+    assert result.success is True
+    assert result.output["doctype"] == "Lead"
+    assert result.output["record_id"] == "CRM-LEAD-0002"
+    erpnext.create_lead.assert_awaited_once_with({"lead_name": "Alias Lead"})
+    manager.approval_is_executable.assert_awaited_once_with(
+        "approval-2",
+        target_type="tool",
+        target_id="crm_lead_create",
+    )
+    manager.consume_approval.assert_awaited_once_with(
+        "approval-2",
+        consumer="tool:crm_lead_create",
+        target_type="tool",
+        target_id="crm_lead_create",
+    )
+
+
+def test_requested_business_tool_aliases_are_registered():
+    registry = ToolRegistry()
+
+    expected = {
+        "call_make": "communications",
+        "crm_lead_create": "erpnext",
+        "email_send": "communications",
+        "message_send": "communications",
+        "sms_send": "communications",
+    }
+    for alias, category in expected.items():
+        tool = registry.get_tool(alias)
+        assert tool is not None
+        assert tool.category == category
+        assert tool.side_effects is True
+        assert tool.requires_approval is True
+
+
+def test_message_alias_readiness_ignores_email_provider():
+    registry = ToolRegistry()
+    registry.set_services(comms=FakeCommsGateway())
+
+    readiness = registry.get_tool_readiness("message_send")
+
+    assert readiness["state"] == "configuration_required"
+    assert "communications provider" in readiness["readiness_reason"]
 
 
 @pytest.mark.asyncio

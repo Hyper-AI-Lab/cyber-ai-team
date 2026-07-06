@@ -1365,12 +1365,7 @@ class ExecutiveCompanyOSService:
                 )
             )
         for gap in governor.get("role_gap_samples") or []:
-            missing_tools = (gap.get("missing_tools") or []) + [
-                item.get("name")
-                for item in gap.get("configuration_required_tools") or []
-                if isinstance(item, dict)
-            ]
-            for tool_name in missing_tools:
+            for tool_name in gap.get("missing_tools") or []:
                 if tool_name:
                     actions.append(
                         self._action_spec(
@@ -1394,6 +1389,35 @@ class ExecutiveCompanyOSService:
                                     "Missing or unready executor requires external "
                                     "code/tool work under FOSS and security constraints."
                                 ),
+                            },
+                        )
+                    )
+            for readiness in gap.get("configuration_required_tools") or []:
+                if not isinstance(readiness, dict):
+                    continue
+                tool_name = readiness.get("name")
+                if tool_name:
+                    actions.append(
+                        self._action_spec(
+                            action_type="request_provider_configuration",
+                            title=f"Configure provider or credentials for {tool_name}",
+                            summary=(
+                                readiness.get("readiness_reason")
+                                or "The requested capability has a registered executor "
+                                "but needs provider credentials or configuration."
+                            ),
+                            risk_level="low",
+                            confidence=0.9,
+                            impact={"financial_usd": 0, "recipients": 0},
+                            source_type="role_gap",
+                            source_id=gap.get("gap_id"),
+                            target_type="tool",
+                            target_id=tool_name,
+                            payload={
+                                "tool_name": tool_name,
+                                "role_gap": gap,
+                                "readiness": readiness,
+                                "required_configuration": True,
                             },
                         )
                     )
@@ -1483,6 +1507,19 @@ class ExecutiveCompanyOSService:
                 )
                 status = "outsourcing_required"
                 result["outsourcing_request_id"] = request["id"]
+        elif action["action_type"] == "request_provider_configuration":
+            status = "planned" if dry_run else "owner_action_required"
+            result.update(
+                {
+                    "action": "provider_configuration_required",
+                    "tool_name": action.get("target_id"),
+                    "readiness": (action.get("payload") or {}).get("readiness") or {},
+                    "owner_next_step": (
+                        "Configure the required provider credentials or explicitly "
+                        "defer this optional capability."
+                    ),
+                }
+            )
         elif action["risk_level"] == "low" and auto_apply_low_risk:
             status = "completed" if not dry_run else "planned"
             completed_at = utc_now() if not dry_run else None
