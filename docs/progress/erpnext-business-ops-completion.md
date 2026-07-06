@@ -2429,3 +2429,55 @@
   - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28732158934`
 - Next step:
   - No additional hardening implementation is pending for the requested image-pin/resource-policy/outsourcing-dedupe pass. The remaining 8 open outsourcing requests are unique capability requests and should be handled as future implementation decisions, not duplicate backlog noise.
+
+### 2026-07-06T02:50:00Z — STEP-074 — Resolved business-tool alias backlog and provider-configuration misclassification
+- Files/services changed:
+  - `backend/src/cyber_team/tools/registry.py`
+  - `backend/src/cyber_team/operations/executive.py`
+  - `backend/tests/test_tools.py`
+  - `backend/tests/test_executive_company_os.py`
+  - Staging API/UI/worker services promoted to release `acabad0`.
+- Commands run:
+  - Live staging outsourcing inspection for the eight previously open requests.
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/tools/registry.py backend/src/cyber_team/operations/executive.py backend/tests/test_tools.py backend/tests/test_executive_company_os.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_tools.py backend/tests/test_executive_company_os.py -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src backend/tests backend/alembic`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m compileall -q backend/src backend/tests backend/alembic`
+  - `RELEASE_VERSION=acabad0 ... RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=acabad0 ./scripts/promote-staging.sh`
+  - Live staging checks for `/health`, `/ready`, `/api/tools`, `/api/operations/readiness`, `/api/operations/outsourcing-requests`, and a dry-run executive governor cycle.
+- Result:
+  - Registered first-class tool aliases for previously requested business capabilities:
+    - `email_send` delegates to `send_email` while preserving the `email_send` approval target.
+    - `crm_lead_create` delegates to `erpnext_create_lead` while preserving the `crm_lead_create` approval target.
+    - `sms_send`, `call_make`, and `message_send` are explicit aliases for the configured communications executors.
+  - Fixed generic messaging readiness so live email no longer makes `message_send` appear live; generic messaging now requires a real Slack, Telegram, or WhatsApp provider.
+  - Executive governor decisions now classify configured-but-not-live tools as `request_provider_configuration` / owner action required instead of creating code-outsourcing requests.
+  - Focused tests passed: `25 passed`, plus the added message-readiness regression `17 passed`.
+  - Full backend verification passed: `187 passed`.
+  - Release gate for `acabad0` passed:
+    - Backend lint/tests/compile/Alembic offline SQL/dependency audit.
+    - Frontend tests/typecheck/build/dependency audit.
+    - Compose config, secret scan, FOSS/resource scan, migration rehearsal, Docker Compose smoke.
+    - Trivy scans for `cyber-team-core:acabad0` and `cyber-team-ui:acabad0` reported 0 vulnerabilities.
+  - Staging promotion for `acabad0` passed, including owner login/dashboard smoke and approval-gated email-tool smoke.
+  - Final live staging verification:
+    - `/health`: `ok`, version `acabad0`, build SHA `acabad03f2bea57ce09775a2083acf1159351079`.
+    - `/ready`: `ready`.
+    - Tool readiness:
+      - `email_send`: `live`.
+      - `crm_lead_create`: `live`.
+      - `message_send`: `configuration_required`.
+      - `sms_send`: `configuration_required`.
+      - `call_make`: `configuration_required`.
+      - `ci_trigger`: `configuration_required`.
+    - Open outsourcing requests: `0`.
+    - Dry-run executive governor cycle: `10` planned actions, `0` errors, with `6` provider-configuration actions and `2` true outsourcing-required actions.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/acabad0.json`
+  - `/home/projects/cyber-team/dist/promotions/staging/acabad0-20260706-024826.json`
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-acabad0-20260706-024740.dump`
+  - `https://cyberteam.hyperailab.com/health`
+- Next step:
+  - Commit this progress evidence, push the implementation and evidence commits to GitHub, and watch GitHub CI.
