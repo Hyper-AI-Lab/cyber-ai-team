@@ -2481,3 +2481,28 @@
   - `https://cyberteam.hyperailab.com/health`
 - Next step:
   - Commit this progress evidence, push the implementation and evidence commits to GitHub, and watch GitHub CI.
+
+### 2026-07-06T02:54:16Z — STEP-075 — Pushed business-tool alias fix and verified GitHub CI
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+  - GitHub `main` branch updated through commit `a931548`.
+- Commands run:
+  - `git push origin main`
+  - `gh workflow run CI --repo Hyper-AI-Lab/cyber-team --ref main`
+  - `gh run watch 28764597502 --repo Hyper-AI-Lab/cyber-team --exit-status`
+  - `gh run view 28764597502 --repo Hyper-AI-Lab/cyber-team --json databaseId,headSha,status,conclusion,event,url,createdAt,updatedAt,jobs`
+- Result:
+  - Pushed commits:
+    - `acabad0 feat: resolve business tool alias backlog`
+    - `a931548 docs: record business tool alias verification [skip ci]`
+  - Manual GitHub CI run `28764597502` completed successfully for all jobs:
+    - Backend
+    - Frontend
+    - Compose, Secrets, And Diff Hygiene
+    - Observability Config
+    - Docker Compose Smoke
+    - Docker Image Scan
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28764597502`
+- Next step:
+  - No additional implementation is pending for the business-tool alias/provider-configuration backlog pass. Remaining configuration-required capabilities are provider credential decisions, not missing tool-code placeholders.
