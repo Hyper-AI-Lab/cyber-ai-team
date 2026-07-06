@@ -90,6 +90,16 @@ def latest_run(
     )
 
 
+def branch_head(repository: str, token: str, branch: str) -> str | None:
+    payload = github_get(
+        f"/repos/{repository}/branches/{urllib.parse.quote(branch, safe='')}",
+        token,
+    )
+    commit = payload.get("commit") or {}
+    sha = commit.get("sha")
+    return str(sha) if sha else None
+
+
 def write_evidence(payload: dict) -> Path:
     evidence_dir = Path(os.environ.get("CI_EVIDENCE_DIR", ROOT / "dist/ci"))
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -125,6 +135,7 @@ def main() -> int:
         print(f"GitHub CI evidence recorded: {path}")
         return 1 if os.environ.get("CI_EVIDENCE_REQUIRE_READY") == "1" else 0
     try:
+        current_head = branch_head(repository, token, branch)
         push, push_failures = latest_run(repository, token, "push", branch)
         schedule, schedule_failures = latest_run(repository, token, "schedule", branch)
         manual, manual_failures = latest_run(repository, token, "workflow_dispatch", branch)
@@ -139,8 +150,9 @@ def main() -> int:
         print(f"GitHub CI evidence recorded: {path}")
         return 1
 
-    push_success = bool(push and push.get("conclusion") == "success")
-    current_head = push.get("head_sha") if push else None
+    current_head = current_head or (push.get("head_sha") if push else None)
+    push_current = bool(push and push.get("head_sha") == current_head)
+    push_success = bool(push_current and push.get("conclusion") == "success")
     schedule_current = bool(schedule and schedule.get("head_sha") == current_head)
     schedule_success = bool(schedule_current and schedule.get("conclusion") == "success")
     manual_success = bool(
@@ -148,27 +160,45 @@ def main() -> int:
         and manual.get("head_sha") == current_head
         and manual.get("conclusion") == "success"
     )
-    schedule_pending_current_head = bool(push_success and manual_success and not schedule_success)
-    ready = push_success and (schedule_success or manual_success)
-    failing_jobs = (
-        [*push_failures, *manual_failures]
-        if schedule_pending_current_head
-        else [*push_failures, *schedule_failures, *manual_failures]
+    schedule_pending_current_head = bool(
+        (push_success or manual_success) and not schedule_success
     )
-    detail = "Latest push and scheduled CI runs are successful."
-    if schedule_pending_current_head:
+    ready = manual_success or (push_success and schedule_success)
+    failing_jobs = (
+        [
+            *(push_failures if push_current else []),
+            *manual_failures,
+        ]
+        if schedule_pending_current_head
+        else [
+            *(push_failures if push_current else []),
+            *(schedule_failures if schedule_current else []),
+            *manual_failures,
+        ]
+    )
+    detail = "Latest manual full CI run is successful for the current branch head."
+    if push_success and schedule_success:
+        detail = "Latest push and scheduled CI runs are successful for the current head."
+    elif push_success and manual_success and schedule_pending_current_head:
         detail = (
             "Latest push and manual full CI runs are successful; the next scheduled "
             "run for this head is pending GitHub's cron."
+        )
+    elif manual_success and not push_success:
+        detail = (
+            "Latest manual full CI run is successful for the current branch head; "
+            "the latest push run is older, skipped, or still pending."
         )
     elif not ready:
         detail = "Latest push or scheduled/manual CI run is missing or unsuccessful."
     payload.update(
         {
             "status": "ready" if ready else "degraded",
+            "current_head": current_head,
             "push": push,
             "schedule": schedule,
             "manual": manual,
+            "push_current_head": push_current,
             "schedule_current_head": schedule_current,
             "schedule_pending_current_head": schedule_pending_current_head,
             "failing_jobs": failing_jobs,

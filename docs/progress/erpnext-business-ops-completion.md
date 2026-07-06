@@ -2506,3 +2506,48 @@
   - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28764597502`
 - Next step:
   - No additional implementation is pending for the business-tool alias/provider-configuration backlog pass. Remaining configuration-required capabilities are provider credential decisions, not missing tool-code placeholders.
+
+### 2026-07-06T03:28:06Z — STEP-076 — Enabled approval-gated GitHub CI triggering in staging
+- Files/services changed:
+  - `deploy/environments/staging.env` was updated locally only, in the ignored staging environment file, to configure GitHub workflow dispatch credentials.
+  - `backend/src/cyber_team/operations/readiness.py`
+  - `backend/tests/test_readiness_evidence.py`
+  - `scripts/github-ci-evidence.py`
+  - Staging API/worker services were restarted through release `acabad0` to pick up the new ignored environment.
+- Commands run:
+  - `gh auth status`
+  - Local ignored env update for `GITHUB_TOKEN`, preserving `GITHUB_REPOSITORY`, `GITHUB_DEFAULT_WORKFLOW`, and `GITHUB_DEFAULT_REF`.
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=acabad0 ./scripts/promote-staging.sh`
+  - Live staging checks for `/health`, `/ready`, `/api/tools`, and `/api/operations/readiness`.
+  - Approval-gated live tool smoke:
+    - `POST /api/tools/execute` for `ci_trigger` without approval.
+    - `POST /api/dashboard/approval/{approval_id}/approve`.
+    - `POST /api/tools/execute` for `ci_trigger` with the exact approval id.
+  - `gh run watch 28765594888 --repo Hyper-AI-Lab/cyber-team --exit-status`
+  - `CYBERTEAM_ENV_FILE=deploy/environments/staging.env python3 scripts/github-ci-evidence.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/operations/readiness.py backend/tests/test_readiness_evidence.py scripts/github-ci-evidence.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_readiness_evidence.py -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m compileall -q backend/src backend/tests backend/alembic`
+  - `python3 -m py_compile scripts/github-ci-evidence.py`
+  - `git diff --check`
+- Result:
+  - `ci_trigger` now reports `live` in staging with `requires_approval=true` and `requires_configuration=false`.
+  - The live tool execution path correctly blocked without approval, created approval `cc084cf8-61a0-4c6f-a888-c6cb866626b6`, accepted owner approval, replayed with the exact approval target, and triggered GitHub Actions workflow `ci.yml` on `main`.
+  - GitHub Actions run `28765594888` completed successfully for:
+    - Backend
+    - Frontend
+    - Compose, Secrets, And Diff Hygiene
+    - Observability Config
+    - Docker Compose Smoke
+    - Docker Image Scan
+  - CI evidence generation and readiness were hardened for skipped-push documentation commits by recording the GitHub branch head and accepting a successful manual full-CI run on that current head.
+  - Focused readiness tests passed: `5 passed`.
+  - Full backend verification passed: `188 passed`.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-team/actions/runs/28765594888`
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-acabad0-20260706-031854.dump`
+  - `/home/projects/cyber-team/dist/promotions/staging/acabad0-20260706-031931.json`
+  - `/home/projects/cyber-team/dist/ci/github-ci-20260706T032423Z.json`
+- Next step:
+  - Commit the readiness hardening, build/promote the new release, refresh CI evidence from the current branch head, and push/watch GitHub CI for the final code state.

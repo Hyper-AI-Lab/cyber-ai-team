@@ -131,23 +131,40 @@ class ProductionReadinessEvidenceService:
         scheduled = payload.get("schedule") if payload else None
         manual = payload.get("manual") if payload else None
         schedule_pending = bool(payload.get("schedule_pending_current_head")) if payload else False
+        current_head = payload.get("current_head") if payload else None
         if push and scheduled:
-            push_success = push.get("conclusion") == "success"
+            current_head = current_head or push.get("head_sha")
+            push_current = push.get("head_sha") == current_head
+            schedule_current = scheduled.get("head_sha") == current_head
+            manual_current = bool(manual and manual.get("head_sha") == current_head)
+            push_success = push_current and push.get("conclusion") == "success"
             schedule_success = (
-                scheduled.get("head_sha") == push.get("head_sha")
-                and scheduled.get("conclusion") == "success"
+                schedule_current and scheduled.get("conclusion") == "success"
             )
             manual_success = bool(
                 manual
-                and manual.get("head_sha") == push.get("head_sha")
+                and manual_current
                 and manual.get("conclusion") == "success"
             )
             status = (
                 "ready"
-                if push_success and (schedule_success or manual_success)
+                if manual_success or (push_success and schedule_success)
                 else "degraded"
             )
         blocking = self._proof_required() and status != "ready"
+        detail = "GitHub CI evidence has not been recorded or is not successful."
+        if status == "ready":
+            if payload and payload.get("detail") and not payload.get("push_current_head", True):
+                detail = payload["detail"]
+            elif schedule_pending:
+                detail = (
+                    "Latest push and manual full CI evidence is successful; "
+                    "scheduled proof is pending the next GitHub cron."
+                )
+            elif payload and payload.get("detail"):
+                detail = payload["detail"]
+            else:
+                detail = "Latest push and scheduled CI evidence is successful."
         return {
             "status": status,
             "blocking": blocking,
@@ -156,20 +173,13 @@ class ProductionReadinessEvidenceService:
             "push": push,
             "schedule": scheduled,
             "manual": manual,
+            "current_head": current_head,
+            "push_current_head": payload.get("push_current_head") if payload else None,
             "schedule_current_head": payload.get("schedule_current_head") if payload else None,
             "schedule_pending_current_head": schedule_pending,
             "failing_jobs": payload.get("failing_jobs", []) if payload else [],
             "evidence_path": latest.get("_path") if latest else None,
-            "detail": (
-                (
-                    "Latest push and manual full CI evidence is successful; "
-                    "scheduled proof is pending the next GitHub cron."
-                )
-                if status == "ready" and schedule_pending
-                else "Latest push and scheduled CI evidence is successful."
-                if status == "ready"
-                else "GitHub CI evidence has not been recorded or is not successful."
-            ),
+            "detail": detail,
         }
 
     def _alert_status(self, evidence: list[dict[str, Any]]) -> dict[str, Any]:

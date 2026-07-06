@@ -155,6 +155,65 @@ async def test_readiness_ci_allows_manual_full_ci_while_schedule_pending(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_readiness_ci_accepts_current_manual_when_push_was_skipped(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "dist/ci/github-ci-latest.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "status": "ready",
+                "checked_at": datetime.now(UTC).isoformat(),
+                "repository": "Hyper-AI-Lab/cyber-team",
+                "branch": "main",
+                "current_head": "current",
+                "push": {
+                    "head_sha": "previous",
+                    "conclusion": "success",
+                    "html_url": "https://example.test/push",
+                },
+                "manual": {
+                    "head_sha": "current",
+                    "conclusion": "success",
+                    "html_url": "https://example.test/manual",
+                },
+                "schedule": {
+                    "head_sha": "previous",
+                    "conclusion": "success",
+                    "html_url": "https://example.test/schedule",
+                },
+                "push_current_head": False,
+                "schedule_current_head": False,
+                "schedule_pending_current_head": True,
+                "failing_jobs": [],
+                "detail": (
+                    "Latest manual full CI run is successful for the current branch head; "
+                    "the latest push run is older, skipped, or still pending."
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "cyber_team.operations.readiness.settings.environment",
+        "staging",
+    )
+
+    summary = await ProductionReadinessEvidenceService(
+        audit_service=FakeAudit(),
+        root_dir=tmp_path,
+    ).summary()
+
+    assert summary["ci"]["status"] == "ready"
+    assert summary["ci"]["blocking"] is False
+    assert summary["ci"]["current_head"] == "current"
+    assert summary["ci"]["push_current_head"] is False
+    assert "manual full CI run is successful" in summary["ci"]["detail"]
+
+
+@pytest.mark.asyncio
 async def test_alert_and_credential_evidence_do_not_store_secret_values():
     audit = FakeAudit()
     service = ProductionReadinessEvidenceService(audit_service=audit)
