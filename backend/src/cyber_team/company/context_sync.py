@@ -520,8 +520,10 @@ class CompanyContextSyncService:
                 "latest_run_status": (latest_run or {}).get("status"),
                 "detail": "No successful ERPNext company-context sync has been recorded.",
             }
-        last_sync_at = snapshot["created_at"]
-        age_seconds = max(0.0, (utc_now() - self._parse_iso(last_sync_at)).total_seconds())
+        snapshot_created_at = snapshot["created_at"]
+        last_verified_at = self._last_verified_at(snapshot, latest_run)
+        freshness_at = last_verified_at or snapshot_created_at
+        age_seconds = max(0.0, (utc_now() - self._parse_iso(freshness_at)).total_seconds())
         stale = age_seconds > SNAPSHOT_STALE_AFTER.total_seconds()
         status = "stale" if stale else "ready"
         return {
@@ -531,7 +533,10 @@ class CompanyContextSyncService:
             "stale": stale,
             "stale_after_hours": int(SNAPSHOT_STALE_AFTER.total_seconds() / 3600),
             "age_seconds": round(age_seconds, 2),
-            "last_sync_at": last_sync_at,
+            "last_sync_at": freshness_at,
+            "snapshot_created_at": snapshot_created_at,
+            "last_verified_at": last_verified_at,
+            "freshness_basis": "sync_verification" if last_verified_at else "snapshot",
             "source_hash": snapshot["source_hash"],
             "company_namespace": snapshot["company_namespace"],
             "latest_run_status": (latest_run or {}).get("status"),
@@ -539,9 +544,35 @@ class CompanyContextSyncService:
             "detail": (
                 "ERPNext company context is fresh."
                 if not stale
-                else "ERPNext company context is older than the freshness policy."
+                else "ERPNext company context has not been verified within the freshness policy."
             ),
         }
+
+    def _last_verified_at(
+        self,
+        snapshot: dict[str, Any],
+        latest_run: dict[str, Any] | None,
+    ) -> str | None:
+        if not latest_run or latest_run.get("dry_run"):
+            return None
+        if latest_run.get("status") not in {"synced", "noop"}:
+            return None
+        if not self._sync_run_matches_snapshot(snapshot, latest_run):
+            return None
+        return latest_run.get("completed_at") or latest_run.get("started_at")
+
+    @staticmethod
+    def _sync_run_matches_snapshot(
+        snapshot: dict[str, Any],
+        latest_run: dict[str, Any],
+    ) -> bool:
+        snapshot_id = snapshot.get("id")
+        run_snapshot_id = latest_run.get("snapshot_id")
+        if snapshot_id and run_snapshot_id and snapshot_id == run_snapshot_id:
+            return True
+        snapshot_hash = snapshot.get("source_hash")
+        run_hash = latest_run.get("source_hash")
+        return bool(snapshot_hash and run_hash and snapshot_hash == run_hash)
 
     async def assess_snapshot(self, snapshot_id: str) -> dict[str, Any]:
         snapshot = await self.get_snapshot(snapshot_id)

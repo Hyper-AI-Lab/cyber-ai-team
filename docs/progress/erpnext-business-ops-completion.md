@@ -2551,3 +2551,38 @@
   - `/home/projects/cyber-team/dist/ci/github-ci-20260706T032423Z.json`
 - Next step:
   - Commit the readiness hardening, build/promote the new release, refresh CI evidence from the current branch head, and push/watch GitHub CI for the final code state.
+
+### 2026-07-07T01:43:53Z — STEP-077 — Fixed company-context freshness after no-op ERPNext verification
+- Files/services changed:
+  - `backend/src/cyber_team/company/context_sync.py`
+  - `backend/tests/test_company_context_sync.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - Live staging readiness cleanup script using ignored `deploy/environments/staging.env` owner credentials.
+  - `POST /api/operations/company-context/sync`
+  - `POST /api/operations/security/credential-rotation/evidence`
+  - `GET /api/operations/readiness`
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/company/context_sync.py backend/tests/test_company_context_sync.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_company_context_sync.py -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m compileall -q backend/src/cyber_team/company backend/tests/test_company_context_sync.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_api_operations.py backend/tests/test_integration_routes.py -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/api/routes/integrations.py backend/tests/test_api_operations.py backend/tests/test_integration_routes.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src backend/tests backend/alembic scripts/github-ci-evidence.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `git diff --check`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 ./scripts/quality-gate.sh`
+- Result:
+  - Credential-rotation readiness evidence was recorded through the owner API without storing secret values; the credential-rotation readiness card now reports `ready`.
+  - Live company-context sync validated ERPNext and returned `noop` for unchanged source hash `17b8dd89593eef73e8623cc25bd06aeaf16d21ea2e9ff341e9e2a100852abc10`.
+  - The no-op sync exposed a readiness correctness issue: freshness was measured from the original snapshot creation timestamp, so a recently verified unchanged ERPNext context still appeared stale.
+  - `readiness_from_snapshot` now uses a matching successful `synced` or `noop` sync run as `last_verified_at`, reports `freshness_basis`, preserves `snapshot_created_at`, and only falls back to snapshot age when no matching verification exists.
+  - Added a regression test proving an old snapshot with a recent matching no-op sync reports `ready`.
+  - Focused company-context tests passed: `5 passed`.
+  - Operations and integrations route tests passed: `17 passed`.
+  - Full backend tests passed: `189 passed`.
+  - Full quality gate passed, including backend lint/tests/compile/Alembic offline SQL/dependency audit, frontend build/typecheck/tests/audit, Compose config, script/dashboard syntax, secret scan, FOSS/resource policy scan, and diff hygiene.
+- Evidence:
+  - `/home/projects/cyber-team/dist/readiness-cleanup/operations-readiness-cleanup-20260707T013335Z.json`
+  - `/tmp/cyberteam-alembic.sql`
+- Next step:
+  - Commit the freshness fix, build and promote a new staging release, rerun live company-context/readiness checks, then push and watch GitHub CI.

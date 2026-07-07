@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from cyber_team.clock import utc_now
 from cyber_team.company.context_sync import CompanyContextSyncService
 from cyber_team.db import Base
-from cyber_team.db.models import RoleGap
+from cyber_team.db.models import CompanyContextSnapshot, CompanyContextSyncRun, RoleGap
 
 
 async def build_session_factory():
@@ -140,6 +141,64 @@ async def test_erpnext_company_context_sync_creates_snapshot_and_noops_on_same_h
         assert memory.remember.await_count == len(first["snapshot"]["memory_ids"])
         assert latest["freshness"]["status"] == "ready"
         assert [run["status"] for run in runs[:2]] == ["noop", "synced"]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_recent_noop_sync_verifies_old_company_context_snapshot():
+    engine, session_factory = await build_session_factory()
+    try:
+        service = CompanyContextSyncService(
+            erpnext=FakeERPNext(),
+            agent_manager=FakeAgentManager(),
+            memory_service=FakeMemory(),
+            tool_registry=FakeToolRegistry(),
+            session_factory=session_factory,
+        )
+
+        first = await service.sync_from_erpnext(actor="owner@example.com", run_planner=False)
+        await service.sync_from_erpnext(actor="owner@example.com", run_planner=False)
+
+        old_snapshot_at = utc_now() - timedelta(hours=25)
+        recent_verification_at = utc_now() - timedelta(minutes=2)
+        async with session_factory() as session:
+            snapshot = (
+                await session.execute(
+                    select(CompanyContextSnapshot).where(
+                        CompanyContextSnapshot.id == first["snapshot"]["id"]
+                    )
+                )
+            ).scalar_one()
+            latest_noop = (
+                await session.execute(
+                    select(CompanyContextSyncRun).where(
+                        CompanyContextSyncRun.status == "noop"
+                    )
+                )
+            ).scalar_one()
+            snapshot.created_at = old_snapshot_at
+            for run in (
+                await session.execute(
+                    select(CompanyContextSyncRun).where(
+                        CompanyContextSyncRun.status != "noop"
+                    )
+                )
+            ).scalars():
+                run.started_at = old_snapshot_at - timedelta(minutes=1)
+                run.completed_at = old_snapshot_at
+            latest_noop.started_at = recent_verification_at - timedelta(minutes=1)
+            latest_noop.completed_at = recent_verification_at
+            await session.commit()
+
+        latest = await service.get_latest_context()
+
+        assert latest["freshness"]["status"] == "ready"
+        assert latest["freshness"]["stale"] is False
+        assert latest["freshness"]["freshness_basis"] == "sync_verification"
+        assert latest["freshness"]["snapshot_created_at"] == old_snapshot_at.isoformat()
+        assert latest["freshness"]["last_verified_at"] == recent_verification_at.isoformat()
+        assert latest["freshness"]["last_sync_at"] == recent_verification_at.isoformat()
     finally:
         await engine.dispose()
 
