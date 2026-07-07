@@ -2701,3 +2701,34 @@
   - `/tmp/cyberteam-alembic.sql`
 - Next step:
   - Commit the optional-provider readiness fix, run a release check for the new commit, promote it to staging, verify readiness is no longer degraded by optional-disabled providers, then push and watch GitHub CI.
+
+### 2026-07-07T02:57:35Z — STEP-081 — Promoted optional-provider readiness fix and verified ready staging
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+  - Staging `core`, `worker`, and `ui` containers promoted to release `78fdb9c`.
+- Commands run:
+  - `git add backend/src/cyber_team/api/routes/operations.py backend/tests/test_api_operations.py docs/progress/erpnext-business-ops-completion.md`
+  - `git commit -m "fix: keep optional providers non-blocking"`
+  - `COMPOSE_PROJECT_NAME=cyberteam-release-smoke CYBERTEAM_CONTAINER_PREFIX=cyberteam-release-smoke API_PUBLISHED_PORT=18080 UI_PUBLISHED_PORT=13080 POSTGRES_PUBLISHED_PORT=15480 REDIS_PUBLISHED_PORT=16380 QDRANT_HTTP_PUBLISHED_PORT=16480 QDRANT_GRPC_PUBLISHED_PORT=16481 TEMPORAL_PUBLISHED_PORT=17280 OPA_PUBLISHED_PORT=18180 API_BASE=http://localhost:18080 UI_BASE=http://localhost:13080 NEXT_PUBLIC_API_URL=http://localhost:18080 NEXT_PUBLIC_WS_URL=ws://localhost:18080 COMPOSE_SMOKE_BUILD=0 RELEASE_VERSION=78fdb9c SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=78fdb9c ./scripts/promote-staging.sh`
+  - Live staging owner API checks:
+    - `GET /health`
+    - `GET /api/operations/readiness?refresh=true`
+    - `GET /api/operations/outsourcing-requests?status=open&limit=100`
+    - `GET /api/tools/`
+- Result:
+  - Release candidate `78fdb9c` passed the full release check: backend lint/tests/compile/Alembic offline SQL/dependency audit, frontend build/typecheck/tests/audit, Compose config, script/dashboard syntax, secret scan, FOSS/resource policy scan, diff hygiene, PostgreSQL migration rehearsal, isolated Compose smoke, image build, and Trivy image scans.
+  - Image scans for `cyber-team-core:78fdb9c` and `cyber-team-ui:78fdb9c` reported zero vulnerabilities.
+  - Staging promotion succeeded after taking a PostgreSQL backup and running public Caddy-backed compose smoke against `https://cyberteam.hyperailab.com`.
+  - Live staging `/health` reports build SHA `78fdb9c00d5f2645de6d00c2e92c91e364e55236`.
+  - Live `/api/operations/readiness?refresh=true` reports `status=ready`, `blockers=[]`, `tools.side_effect_blockers=[]`, and `outsourcing.open_count=0`.
+  - Optional SMS, voice, and generic messaging tools remain visible as `configuration_required` non-blocking side effects, which matches the chosen provider scope.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/78fdb9c.json`
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-78fdb9c-20260707-025624.dump`
+  - `/home/projects/cyber-team/dist/promotions/staging/78fdb9c-20260707-025707.json`
+  - `/home/projects/cyber-team/dist/readiness-cleanup/optional-provider-readiness-78fdb9c-20260707T025727Z.json`
+  - `/home/projects/cyber-team/dist/readiness-cleanup/latest-optional-provider-readiness.json`
+  - `https://cyberteam.hyperailab.com/health`
+- Next step:
+  - Commit this progress-log evidence update, push `main` to GitHub, and watch GitHub CI on the final remote head.
