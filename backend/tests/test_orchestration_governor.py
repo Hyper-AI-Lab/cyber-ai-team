@@ -12,6 +12,7 @@ from cyber_team.db.models import (
 )
 from cyber_team.operations import governor as governor_module
 from cyber_team.operations.governor import OrchestrationGovernorService
+from cyber_team.tools.registry import ToolRegistry
 
 
 class FakeToolRegistry:
@@ -121,6 +122,29 @@ async def seed_role_gap(factory):
         await session.commit()
 
 
+async def seed_alias_role_gap(factory):
+    async with factory() as session:
+        session.add(
+            RoleGap(
+                id="gap_alias_tools",
+                title="Need canonical alias tools",
+                description="The role uses operating-model aliases for existing tools.",
+                status="open",
+                severity="medium",
+                source_type="company_context_snapshot",
+                company_namespace="company:acme",
+                capability="operations",
+                requested_tools=["memory_write", "erpnext_finance_read"],
+                context={"snapshot_id": "ctx_alias"},
+                proposed_role={},
+                resolution={},
+                created_at=datetime(2026, 7, 4, 6, 0, 0),
+                updated_at=datetime(2026, 7, 4, 6, 0, 0),
+            )
+        )
+        await session.commit()
+
+
 def build_service(audit=None):
     return OrchestrationGovernorService(
         planning_service=FakePlanning(),
@@ -181,3 +205,30 @@ async def test_governor_creates_idempotent_tool_proposal_from_role_gap(
     assert "mit" in proposals[0].sandbox_result["resource_policy"]["license"].lower()
     assert audit.events[0]["event_type"] == "orchestration_governor.run"
     assert audit.evidence[0]["control_id"] == "autonomy.governor_run"
+
+
+@pytest.mark.asyncio
+async def test_governor_treats_operating_model_alias_tools_as_registered(
+    governor_session_factory,
+):
+    await seed_alias_role_gap(governor_session_factory)
+    registry = ToolRegistry()
+    service = OrchestrationGovernorService(
+        planning_service=FakePlanning(),
+        tool_registry=registry,
+        audit_service=FakeAudit(),
+        readiness_evidence_service=FakeReadinessEvidence(),
+        comms_gateway=FakeComms(),
+        erpnext=FakeERPNext(),
+    )
+
+    snapshot = await service.build_operating_snapshot()
+    [gap] = [
+        item
+        for item in snapshot["role_gap_samples"]
+        if item["gap_id"] == "gap_alias_tools"
+    ]
+
+    assert registry.get_tool("memory_write") is not None
+    assert registry.get_tool("erpnext_finance_read") is not None
+    assert gap["missing_tools"] == []

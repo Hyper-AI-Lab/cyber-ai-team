@@ -111,7 +111,9 @@ class ToolRegistry:
         "call_make": "make_call",
         "crm_lead_create": "erpnext_create_lead",
         "email_send": "send_email",
+        "erpnext_finance_read": "erpnext_get_invoices",
         "message_send": "send_message",
+        "memory_write": "memory_remember",
         "sms_send": "send_sms",
     }
 

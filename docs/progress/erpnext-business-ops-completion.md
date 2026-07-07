@@ -2627,3 +2627,36 @@
   - `https://cyberteam.hyperailab.com/health`
 - Next step:
   - Push the code/log commits to GitHub and watch CI for the final remote state.
+
+### 2026-07-07T02:27:23Z — STEP-079 — Prevented false outsourcing requests for operating-model tool aliases
+- Files/services changed:
+  - `backend/src/cyber_team/tools/registry.py`
+  - `backend/tests/test_tools.py`
+  - `backend/tests/test_orchestration_governor.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - Live staging inspection of `/api/operations/readiness` and `/api/operations/outsourcing-requests?status=open&limit=100`.
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/tools/registry.py backend/tests/test_tools.py backend/tests/test_orchestration_governor.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_tools.py backend/tests/test_orchestration_governor.py -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src backend/tests backend/alembic scripts/github-ci-evidence.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `git diff --check`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 ./scripts/quality-gate.sh`
+- Result:
+  - Live staging outsourcing readiness had `10` open non-blocking requests.
+  - Inspection showed several requests were stale operating-model aliases or provider-configuration items rather than true missing implementation:
+    - `memory_write` should map to `memory_remember`.
+    - `erpnext_finance_read` should map to `erpnext_get_invoices`.
+    - `email_send`, `crm_lead_create`, `sms_send`, `call_make`, and `message_send` already map or should classify as configured/live or optional provider configuration.
+    - `ci_trigger` was already implemented/configured in staging and the request was stale.
+  - Added executable registry aliases for `memory_write` and `erpnext_finance_read` so governor role-gap sampling no longer treats them as missing-code outsourcing work.
+  - Expanded registry alias tests to verify category, side-effect, and approval semantics for communications, CRM, memory, and ERPNext finance aliases.
+  - Added a governor regression proving role gaps that request `memory_write` and `erpnext_finance_read` no longer appear with missing tools.
+  - Focused registry/governor tests passed: `20 passed`.
+  - Full backend tests passed: `190 passed`.
+  - Full quality gate passed, including backend lint/tests/compile/Alembic offline SQL/dependency audit, frontend build/typecheck/tests/audit, Compose config, script/dashboard syntax, secret scan, FOSS/resource policy scan, and diff hygiene.
+- Evidence:
+  - Live outsourcing request IDs inspected: `out_779dd530616b4087`, `out_3e7772e79cd649ae`, `out_7d67bdb3a47d47d5`, `out_bda4b5dccce5487c`, `out_79917402103d4c6e`, `out_2f69b80f54884b09`, `out_f75bce8b17d24ed2`, `out_87036f72694f412d`, `out_c2177ee6efd34825`, `out_eddd451aca944a6f`.
+  - `/tmp/cyberteam-alembic.sql`
+- Next step:
+  - Commit and deploy the alias fix, then resolve stale live outsourcing requests as canonical-tool-covered or optional-provider-deferred so readiness can move past the non-blocking outsourcing attention state.

@@ -370,18 +370,48 @@ def test_requested_business_tool_aliases_are_registered():
     registry = ToolRegistry()
 
     expected = {
-        "call_make": "communications",
-        "crm_lead_create": "erpnext",
-        "email_send": "communications",
-        "message_send": "communications",
-        "sms_send": "communications",
+        "call_make": {
+            "category": "communications",
+            "side_effects": True,
+            "requires_approval": True,
+        },
+        "crm_lead_create": {
+            "category": "erpnext",
+            "side_effects": True,
+            "requires_approval": True,
+        },
+        "email_send": {
+            "category": "communications",
+            "side_effects": True,
+            "requires_approval": True,
+        },
+        "erpnext_finance_read": {
+            "category": "erpnext",
+            "side_effects": False,
+            "requires_approval": False,
+        },
+        "memory_write": {
+            "category": "memory",
+            "side_effects": False,
+            "requires_approval": False,
+        },
+        "message_send": {
+            "category": "communications",
+            "side_effects": True,
+            "requires_approval": True,
+        },
+        "sms_send": {
+            "category": "communications",
+            "side_effects": True,
+            "requires_approval": True,
+        },
     }
-    for alias, category in expected.items():
+    for alias, expectation in expected.items():
         tool = registry.get_tool(alias)
         assert tool is not None
-        assert tool.category == category
-        assert tool.side_effects is True
-        assert tool.requires_approval is True
+        assert tool.category == expectation["category"]
+        assert tool.side_effects is expectation["side_effects"]
+        assert tool.requires_approval is expectation["requires_approval"]
 
 
 def test_message_alias_readiness_ignores_email_provider():
