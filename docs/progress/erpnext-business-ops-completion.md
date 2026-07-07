@@ -2660,3 +2660,44 @@
   - `/tmp/cyberteam-alembic.sql`
 - Next step:
   - Commit and deploy the alias fix, then resolve stale live outsourcing requests as canonical-tool-covered or optional-provider-deferred so readiness can move past the non-blocking outsourcing attention state.
+
+### 2026-07-07T02:45:49Z — STEP-080 — Deployed alias fix, cleared stale outsourcing backlog, and tightened optional-provider readiness
+- Files/services changed:
+  - Staging `core`, `worker`, and `ui` containers promoted to release `6041195`.
+  - Live outsourcing requests updated through owner-authorized API resolution endpoints.
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/tests/test_api_operations.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `COMPOSE_PROJECT_NAME=cyberteam-release-smoke CYBERTEAM_CONTAINER_PREFIX=cyberteam-release-smoke API_PUBLISHED_PORT=18080 UI_PUBLISHED_PORT=13080 POSTGRES_PUBLISHED_PORT=15480 REDIS_PUBLISHED_PORT=16380 QDRANT_HTTP_PUBLISHED_PORT=16480 QDRANT_GRPC_PUBLISHED_PORT=16481 TEMPORAL_PUBLISHED_PORT=17280 OPA_PUBLISHED_PORT=18180 API_BASE=http://localhost:18080 UI_BASE=http://localhost:13080 NEXT_PUBLIC_API_URL=http://localhost:18080 NEXT_PUBLIC_WS_URL=ws://localhost:18080 COMPOSE_SMOKE_BUILD=0 RELEASE_VERSION=6041195 SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=6041195 ./scripts/promote-staging.sh`
+  - Live staging owner API checks:
+    - `GET /health`
+    - `GET /api/tools/`
+    - `GET /api/operations/outsourcing-requests?status=open&limit=100`
+    - `POST /api/operations/outsourcing-requests/{id}/resolve`
+    - `GET /api/operations/readiness`
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/api/routes/operations.py backend/tests/test_api_operations.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_api_operations.py::test_operations_readiness_keeps_optional_disabled_non_blocking -q`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 ./scripts/quality-gate.sh`
+- Result:
+  - Release candidate `6041195` passed the full release check: quality gate, migration rehearsal, isolated Compose smoke, image build, and Trivy image scans.
+  - Staging promotion succeeded after taking a PostgreSQL backup and running public Caddy-backed compose smoke against `https://cyberteam.hyperailab.com`.
+  - Live staging `/health` reports build SHA `6041195e80085f809889a3be68e736e2929dfc46`.
+  - Live tool readiness confirms `memory_write`, `erpnext_finance_read`, `email_send`, `crm_lead_create`, and `ci_trigger` are live.
+  - Resolved stale outsourcing requests for live/canonical capabilities and deferred optional SMS/voice/generic-messaging provider requests.
+  - Outsourcing readiness moved to `status=ready`, `open_count=0`, `blocking=false`.
+  - Follow-up readiness evidence showed overall readiness still degraded because current canonical optional provider tools `sms_send`, `call_make`, and `message_send` were still classified as side-effect blockers.
+  - Patched the readiness required-tool predicate so `email_send`, `sms_send`, `call_make`, and `message_send` use the same required-provider logic as legacy names.
+  - Expanded the optional-disabled readiness regression to cover the live canonical tool names.
+  - Focused optional-disabled readiness test passed.
+  - Full quality gate passed, including backend lint/tests/compile/Alembic offline SQL/dependency audit, frontend build/typecheck/tests/audit, Compose config, script/dashboard syntax, secret scan, FOSS/resource policy scan, and diff hygiene.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/6041195.json`
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-6041195-20260707-023745.dump`
+  - `/home/projects/cyber-team/dist/promotions/staging/6041195-20260707-023820.json`
+  - `/home/projects/cyber-team/dist/outsourcing-cleanup/outsourcing-cleanup-20260707T024025Z.json`
+  - `/home/projects/cyber-team/dist/outsourcing-cleanup/latest.json`
+  - `/tmp/cyberteam-alembic.sql`
+- Next step:
+  - Commit the optional-provider readiness fix, run a release check for the new commit, promote it to staging, verify readiness is no longer degraded by optional-disabled providers, then push and watch GitHub CI.

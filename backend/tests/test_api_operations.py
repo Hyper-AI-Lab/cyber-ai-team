@@ -425,18 +425,25 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
             return [
                 {"name": "task_create", "state": "live", "side_effects": True},
                 {
-                    "name": "send_sms",
+                    "name": "sms_send",
                     "state": "configuration_required",
                     "side_effects": True,
                     "category": "communications",
                     "readiness_reason": "SMS is intentionally disabled.",
                 },
                 {
-                    "name": "make_call",
+                    "name": "call_make",
                     "state": "configuration_required",
                     "side_effects": True,
                     "category": "communications",
                     "readiness_reason": "Voice is intentionally disabled.",
+                },
+                {
+                    "name": "message_send",
+                    "state": "configuration_required",
+                    "side_effects": True,
+                    "category": "communications",
+                    "readiness_reason": "Messaging is intentionally disabled.",
                 },
                 {
                     "name": "ci_trigger",
@@ -618,7 +625,7 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
     assert body["tools"]["side_effect_blockers"] == []
     assert {
         item["tool_name"] for item in body["tools"]["non_blocking_side_effects"]
-    } == {"send_sms", "make_call", "ci_trigger"}
+    } == {"sms_send", "call_make", "message_send", "ci_trigger"}
     assert body["integrations"]["blocking_readiness"] is False
     assert body["integrations"]["optional_disabled"][0]["provider"] == "twilio"
     assert body["company_context"]["status"] == "ready"

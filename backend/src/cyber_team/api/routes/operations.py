@@ -221,13 +221,13 @@ def _tool_is_required_for_readiness(tool: dict[str, Any]) -> bool:
         "procurement_request",
     }:
         return "erpnext" in required
-    if name == "send_email":
+    if name in {"send_email", "email_send"}:
         return "smtp" in required or "email" in required
-    if name == "send_sms":
+    if name in {"send_sms", "sms_send"}:
         return "sms" in required or "twilio" in required or "jasmin" in required
-    if name == "make_call":
+    if name in {"make_call", "call_make"}:
         return "voice" in required or "twilio" in required or "asterisk" in required
-    if name == "send_message":
+    if name in {"send_message", "message_send"}:
         return bool({"slack", "telegram", "whatsapp"} & required)
     if name == "ci_trigger":
         return "github" in required or "github_ci" in required or "ci" in required
