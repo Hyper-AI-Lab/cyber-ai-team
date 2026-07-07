@@ -2586,3 +2586,44 @@
   - `/tmp/cyberteam-alembic.sql`
 - Next step:
   - Commit the freshness fix, build and promote a new staging release, rerun live company-context/readiness checks, then push and watch GitHub CI.
+
+### 2026-07-07T02:11:17Z — STEP-078 — Promoted freshness fix and refreshed staging readiness evidence
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+  - Staging `core`, `worker`, and `ui` containers promoted to release `6869917`.
+  - Staging readiness/control evidence updated through owner-authorized API calls.
+- Commands run:
+  - `git add backend/src/cyber_team/company/context_sync.py backend/tests/test_company_context_sync.py docs/progress/erpnext-business-ops-completion.md`
+  - `git commit -m "fix: count noop company context sync as fresh"`
+  - `RELEASE_VERSION=6869917 RUN_QUALITY_GATE=0 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=6869917 ./scripts/promote-staging.sh`
+  - `COMPOSE_PROJECT_NAME=cyberteam-release-smoke CYBERTEAM_CONTAINER_PREFIX=cyberteam-release-smoke API_PUBLISHED_PORT=18080 UI_PUBLISHED_PORT=13080 POSTGRES_PUBLISHED_PORT=15480 REDIS_PUBLISHED_PORT=16380 QDRANT_HTTP_PUBLISHED_PORT=16480 QDRANT_GRPC_PUBLISHED_PORT=16481 TEMPORAL_PUBLISHED_PORT=17280 OPA_PUBLISHED_PORT=18180 API_BASE=http://localhost:18080 UI_BASE=http://localhost:13080 NEXT_PUBLIC_API_URL=http://localhost:18080 NEXT_PUBLIC_WS_URL=ws://localhost:18080 COMPOSE_SMOKE_BUILD=0 RELEASE_VERSION=6869917 SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=6869917 ./scripts/promote-staging.sh`
+  - Live staging post-deploy script:
+    - `POST /api/operations/company-context/sync`
+    - `GET /api/operations/company-context`
+    - `GET /api/operations/readiness`
+    - `GET /api/integrations/status`
+  - Live owner-authorized alert proof:
+    - `POST /api/operations/alerts/test-email`
+    - `GET /api/operations/readiness`
+- Result:
+  - The first promotion attempt correctly refused the initial manifest because required staging checks were not all marked as passed.
+  - The full release check passed with an isolated Compose smoke project and alternate ports to avoid the existing `0.0.0.0:8000` service on the host.
+  - Required release checks passed: quality gate, migration rehearsal, Compose smoke, image build, and image scan.
+  - Local isolated Compose smoke passed against `http://localhost:18080` and `http://localhost:13080`.
+  - Image scans for `cyber-team-core:6869917` and `cyber-team-ui:6869917` reported zero vulnerabilities.
+  - Staging promotion succeeded after taking a PostgreSQL backup, recreating `core`, `worker`, and `ui`, and running public Caddy-backed compose smoke against `https://cyberteam.hyperailab.com`.
+  - Live staging `/health` reports build SHA `6869917b3ecf9af889250b82a0a17765b812acd9`.
+  - Live company-context sync returned `noop`, and readiness now reports `company_context.status=ready`, `freshness_basis=sync_verification`, and `credential_rotation.status=ready`.
+  - The owner alert delivery proof sent one email to `contact@hyperailab.com`; readiness now reports `alerts.status=ready` and `alerts.blocking=false`.
+  - Overall readiness remains `degraded` only because `outsourcing.status=attention` is non-blocking and review-oriented; no true blocker remains in company context, credential rotation, or alert delivery.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/6869917.json`
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-6869917-20260707-020818.dump`
+  - `/home/projects/cyber-team/dist/promotions/staging/6869917-20260707-020853.json`
+  - `/home/projects/cyber-team/dist/readiness-cleanup/operations-readiness-postdeploy-20260707T020933Z.json`
+  - `/home/projects/cyber-team/dist/readiness-cleanup/alert-readiness-proof-20260707T021052Z.json`
+  - `https://cyberteam.hyperailab.com/health`
+- Next step:
+  - Push the code/log commits to GitHub and watch CI for the final remote state.
