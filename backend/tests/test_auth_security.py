@@ -16,7 +16,7 @@ from cyber_team.config import settings
 
 @pytest.fixture
 def auth_client(monkeypatch):
-    monkeypatch.setattr(settings, "secret_key", "test-secret-key")
+    monkeypatch.setattr(settings, "secret_key", "test-secret-key-with-at-least-32-bytes")
     monkeypatch.setattr(settings, "owner_email", "owner@example.com")
     monkeypatch.setattr(settings, "owner_password", "correct-password")
     monkeypatch.setattr(settings, "owner_password_hash", "")
