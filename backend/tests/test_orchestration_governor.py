@@ -175,6 +175,79 @@ async def test_governor_ensures_chief_agent_and_redacts_snapshot(
 
 
 @pytest.mark.asyncio
+async def test_governor_snapshot_separates_required_and_optional_tool_blockers(
+    governor_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "cyber_team.operations.tool_readiness_policy.settings.required_communication_providers",
+        "smtp,imap,erpnext",
+    )
+    registry = FakeToolRegistry()
+    registry.contracts = [
+        {
+            "name": "memory_recall",
+            "state": "live",
+            "side_effects": False,
+            "requires_configuration": False,
+        },
+        {
+            "name": "sms_send",
+            "state": "configuration_required",
+            "side_effects": True,
+            "category": "communications",
+            "requires_configuration": True,
+            "readiness_reason": "SMS provider is intentionally disabled.",
+        },
+        {
+            "name": "ci_trigger",
+            "state": "configuration_required",
+            "side_effects": True,
+            "category": "devops",
+            "requires_configuration": True,
+            "readiness_reason": "GitHub dispatch is optional for this environment.",
+        },
+        {
+            "name": "task_create",
+            "state": "configuration_required",
+            "side_effects": True,
+            "category": "erpnext",
+            "requires_configuration": True,
+            "readiness_reason": "ERPNext task executor needs credentials.",
+        },
+    ]
+    service = OrchestrationGovernorService(
+        planning_service=FakePlanning(),
+        tool_registry=registry,
+        audit_service=FakeAudit(),
+        readiness_evidence_service=FakeReadinessEvidence(),
+        comms_gateway=FakeComms(),
+        erpnext=FakeERPNext(),
+    )
+
+    snapshot = await service.build_operating_snapshot()
+    tools = snapshot["tools"]
+
+    assert {item["name"] for item in tools["side_effects_not_live"]} == {
+        "sms_send",
+        "ci_trigger",
+        "task_create",
+    }
+    assert [item["name"] for item in tools["required_side_effects_not_live"]] == [
+        "task_create"
+    ]
+    assert {item["name"] for item in tools["non_blocking_side_effects"]} == {
+        "sms_send",
+        "ci_trigger",
+    }
+    assert tools["required_side_effects_not_live"][0]["readiness_required"] is True
+    assert all(
+        item["readiness_required"] is False
+        for item in tools["non_blocking_side_effects"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_governor_creates_idempotent_tool_proposal_from_role_gap(
     governor_session_factory,
 ):

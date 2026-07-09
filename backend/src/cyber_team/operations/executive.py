@@ -1855,14 +1855,17 @@ class ExecutiveCompanyOSService:
         role_backlog = governor.get("role_backlog") or {}
         workflows = governor.get("workflows") or {}
         tools = governor.get("tools") or {}
+        required_tool_blockers = (
+            tools.get("required_side_effects_not_live")
+            if "required_side_effects_not_live" in tools
+            else tools.get("side_effects_not_live")
+        )
         values = {
             "readiness_blockers": float(readiness_blockers),
             "open_memory_findings": float(memory.get("open_findings") or 0),
             "active_role_gaps": float(role_backlog.get("active") or 0),
             "recent_workflow_failures": float(workflows.get("recent_failed") or 0),
-            "side_effect_tool_blockers": float(
-                len(tools.get("side_effects_not_live") or [])
-            ),
+            "side_effect_tool_blockers": float(len(required_tool_blockers or [])),
         }
         await self._ensure_kpi_definitions(values.keys())
         observations = []

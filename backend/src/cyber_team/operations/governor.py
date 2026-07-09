@@ -29,6 +29,7 @@ from cyber_team.db.models import (
     RoleManifest,
     WorkflowRun,
 )
+from cyber_team.operations.tool_readiness_policy import tool_is_required_for_readiness
 
 
 class OrchestrationGovernorService:
@@ -1040,27 +1041,46 @@ class OrchestrationGovernorService:
                 "total": 0,
                 "counts_by_state": {},
                 "side_effects_not_live": [],
+                "required_side_effects_not_live": [],
+                "non_blocking_side_effects": [],
             }
         contracts = self._tool_registry.list_tool_contracts()
         counts: dict[str, int] = {}
         side_effects_not_live = []
+        required_side_effects_not_live = []
+        non_blocking_side_effects = []
         for contract in contracts:
             state = contract.get("state") or "unknown"
             counts[state] = counts.get(state, 0) + 1
             if contract.get("side_effects") and state != "live":
-                side_effects_not_live.append(
-                    {
-                        "name": contract.get("name"),
-                        "state": state,
-                        "readiness_reason": contract.get("readiness_reason"),
-                        "requires_configuration": contract.get("requires_configuration"),
-                    }
-                )
+                required_for_readiness = tool_is_required_for_readiness(contract)
+                entry = {
+                    "name": contract.get("name"),
+                    "state": state,
+                    "category": contract.get("category"),
+                    "readiness_reason": contract.get("readiness_reason"),
+                    "requires_configuration": contract.get("requires_configuration"),
+                    "readiness_required": required_for_readiness,
+                }
+                side_effects_not_live.append(entry)
+                if required_for_readiness:
+                    required_side_effects_not_live.append(entry)
+                else:
+                    non_blocking_side_effects.append(
+                        {
+                            **entry,
+                            "non_blocking_reason": (
+                                "Provider/tool is not listed in REQUIRED_COMMUNICATION_PROVIDERS."
+                            ),
+                        }
+                    )
         return {
             "registry_available": True,
             "total": len(contracts),
             "counts_by_state": counts,
             "side_effects_not_live": side_effects_not_live[:50],
+            "required_side_effects_not_live": required_side_effects_not_live[:50],
+            "non_blocking_side_effects": non_blocking_side_effects[:50],
         }
 
     def _gap_tool_readiness(self, tools: list[str]) -> dict[str, Any]:

@@ -2958,3 +2958,53 @@
   - Live owner instruction operation graph node `opnode_b63ef3a92d11476f`
 - Next step:
   - Commit and push this release evidence to the public repo, then continue the next Autonomous Executive Company OS milestone.
+
+### 2026-07-09T07:26:05Z — STEP-090 — Separated optional tool visibility from executive blocker benchmarks
+- Files/services changed:
+  - `backend/src/cyber_team/operations/tool_readiness_policy.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/src/cyber_team/operations/governor.py`
+  - `backend/src/cyber_team/operations/executive.py`
+  - `backend/tests/test_orchestration_governor.py`
+  - `backend/tests/test_executive_company_os.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `git status --short --branch`
+  - `rg -n "role_backlog_bounded|tool_blockers_zero|company_context|benchmark|optional_disabled|tool blockers|executive" backend/src backend/tests frontend/src docs/architecture docs/progress/erpnext-business-ops-completion.md`
+  - `sed` inspections of executive benchmarks, governor snapshots, operations readiness, config, and related tests.
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/operations/tool_readiness_policy.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/operations/governor.py backend/src/cyber_team/operations/executive.py backend/tests/test_orchestration_governor.py backend/tests/test_executive_company_os.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_orchestration_governor.py backend/tests/test_executive_company_os.py -q`
+- Result:
+  - Added a shared tool readiness policy that classifies side-effectful tools as production-required only when their provider is explicitly required by `REQUIRED_COMMUNICATION_PROVIDERS`.
+  - Operations readiness and the Chief Operating Agent governor snapshot now use the same required-provider classification.
+  - Governor snapshots preserve all non-live side-effect tools for owner visibility and add `required_side_effects_not_live` plus `non_blocking_side_effects` for executive benchmark accuracy.
+  - Executive KPI `side_effect_tool_blockers` now counts required side-effect blockers instead of optional-disabled SMS/voice/message/CI tools.
+  - Focused Ruff check passed.
+  - Focused governor/executive tests passed: `17 passed, 2 warnings`.
+- Evidence:
+  - Local focused check outputs from 2026-07-09T07:26Z.
+- Next step:
+  - Run broader backend/API quality checks, then commit and push the optional-tool benchmark cleanup to the public repo.
+
+### 2026-07-09T07:27:10Z — STEP-091 — Verified optional-tool benchmark cleanup with broad backend gate
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src backend/tests`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m compileall -q backend/src`
+  - `python3 scripts/secret-scan.py`
+  - `git diff --check`
+  - `git status --short`
+  - `git diff --stat`
+- Result:
+  - Full backend Ruff check passed.
+  - Full backend test suite passed: `200 passed, 2 warnings`.
+  - Backend compile passed.
+  - Secret scan reported no high-confidence secrets.
+  - Git diff hygiene passed.
+  - Final diff is limited to the shared readiness policy, governor/executive benchmark classification, tests, and this append-only progress log.
+- Evidence:
+  - Local broad backend gate output from 2026-07-09T07:27Z.
+- Next step:
+  - Commit the optional-tool benchmark cleanup, push to `Hyper-AI-Lab/cyber-ai-team`, and watch public GitHub CI.

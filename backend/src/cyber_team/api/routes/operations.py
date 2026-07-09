@@ -11,6 +11,7 @@ from cyber_team.api.authorization import require_authorization
 from cyber_team.api.security import Principal, get_current_principal
 from cyber_team.config import settings
 from cyber_team.operations.readiness import ProductionReadinessEvidenceService
+from cyber_team.operations.tool_readiness_policy import tool_is_required_for_readiness
 
 router = APIRouter()
 READINESS_CACHE_TTL_SECONDS = 5.0
@@ -208,35 +209,6 @@ def _annotate_provider_status(item: dict[str, Any]) -> dict[str, Any]:
         }
     )
     return annotated
-
-
-def _tool_is_required_for_readiness(tool: dict[str, Any]) -> bool:
-    required = settings.required_provider_names
-    name = str(tool.get("name") or "")
-    category = str(tool.get("category") or "")
-    if category == "erpnext" or name.startswith("erpnext_"):
-        return "erpnext" in required
-    if name in {
-        "crm_contact_update",
-        "crm_deal_update",
-        "task_create",
-        "task_update",
-        "ticket_create",
-        "ticket_update",
-        "procurement_request",
-    }:
-        return "erpnext" in required
-    if name in {"send_email", "email_send"}:
-        return "smtp" in required or "email" in required
-    if name in {"send_sms", "sms_send"}:
-        return "sms" in required or "twilio" in required or "jasmin" in required
-    if name in {"make_call", "call_make"}:
-        return "voice" in required or "twilio" in required or "asterisk" in required
-    if name in {"send_message", "message_send"}:
-        return bool({"slack", "telegram", "whatsapp"} & required)
-    if name == "ci_trigger":
-        return "github" in required or "github_ci" in required or "ci" in required
-    return True
 
 
 def _readiness_evidence_service(request: Request) -> ProductionReadinessEvidenceService:
@@ -1346,7 +1318,7 @@ async def operations_readiness(
                 "state": state,
                 "reason": tool.get("readiness_reason"),
             }
-            if _tool_is_required_for_readiness(tool):
+            if tool_is_required_for_readiness(tool):
                 side_effect_blockers.append(entry)
             else:
                 non_blocking_side_effects.append(entry)

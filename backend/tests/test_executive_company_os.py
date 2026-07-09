@@ -148,6 +148,85 @@ async def test_executive_run_records_graph_benchmarks_reflection_and_memory(
 
 
 @pytest.mark.asyncio
+async def test_executive_tool_benchmark_ignores_optional_side_effect_tools(
+    executive_session_factory,
+):
+    service = build_service(
+        snapshot={
+            "memory": {"open_findings": 0},
+            "role_backlog": {"active": 0},
+            "role_gap_samples": [],
+            "workflows": {"recent_failed": 0},
+            "tools": {
+                "side_effects_not_live": [
+                    {
+                        "name": "sms_send",
+                        "state": "configuration_required",
+                        "readiness_required": False,
+                    },
+                    {
+                        "name": "ci_trigger",
+                        "state": "configuration_required",
+                        "readiness_required": False,
+                    },
+                ],
+                "required_side_effects_not_live": [],
+                "non_blocking_side_effects": [
+                    {"name": "sms_send"},
+                    {"name": "ci_trigger"},
+                ],
+            },
+        }
+    )
+
+    result = await service.run_executive_cycle(
+        actor="owner@example.com",
+        dry_run=False,
+        auto_apply_low_risk=True,
+        max_actions=5,
+    )
+
+    assert result["kpi_summary"]["values"]["side_effect_tool_blockers"] == 0.0
+    assert "tool_blockers_zero" not in result["benchmark_summary"]["failed_keys"]
+    assert result["observer_review"]["status"] == "agreed"
+
+
+@pytest.mark.asyncio
+async def test_executive_tool_benchmark_fails_required_side_effect_tools(
+    executive_session_factory,
+):
+    required_tool = {
+        "name": "task_create",
+        "state": "configuration_required",
+        "readiness_required": True,
+    }
+    service = build_service(
+        snapshot={
+            "memory": {"open_findings": 0},
+            "role_backlog": {"active": 0},
+            "role_gap_samples": [],
+            "workflows": {"recent_failed": 0},
+            "tools": {
+                "side_effects_not_live": [required_tool],
+                "required_side_effects_not_live": [required_tool],
+                "non_blocking_side_effects": [],
+            },
+        }
+    )
+
+    result = await service.run_executive_cycle(
+        actor="owner@example.com",
+        dry_run=False,
+        auto_apply_low_risk=True,
+        max_actions=5,
+    )
+
+    assert result["kpi_summary"]["values"]["side_effect_tool_blockers"] == 1.0
+    assert "tool_blockers_zero" in result["benchmark_summary"]["failed_keys"]
+    assert result["observer_review"]["status"] == "disagreed"
+
+
+@pytest.mark.asyncio
 async def test_large_impact_action_requests_approval(
     executive_session_factory,
 ):
