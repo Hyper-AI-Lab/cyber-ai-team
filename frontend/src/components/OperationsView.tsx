@@ -1040,6 +1040,20 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                 }
               />
               <ReadinessPanel
+                title="Executive Brief"
+                value={readiness.executive_brief_email?.status || 'unavailable'}
+                detail={
+                  readiness.executive_brief_email?.runtime?.last_completed_at
+                    ? `last sent ${formatDate(
+                        readiness.executive_brief_email.runtime.last_completed_at,
+                      )}`
+                    : readiness.executive_brief_email?.enabled
+                      ? `every ${readiness.executive_brief_email.interval_seconds || '-'}s`
+                      : readiness.executive_brief_email?.detail
+                        || 'executive brief email scheduler is disabled'
+                }
+              />
+              <ReadinessPanel
                 title="Cadence Follow-Ups"
                 value={`${readiness.operating_follow_ups?.counts?.active || 0} active`}
                 detail={

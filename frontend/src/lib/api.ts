@@ -709,6 +709,20 @@ class ApiClient {
     return this.request('/api/operations/executive-brief');
   }
 
+  async getExecutiveBriefEmailStatus() {
+    return this.request('/api/operations/executive-brief/email/status');
+  }
+
+  async sendExecutiveBriefEmail(options: { dryRun?: boolean; force?: boolean } = {}) {
+    return this.request('/api/operations/executive-brief/email', {
+      method: 'POST',
+      body: JSON.stringify({
+        dry_run: options.dryRun ?? false,
+        force: options.force ?? false,
+      }),
+    });
+  }
+
   async getOperationGraph(filters: {
     nodeType?: string;
     sourceType?: string;

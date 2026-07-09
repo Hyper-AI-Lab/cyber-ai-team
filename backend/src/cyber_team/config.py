@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     owner_attention_notification_limit: int = 100
     owner_attention_notification_min_priority: str = "medium"
     owner_attention_notification_cooldown_hours: int = 24
+    executive_brief_email_enabled: bool = True
+    executive_brief_email_initial_delay_seconds: int = 600
+    executive_brief_email_interval_seconds: int = 86400
+    executive_brief_email_cooldown_hours: int = 20
     autonomy_side_effect_mode: str = "approval_required"
     require_live_tool_executors: bool = False
     supervisor_review_enabled: bool = True

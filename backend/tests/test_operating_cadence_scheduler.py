@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from cyber_team.api import (
+    _run_executive_brief_email_once,
     _run_operating_cadence_scheduler_once,
     _run_owner_attention_notification_once,
 )
@@ -108,4 +109,40 @@ async def test_owner_attention_notification_runner_updates_status(monkeypatch):
         actor="owner_attention_notifier",
         dry_run=False,
         limit=25,
+    )
+
+
+@pytest.mark.asyncio
+async def test_executive_brief_email_runner_updates_status(monkeypatch):
+    app = SimpleNamespace(state=SimpleNamespace())
+    app.state.executive_brief_email_service = AsyncMock()
+    app.state.executive_brief_email_service.run_once.return_value = {
+        "status": "ready",
+        "detail": "Executive brief email was sent.",
+        "dry_run": False,
+        "force": False,
+        "response": {"status": "sent", "email_id": "email-1"},
+        "event_id": "event-1",
+        "brief_summary": {"latest_run_id": "exegov_1"},
+        "notification_status": {"status": "ready"},
+    }
+    monkeypatch.setattr(
+        "cyber_team.api.settings.executive_brief_email_interval_seconds",
+        86400,
+    )
+    monkeypatch.setattr(
+        "cyber_team.api.settings.executive_brief_email_cooldown_hours",
+        20,
+    )
+
+    result = await _run_executive_brief_email_once(app)
+
+    assert result["status"] == "ready"
+    assert result["last_result"]["response"]["status"] == "sent"
+    assert result["last_result"]["brief_summary"]["latest_run_id"] == "exegov_1"
+    assert app.state.executive_brief_email_status["last_error"] is None
+    app.state.executive_brief_email_service.run_once.assert_awaited_once_with(
+        actor="executive_brief_email_scheduler",
+        dry_run=False,
+        force=False,
     )

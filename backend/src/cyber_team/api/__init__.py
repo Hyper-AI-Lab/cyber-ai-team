@@ -49,6 +49,7 @@ from cyber_team.memory.service import MemoryService
 from cyber_team.observability.metrics import MetricsService
 from cyber_team.operations.autonomous import AutonomousOperationsService
 from cyber_team.operations.executive import ExecutiveCompanyOSService
+from cyber_team.operations.executive_briefing import ExecutiveBriefEmailService
 from cyber_team.operations.governor import OrchestrationGovernorService
 from cyber_team.operations.memory_steward import MemoryStewardService
 from cyber_team.operations.owner_attention import OwnerAttentionNotificationService
@@ -174,6 +175,12 @@ async def lifespan(app: FastAPI):
         planning_service=app.state.autonomous_planning_service,
         readiness_evidence_service=app.state.readiness_evidence_service,
     )
+    app.state.executive_brief_email_service = ExecutiveBriefEmailService(
+        executive_service=app.state.executive_company_os_service,
+        comms=app.state.comms_gateway,
+        audit_service=app.state.audit_service,
+        metrics_service=app.state.metrics_service,
+    )
     app.state.autonomous_operations_service = AutonomousOperationsService(
         supervisor_review_service=app.state.supervisor_review_service,
         memory_steward_service=app.state.memory_steward_service,
@@ -212,6 +219,7 @@ async def lifespan(app: FastAPI):
     app.state.operating_cadence_scheduler_task = None
     app.state.owner_attention_notification_task = None
     app.state.orchestration_governor_task = None
+    app.state.executive_brief_email_task = None
     app.state.operating_cadence_scheduler_status = _initial_operating_cadence_scheduler_status()
     app.state.owner_attention_notification_status = (
         _initial_owner_attention_notification_status()
@@ -219,6 +227,7 @@ async def lifespan(app: FastAPI):
     app.state.orchestration_governor_scheduler_status = (
         _initial_orchestration_governor_scheduler_status()
     )
+    app.state.executive_brief_email_status = _initial_executive_brief_email_status()
     if settings.inbound_email_enabled:
         app.state.inbound_email_task = asyncio.create_task(_inbound_email_loop(app))
     if settings.erpnext_drift_detection_enabled and settings.erpnext_configured:
@@ -235,6 +244,10 @@ async def lifespan(app: FastAPI):
     if settings.owner_attention_notifications_enabled:
         app.state.owner_attention_notification_task = asyncio.create_task(
             _owner_attention_notification_loop(app)
+        )
+    if settings.executive_brief_email_enabled:
+        app.state.executive_brief_email_task = asyncio.create_task(
+            _executive_brief_email_loop(app)
         )
     if settings.governor_enabled:
         app.state.orchestration_governor_task = asyncio.create_task(
@@ -265,6 +278,7 @@ async def lifespan(app: FastAPI):
             "operating_cadence_scheduler_task",
             "owner_attention_notification_task",
             "orchestration_governor_task",
+            "executive_brief_email_task",
         ):
             task = getattr(app.state, task_name, None)
             if task:
@@ -431,6 +445,27 @@ def _initial_orchestration_governor_scheduler_status() -> dict:
     }
 
 
+def _initial_executive_brief_email_status() -> dict:
+    enabled = settings.executive_brief_email_enabled
+    return {
+        "enabled": enabled,
+        "status": "idle" if enabled else "disabled",
+        "detail": (
+            "Executive brief email scheduler is waiting for the next run."
+            if enabled
+            else "Executive brief email scheduler is disabled."
+        ),
+        "actor": "executive_brief_email_scheduler",
+        "channel": "email",
+        "interval_seconds": max(3600, settings.executive_brief_email_interval_seconds),
+        "cooldown_hours": settings.executive_brief_email_cooldown_hours,
+        "last_started_at": None,
+        "last_completed_at": None,
+        "last_result": None,
+        "last_error": None,
+    }
+
+
 async def _run_owner_attention_notification_once(
     app: FastAPI,
     *,
@@ -503,6 +538,81 @@ async def _run_owner_attention_notification_once(
                 metadata={"error": str(exc), "dry_run": dry_run},
             )
         logger.exception("Owner attention notification scan failed")
+        return final_status
+
+
+async def _run_executive_brief_email_once(
+    app: FastAPI,
+    *,
+    actor: str = "executive_brief_email_scheduler",
+    dry_run: bool = False,
+    force: bool = False,
+) -> dict:
+    started_at = utc_now()
+    status = {
+        "enabled": settings.executive_brief_email_enabled,
+        "status": "running",
+        "detail": "Executive brief email delivery is running.",
+        "actor": actor,
+        "channel": "email",
+        "interval_seconds": max(3600, settings.executive_brief_email_interval_seconds),
+        "cooldown_hours": settings.executive_brief_email_cooldown_hours,
+        "last_started_at": started_at.isoformat(),
+        "last_completed_at": None,
+        "last_result": None,
+        "last_error": None,
+    }
+    app.state.executive_brief_email_status = status
+    try:
+        result = await app.state.executive_brief_email_service.run_once(
+            actor=actor,
+            dry_run=dry_run,
+            force=force,
+        )
+        completed_at = utc_now()
+        final_status = {
+            **status,
+            "status": result.get("status") or "completed",
+            "detail": result.get("detail") or "Executive brief email delivery completed.",
+            "last_completed_at": completed_at.isoformat(),
+            "last_result": {
+                "dry_run": result.get("dry_run", dry_run),
+                "force": result.get("force", force),
+                "event_id": result.get("event_id"),
+                "response": result.get("response"),
+                "brief_summary": result.get("brief_summary"),
+                "notification_status": result.get("notification_status", {}),
+            },
+            "last_error": None,
+        }
+        app.state.executive_brief_email_status = final_status
+        return final_status
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        completed_at = utc_now()
+        final_status = {
+            **status,
+            "status": "failed",
+            "detail": "Executive brief email delivery failed.",
+            "last_completed_at": completed_at.isoformat(),
+            "last_result": None,
+            "last_error": str(exc),
+        }
+        app.state.executive_brief_email_status = final_status
+        audit_service = getattr(app.state, "audit_service", None)
+        if audit_service:
+            await audit_service.record(
+                event_type="executive_brief.email",
+                actor=actor,
+                actor_type="system",
+                resource_type="executive_brief",
+                resource_id="daily",
+                action="run",
+                outcome="failure",
+                metadata={"error": str(exc), "dry_run": dry_run, "force": force},
+            )
+        logger.exception("Executive brief email delivery failed")
         return final_status
 
 
@@ -722,6 +832,16 @@ async def _owner_attention_notification_loop(app: FastAPI) -> None:
         await asyncio.sleep(initial_delay)
     while True:
         await _run_owner_attention_notification_once(app)
+        await asyncio.sleep(interval)
+
+
+async def _executive_brief_email_loop(app: FastAPI) -> None:
+    initial_delay = max(0, settings.executive_brief_email_initial_delay_seconds)
+    interval = max(3600, settings.executive_brief_email_interval_seconds)
+    if initial_delay:
+        await asyncio.sleep(initial_delay)
+    while True:
+        await _run_executive_brief_email_once(app)
         await asyncio.sleep(interval)
 
 

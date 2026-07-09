@@ -2732,3 +2732,68 @@
   - `https://cyberteam.hyperailab.com/health`
 - Next step:
   - Commit this progress-log evidence update, push `main` to GitHub, and watch GitHub CI on the final remote head.
+
+### 2026-07-09T01:30:31Z — STEP-082 — Added scheduled executive owner brief email delivery
+- Files/services changed:
+  - `backend/src/cyber_team/operations/executive_briefing.py`
+  - `backend/src/cyber_team/api/__init__.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/src/cyber_team/config.py`
+  - `backend/tests/test_executive_briefing.py`
+  - `backend/tests/test_operating_cadence_scheduler.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/OperationsView.tsx`
+  - `.env.example`
+  - `deploy/environments/staging.env.example`
+  - `deploy/environments/production.env.example`
+  - `docs/architecture/autonomous-company-os.md`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `git status --short --branch && git remote -v && git log --oneline -8`
+  - `tail -n 120 docs/progress/erpnext-business-ops-completion.md`
+  - `rg -n "TODO|FIXME|placeholder|stub|next step|Autonomous Executive|Observer|outsourcing|benchmark|operation graph|FOSS" docs backend frontend .github -S`
+  - `sed` inspections of app startup, operations routes, executive service, communications gateway, tests, env examples, and Owner Console readiness UI.
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/operations/executive_briefing.py backend/src/cyber_team/api/__init__.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/config.py backend/tests/test_executive_briefing.py backend/tests/test_operating_cadence_scheduler.py backend/tests/test_api_operations.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_executive_briefing.py backend/tests/test_operating_cadence_scheduler.py backend/tests/test_api_operations.py -q`
+  - `cd frontend && npx -y node@20 ./node_modules/vitest/vitest.mjs run src/lib/api.test.ts`
+- Result:
+  - Added `ExecutiveBriefEmailService`, a FOSS/self-hosted email digest path that builds summary-only owner briefs from the Executive Company OS state and sends through the existing SMTP communications gateway.
+  - Added deduplication and cooldown using audit evidence, plus idempotency keys for communication logs.
+  - Added scheduler startup/shutdown wiring, runtime status, manual owner API endpoints, and readiness exposure.
+  - Added Owner Console readiness visibility and frontend API client coverage for executive brief email status/send operations.
+  - Added env knobs for enabling the daily brief, initial delay, daily interval, and cooldown in local/staging/production examples.
+  - Updated the autonomous-company architecture document to state the owner-informed-by-default digest principle.
+  - Focused backend lint passed.
+  - Focused backend tests passed: `20 passed, 2 warnings`.
+  - Focused frontend API tests passed under Node 20: `22 passed`.
+- Evidence:
+  - Local focused check outputs from 2026-07-09T01:30Z.
+- Next step:
+  - Run the broader quality gate, commit the executive brief milestone, push to the public GitHub repo, watch CI, then deploy/promote to staging if the gate remains green.
+
+### 2026-07-09T01:34:15Z — STEP-083 — Verified executive brief milestone with broad local quality gate
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 ./scripts/quality-gate.sh`
+- Result:
+  - Full backend lint passed.
+  - Full backend test suite passed: `195 passed, 2 warnings`.
+  - Backend compile passed.
+  - Alembic offline SQL rendered through the current head.
+  - Backend dependency audit reported no known vulnerabilities.
+  - Frontend production build passed under the script-managed Node 20 path.
+  - Frontend typecheck passed.
+  - Frontend tests passed: `22 passed`.
+  - Frontend dependency audit found `0` vulnerabilities.
+  - Docker Compose config validation passed.
+  - Operations script/dashboard syntax checks passed.
+  - Secret scan passed.
+  - FOSS/resource policy scan passed.
+  - Git diff hygiene passed.
+- Evidence:
+  - Local quality gate output from 2026-07-09T01:34Z.
+- Next step:
+  - Commit the executive brief milestone, push to `origin` and the public `cyber-ai-team` remote, then watch GitHub CI on the public repo.

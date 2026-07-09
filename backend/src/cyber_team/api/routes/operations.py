@@ -74,6 +74,11 @@ class OwnerAttentionNotifyRequest(BaseModel):
     limit: int = Field(default=25, ge=1, le=200)
 
 
+class ExecutiveBriefEmailRequest(BaseModel):
+    dry_run: bool = False
+    force: bool = False
+
+
 class AlertEmailTestRequest(BaseModel):
     dry_run: bool = False
     note: str = Field(default="", max_length=1000)
@@ -258,6 +263,13 @@ def _executive_service(request: Request):
     service = getattr(request.app.state, "executive_company_os_service", None)
     if not service:
         raise HTTPException(503, "Executive Company OS service is not available")
+    return service
+
+
+def _executive_brief_email_service(request: Request):
+    service = getattr(request.app.state, "executive_brief_email_service", None)
+    if not service:
+        raise HTTPException(503, "Executive brief email service is not available")
     return service
 
 
@@ -503,6 +515,51 @@ async def get_executive_brief(
 ):
     await require_authorization(request, principal, "read", "executive_brief")
     return await _executive_service(request).executive_brief()
+
+
+@router.get("/executive-brief/email/status")
+async def get_executive_brief_email_status(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "executive_brief_email")
+    service_status = await _executive_brief_email_service(request).status()
+    runtime_status = getattr(
+        request.app.state,
+        "executive_brief_email_status",
+        {
+            "enabled": False,
+            "status": "unavailable",
+            "detail": "Executive brief email runtime status is unavailable.",
+            "last_started_at": None,
+            "last_completed_at": None,
+            "last_result": None,
+            "last_error": None,
+        },
+    )
+    return {**service_status, "runtime": runtime_status}
+
+
+@router.post("/executive-brief/email")
+async def send_executive_brief_email(
+    data: ExecutiveBriefEmailRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "send",
+        "executive_brief_email",
+        context={"dry_run": data.dry_run, "force": data.force},
+    )
+    result = await _executive_brief_email_service(request).run_once(
+        actor=principal.email,
+        dry_run=data.dry_run,
+        force=data.force,
+    )
+    _clear_operations_readiness_cache(request)
+    return result
 
 
 @router.get("/operation-graph")
@@ -1524,6 +1581,36 @@ async def operations_readiness(
         **owner_attention_notification_status,
         "runtime": owner_attention_notification_runtime,
     }
+    executive_brief_email_runtime = getattr(
+        request.app.state,
+        "executive_brief_email_status",
+        {
+            "enabled": False,
+            "status": "unavailable",
+            "detail": "Executive brief email scheduler status is unavailable.",
+            "last_started_at": None,
+            "last_completed_at": None,
+            "last_result": None,
+            "last_error": None,
+        },
+    )
+    executive_brief_email_service = getattr(
+        request.app.state,
+        "executive_brief_email_service",
+        None,
+    )
+    if executive_brief_email_service:
+        executive_brief_email_status = await executive_brief_email_service.status()
+    else:
+        executive_brief_email_status = {
+            "enabled": False,
+            "status": "unavailable",
+            "detail": "Executive brief email service is not available.",
+        }
+    executive_brief_email_status = {
+        **executive_brief_email_status,
+        "runtime": executive_brief_email_runtime,
+    }
 
     team_activation_service = getattr(request.app.state, "team_activation_service", None)
     if team_activation_service:
@@ -1737,6 +1824,7 @@ async def operations_readiness(
         "operating_follow_ups": operating_follow_ups_status,
         "owner_attention": owner_attention_status,
         "owner_attention_notifications": owner_attention_notification_status,
+        "executive_brief_email": executive_brief_email_status,
         "team_activation": team_activation_status,
         "workflow_templates": workflow_templates_status,
         "interop": interop_status,

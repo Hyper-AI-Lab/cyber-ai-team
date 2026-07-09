@@ -6,6 +6,7 @@ Cyber-Team is a single-owner, self-hosted company operating system for a digital
 
 - **Autonomous by default:** the Chief Operating Agent should observe the company, decide what matters, delegate work, update records, and execute below-threshold actions without waiting for the owner.
 - **Owner-visible and owner-controllable:** every decision, action, benchmark, critique, approval, workflow, and memory write must be visible from the owner console with enough context to take over.
+- **Owner-informed by default:** the owner console is the source of truth, while scheduled executive email briefs summarize objectives, KPIs, benchmarks, Observer state, blocked actions, approvals, outsourcing requests, and readiness so the owner does not need to manually poll the cockpit.
 - **Large-impact gates:** autonomy is aggressive, but actions above configured financial, customer-visible, irreversible, low-confidence, or unresolved-consensus thresholds require owner approval.
 - **FOSS-first resource policy:** new tools, modules, and services must be free and open-source or self-hosted using current infrastructure. Paid or SaaS-only resources are future options, not readiness requirements.
 - **No fake success:** unavailable tools, missing credentials, generated-code drafts, and outsourced work must be reported as blocked, proposed, or outsourcing-required rather than successful.
@@ -26,11 +27,14 @@ The Chief Operating Agent runs an executive loop:
 7. Execute actions that pass policy and consensus.
 8. Create owner approvals or attention items for large-impact or disputed actions.
 9. Create outsourcing requests for work too complex or unsafe for internal agents.
-10. Write reflections, memory entries, audit evidence, and operation graph nodes/edges.
+10. Send a deduplicated executive brief through the required email channel when the daily owner digest is due.
+11. Write reflections, memory entries, audit evidence, and operation graph nodes/edges.
 
 ## Chief Operating Agent
 
 The Chief Operating Agent owns day-to-day AI-company operations. It can create internal plans, trigger workflows, seed memory, update low-impact ERPNext records, notify the owner, create tool proposals, and request outsourced implementation work. It cannot hot-load generated code or bypass readiness, resource policy, audit, or approval gates.
+
+The scheduled executive brief is summary-only by design: it reports operating state, watch items, and owner-console links, but it does not embed secrets, raw credentials, or large sensitive payloads.
 
 ## Observer Agent
 
@@ -91,4 +95,3 @@ All new dependencies, tool proposals, and integration proposals must declare:
 - free-tier limitations
 
 Readiness treats paid/SaaS-only proposals as non-blocking future work unless the owner explicitly changes policy after the company can afford them.
-

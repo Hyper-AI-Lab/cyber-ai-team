@@ -160,6 +160,60 @@ def test_governor_routes_call_service(monkeypatch):
     )
 
 
+def test_executive_brief_email_routes(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    app.state.executive_brief_email_service = AsyncMock()
+    app.state.executive_brief_email_service.status.return_value = {
+        "enabled": True,
+        "status": "ready",
+        "channel": "email",
+        "recipient": "owner@example.com",
+    }
+    app.state.executive_brief_email_service.run_once.return_value = {
+        "status": "dry_run",
+        "detail": "Executive brief email dry run completed.",
+        "dry_run": True,
+        "force": True,
+        "brief_summary": {"latest_run_id": "exegov_1"},
+    }
+    app.state.executive_brief_email_status = {
+        "enabled": True,
+        "status": "idle",
+        "last_completed_at": None,
+    }
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+    client = TestClient(app)
+
+    status_response = client.get("/api/operations/executive-brief/email/status")
+    send_response = client.post(
+        "/api/operations/executive-brief/email",
+        json={"dry_run": True, "force": True},
+    )
+
+    assert status_response.status_code == 200
+    assert status_response.json()["runtime"]["status"] == "idle"
+    assert send_response.status_code == 200
+    assert send_response.json()["brief_summary"]["latest_run_id"] == "exegov_1"
+    app.state.executive_brief_email_service.status.assert_awaited_once()
+    app.state.executive_brief_email_service.run_once.assert_awaited_once_with(
+        actor="owner@example.com",
+        dry_run=True,
+        force=True,
+    )
+
+
 def test_executive_company_os_routes_call_service(monkeypatch):
     app = FastAPI()
     app.include_router(operations_router, prefix="/api/operations")
