@@ -10,7 +10,7 @@ Set these values in the ignored environment file:
 
 ```bash
 GITHUB_TOKEN=<fine-grained-token-with-actions-workflow-write-access>
-GITHUB_REPOSITORY=Hyper-AI-Lab/cyber-team
+GITHUB_REPOSITORY=Hyper-AI-Lab/cyber-ai-team
 GITHUB_DEFAULT_WORKFLOW=ci.yml
 GITHUB_DEFAULT_REF=main
 ```
@@ -41,7 +41,7 @@ execution returns HTTP 204 from GitHub and records an audit/tool trace event.
 Use a staging-only workflow or harmless workflow input when validating:
 
 ```bash
-curl -X POST https://api.github.com/repos/Hyper-AI-Lab/cyber-team/actions/workflows/ci.yml/dispatches \
+curl -X POST https://api.github.com/repos/Hyper-AI-Lab/cyber-ai-team/actions/workflows/ci.yml/dispatches \
   -H "Accept: application/vnd.github+json" \
   -H "Authorization: Bearer ${GITHUB_TOKEN}" \
   -H "X-GitHub-Api-Version: 2022-11-28" \

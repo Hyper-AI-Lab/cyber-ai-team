@@ -456,7 +456,7 @@ def test_ci_trigger_readiness_tracks_github_configuration(monkeypatch):
     monkeypatch.setattr("cyber_team.tools.registry.settings.github_token", "token")
     monkeypatch.setattr(
         "cyber_team.tools.registry.settings.github_repository",
-        "Hyper-AI-Lab/cyber-team",
+        "Hyper-AI-Lab/cyber-ai-team",
     )
     monkeypatch.setattr("cyber_team.tools.registry.settings.github_default_workflow", "ci.yml")
     monkeypatch.setattr("cyber_team.tools.registry.settings.github_default_ref", "main")

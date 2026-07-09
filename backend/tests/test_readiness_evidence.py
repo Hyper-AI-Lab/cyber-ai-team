@@ -114,7 +114,7 @@ async def test_readiness_ci_allows_manual_full_ci_while_schedule_pending(tmp_pat
             {
                 "status": "ready",
                 "checked_at": datetime.now(UTC).isoformat(),
-                "repository": "Hyper-AI-Lab/cyber-team",
+                "repository": "Hyper-AI-Lab/cyber-ai-team",
                 "branch": "main",
                 "push": {
                     "head_sha": "current",
@@ -166,7 +166,7 @@ async def test_readiness_ci_accepts_current_manual_when_push_was_skipped(
             {
                 "status": "ready",
                 "checked_at": datetime.now(UTC).isoformat(),
-                "repository": "Hyper-AI-Lab/cyber-team",
+                "repository": "Hyper-AI-Lab/cyber-ai-team",
                 "branch": "main",
                 "current_head": "current",
                 "push": {

@@ -2839,3 +2839,39 @@
   - Live executive brief dry-run event `69d4d172-a302-401b-bd03-dca3cc775667`
 - Next step:
   - Commit this progress evidence, push to private and public GitHub remotes, then watch GitHub CI for the progress-log update.
+
+### 2026-07-09T02:07:00Z — STEP-086 — Made public GitHub repo canonical and archived old private repo
+- Files/services changed:
+  - `deploy/environments/staging.env.example`
+  - `deploy/environments/production.env.example`
+  - `deploy/environments/staging.env` local ignored configuration
+  - `docs/runbooks/github-ci-trigger.md`
+  - `backend/tests/test_tools.py`
+  - `backend/tests/test_readiness_evidence.py`
+  - Local Git remotes
+  - GitHub repository settings for `Hyper-AI-Lab/cyber-team`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `rg -n "Hyper-AI-Lab/cyber-team|cyber-team\\.git|Hyper-AI-Lab/cyber-ai-team|cyber-ai-team\\.git|github\\.com[:/]Hyper-AI-Lab" . -S --glob '!node_modules' --glob '!frontend/node_modules' --glob '!dist' --glob '!backups'`
+  - `gh repo view Hyper-AI-Lab/cyber-team --json nameWithOwner,isArchived,visibility,url`
+  - `gh repo view Hyper-AI-Lab/cyber-ai-team --json nameWithOwner,isArchived,visibility,url`
+  - `perl -0pi -e 's/^GITHUB_REPOSITORY=Hyper-AI-Lab\\/cyber-team$/GITHUB_REPOSITORY=Hyper-AI-Lab\\/cyber-ai-team/m' deploy/environments/staging.env`
+  - `printf '{"enabled":false}' | gh api --method PUT repos/Hyper-AI-Lab/cyber-team/actions/permissions --input -`
+  - `gh repo archive Hyper-AI-Lab/cyber-team --yes`
+  - `git remote rename origin archive-private`
+  - `git remote rename public origin`
+  - `git remote set-url --push archive-private DISABLED`
+  - `git branch --set-upstream-to=origin/main main`
+  - `gh api repos/Hyper-AI-Lab/cyber-team/actions/permissions`
+- Result:
+  - Public repo `Hyper-AI-Lab/cyber-ai-team` is now the local canonical `origin` for fetch and push.
+  - Old repo `Hyper-AI-Lab/cyber-team` is still private, now archived, and GitHub Actions are disabled.
+  - Local old-repo remote was renamed to `archive-private` and its push URL was set to `DISABLED` to prevent accidental pushes.
+  - Active CI-trigger examples, runbook defaults, tests, and local ignored staging config now point `GITHUB_REPOSITORY` at `Hyper-AI-Lab/cyber-ai-team`.
+  - Historical progress-log links to old private CI runs were intentionally preserved as audit history.
+- Evidence:
+  - `gh api repos/Hyper-AI-Lab/cyber-team/actions/permissions` returned `{"enabled":false,"sha_pinning_required":false}`.
+  - `gh repo view Hyper-AI-Lab/cyber-team` returned `isArchived=true`, `visibility=PRIVATE`.
+  - `git remote -v` shows `origin` as `git@github.com:Hyper-AI-Lab/cyber-ai-team.git` and `archive-private` push as `DISABLED`.
+- Next step:
+  - Run targeted checks for the repo-management patch, commit, push to the public repo only, then continue the next Autonomous Executive Company OS development milestone.
