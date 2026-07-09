@@ -3008,3 +3008,24 @@
   - Local broad backend gate output from 2026-07-09T07:27Z.
 - Next step:
   - Commit the optional-tool benchmark cleanup, push to `Hyper-AI-Lab/cyber-ai-team`, and watch public GitHub CI.
+
+### 2026-07-09T07:30:05Z — STEP-092 — Pushed optional-tool benchmark cleanup and verified public CI
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `git add backend/src/cyber_team/operations/tool_readiness_policy.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/operations/governor.py backend/src/cyber_team/operations/executive.py backend/tests/test_orchestration_governor.py backend/tests/test_executive_company_os.py docs/progress/erpnext-business-ops-completion.md`
+  - `git commit -m "fix: keep optional tools out of executive blockers"`
+  - `git push origin main`
+  - `gh run list --repo Hyper-AI-Lab/cyber-ai-team --branch main --limit 5`
+  - `gh run watch 29001602731 --repo Hyper-AI-Lab/cyber-ai-team --exit-status`
+  - `git status --short --branch`
+- Result:
+  - Created commit `8161c46` on `main`.
+  - Pushed `main` to public repository `Hyper-AI-Lab/cyber-ai-team`.
+  - Public GitHub CI run `29001602731` passed.
+  - GitHub CI jobs reported success for backend, frontend, and compose/secrets/diff hygiene; downstream optional jobs remained skipped by the workflow after required gates completed.
+  - Working tree was clean after the push.
+- Evidence:
+  - Public CI: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/29001602731`
+- Next step:
+  - Commit and push this progress evidence entry, then continue with the next executive-readiness target: reducing real role-backlog pressure and refreshing company-context drift evidence.
