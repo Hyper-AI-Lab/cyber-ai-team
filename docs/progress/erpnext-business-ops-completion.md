@@ -2875,3 +2875,45 @@
   - `git remote -v` shows `origin` as `git@github.com:Hyper-AI-Lab/cyber-ai-team.git` and `archive-private` push as `DISABLED`.
 - Next step:
   - Run targeted checks for the repo-management patch, commit, push to the public repo only, then continue the next Autonomous Executive Company OS development milestone.
+
+### 2026-07-09T02:21:00Z — STEP-087 — Made owner instructions durable operation-graph and memory inputs
+- Files/services changed:
+  - `backend/src/cyber_team/operations/executive.py`
+  - `backend/tests/test_executive_company_os.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `sed`/`rg` inspections of `ExecutiveCompanyOSService`, operation graph models, API routes, frontend executive cockpit, and executive tests.
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/operations/executive.py backend/tests/test_executive_company_os.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_executive_company_os.py -q`
+- Result:
+  - Safe owner instructions now become first-class `owner_instruction` operation graph nodes linked to the executive governor run with `triggered_run` edges.
+  - Safe owner instructions are now actually written to memory with `source_type=owner_instruction`, `run_id`, `actor`, policy version, and action idempotency metadata instead of merely reporting `safe_internal_recorded`.
+  - If memory indexing is disabled, unavailable, empty, or fails, the seed-memory action blocks with an explicit reason rather than reporting fake success.
+  - Owner instruction summaries are sanitized before graph or memory persistence; secret-like assignments and bearer tokens are redacted.
+  - Suspicious/prompt-injection-style instructions continue to route to Observer/owner escalation instead of becoming executable memory seeds.
+  - Focused Ruff check passed.
+  - Focused executive service tests passed: `11 passed, 2 warnings`.
+- Evidence:
+  - Local focused check outputs from 2026-07-09T02:21Z.
+- Next step:
+  - Run broader API/backend hygiene checks, commit, push to the public repo, watch GitHub CI, then promote to staging if the public CI remains green.
+
+### 2026-07-09T02:23:00Z — STEP-088 — Verified owner-instruction memory milestone locally
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src backend/tests`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m compileall -q backend/src`
+  - `python3 scripts/secret-scan.py`
+  - `git diff --check`
+- Result:
+  - Full backend Ruff check passed.
+  - Full backend test suite passed: `197 passed, 2 warnings`.
+  - Backend compile passed.
+  - Secret scan reported no high-confidence secrets.
+  - Git diff hygiene passed.
+- Evidence:
+  - Local broad backend gate output from 2026-07-09T02:23Z.
+- Next step:
+  - Commit the owner-instruction memory milestone, push to the public repo, watch public GitHub CI, then run staging promotion/smoke for the new release candidate.

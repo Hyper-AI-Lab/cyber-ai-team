@@ -264,6 +264,90 @@ async def test_missing_tool_capability_creates_outsourcing_request_not_fake_succ
 
 
 @pytest.mark.asyncio
+async def test_safe_owner_instruction_is_graph_linked_and_memory_seeded(
+    executive_session_factory,
+):
+    memory = FakeMemory()
+    service = build_service(memory=memory)
+
+    result = await service.run_executive_cycle(
+        actor="owner@example.com",
+        dry_run=False,
+        auto_apply_low_risk=True,
+        max_actions=10,
+        owner_instruction="Prioritize weekly ERPNext customer follow-up review.",
+    )
+
+    assert result["status"] == "completed"
+    assert result["operation_graph"]["owner_instruction_node_id"]
+    assert any(
+        item["action_type"] == "seed_memory"
+        and item["status"] == "completed"
+        and item["result"]["action"] == "owner_instruction_memory_seeded"
+        for item in result["autonomous_executions"]
+    )
+    instruction_memories = [
+        item
+        for item in memory.entries
+        if item["metadata"].get("source_type") == "owner_instruction"
+    ]
+    assert len(instruction_memories) == 1
+    assert "ERPNext customer follow-up" in instruction_memories[0]["content"]
+    async with executive_session_factory() as session:
+        instruction_nodes = (
+            await session.execute(
+                select(OperationGraphNode).where(
+                    OperationGraphNode.node_type == "owner_instruction"
+                )
+            )
+        ).scalars().all()
+    assert len(instruction_nodes) == 1
+    assert instruction_nodes[0].metadata_["actor"] == "owner@example.com"
+    assert instruction_nodes[0].metadata_["requires_review"] is False
+
+
+@pytest.mark.asyncio
+async def test_owner_instruction_memory_redacts_secret_like_values(
+    executive_session_factory,
+):
+    memory = FakeMemory()
+    service = build_service(memory=memory)
+
+    await service.run_executive_cycle(
+        actor="owner@example.com",
+        dry_run=False,
+        auto_apply_low_risk=True,
+        max_actions=10,
+        owner_instruction=(
+            "Remember CRM import credential password=super-secret-value "
+            "and Authorization: Bearer abcdefghijklmnop."
+        ),
+    )
+
+    instruction_memories = [
+        item
+        for item in memory.entries
+        if item["metadata"].get("source_type") == "owner_instruction"
+    ]
+    assert len(instruction_memories) == 1
+    content = instruction_memories[0]["content"]
+    assert "super-secret-value" not in content
+    assert "abcdefghijklmnop" not in content
+    assert "password=[redacted]" in content
+    assert "Authorization: [redacted]" in content
+    async with executive_session_factory() as session:
+        node = (
+            await session.execute(
+                select(OperationGraphNode).where(
+                    OperationGraphNode.node_type == "owner_instruction"
+                )
+            )
+        ).scalar_one()
+    assert "super-secret-value" not in node.summary
+    assert "abcdefghijklmnop" not in node.summary
+
+
+@pytest.mark.asyncio
 async def test_configuration_required_tool_records_owner_action_not_outsourcing(
     executive_session_factory,
 ):

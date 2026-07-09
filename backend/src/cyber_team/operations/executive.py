@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from datetime import timedelta
 from types import SimpleNamespace
@@ -84,6 +85,12 @@ class ExecutiveCompanyOSService:
         "commercial-only",
         "requires_paid_account",
     }
+    SECRET_ASSIGNMENT_PATTERN = re.compile(
+        r"(?i)(password|secret|token|api[_-]?key|api[_-]?secret|authorization|credential)"
+        r"(\s*[:=]\s*)"
+        r"([^\s,;]+)"
+    )
+    BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}")
 
     def __init__(
         self,
@@ -520,6 +527,11 @@ class ExecutiveCompanyOSService:
             },
             idempotency_key=f"operation_graph:run:{run_id}",
         )
+        owner_instruction_node = await self._record_owner_instruction_context(
+            run_node_id=run_node["id"],
+            actor=actor,
+            owner_instruction=owner_instruction,
+        )
         observations = await self._record_kpi_observations(run_id, snapshot)
         benchmark_results = await self._record_benchmark_results(
             run_id,
@@ -695,7 +707,12 @@ class ExecutiveCompanyOSService:
                 for item in executions
                 if item["status"] == "outsourcing_required"
             ],
-            "operation_graph": {"run_node_id": run_node["id"]},
+            "operation_graph": {
+                "run_node_id": run_node["id"],
+                "owner_instruction_node_id": (
+                    owner_instruction_node["id"] if owner_instruction_node else None
+                ),
+            },
             "counts": counts,
             "errors": errors,
             "resource_policy": await self.resource_policy_status(),
@@ -1277,6 +1294,10 @@ class ExecutiveCompanyOSService:
         instruction = (owner_instruction or "").strip()
         if instruction:
             lower = instruction.lower()
+            instruction_summary = self._sanitize_instruction_text(instruction)
+            instruction_source_id = self._stable_hash(
+                {"instruction": instruction_summary}
+            )[:16]
             suspicious = [
                 marker
                 for marker in self.PROMPT_INJECTION_MARKERS
@@ -1295,9 +1316,9 @@ class ExecutiveCompanyOSService:
                         confidence=0.5,
                         impact={"financial_usd": 0, "recipients": 0},
                         source_type="owner_instruction",
-                        source_id=self._stable_hash({"instruction": instruction})[:16],
+                        source_id=instruction_source_id,
                         payload={
-                            "instruction_summary": instruction[:500],
+                            "instruction_summary": instruction_summary[:500],
                             "suspicious_markers": suspicious,
                         },
                     )
@@ -1312,8 +1333,8 @@ class ExecutiveCompanyOSService:
                         confidence=0.9,
                         impact={"financial_usd": 0, "recipients": 0},
                         source_type="owner_instruction",
-                        source_id=self._stable_hash({"instruction": instruction})[:16],
-                        payload={"instruction_summary": instruction[:1000]},
+                        source_id=instruction_source_id,
+                        payload={"instruction_summary": instruction_summary[:1000]},
                     )
                 )
         if synthetic_large_impact:
@@ -1520,6 +1541,22 @@ class ExecutiveCompanyOSService:
                     ),
                 }
             )
+        elif action["action_type"] == "seed_memory" and auto_apply_low_risk:
+            if dry_run:
+                status = "planned"
+                result["action"] = "owner_instruction_memory_seed_planned"
+            else:
+                memory_result = await self._seed_owner_instruction_memory(
+                    run_id=run_id,
+                    actor=actor,
+                    action=action,
+                )
+                if memory_result["status"] == "completed":
+                    status = "completed"
+                    completed_at = utc_now()
+                else:
+                    status = "blocked"
+                result.update(memory_result)
         elif action["risk_level"] == "low" and auto_apply_low_risk:
             status = "completed" if not dry_run else "planned"
             completed_at = utc_now() if not dry_run else None
@@ -1985,6 +2022,51 @@ class ExecutiveCompanyOSService:
             await session.commit()
             return self._reflection_to_dict(reflection)
 
+    async def _record_owner_instruction_context(
+        self,
+        *,
+        run_node_id: str,
+        actor: str,
+        owner_instruction: str | None,
+    ) -> dict[str, Any] | None:
+        instruction = (owner_instruction or "").strip()
+        if not instruction:
+            return None
+        sanitized = self._sanitize_instruction_text(instruction, limit=2000)
+        lowered = instruction.lower()
+        suspicious = [
+            marker
+            for marker in self.PROMPT_INJECTION_MARKERS
+            if marker in lowered
+        ]
+        source_id = self._stable_hash({"instruction": sanitized})[:16]
+        node = await self._upsert_graph_node(
+            node_type="owner_instruction",
+            title="Owner instruction",
+            summary=sanitized[:8000],
+            source_type="owner_instruction",
+            source_id=source_id,
+            agent_id=None,
+            risk_level="high" if suspicious else "low",
+            confidence=0.95 if not suspicious else 0.5,
+            impact_score=0.0,
+            tags=[
+                "owner_instruction",
+                "executive",
+                "safety_review" if suspicious else "memory_seed",
+            ],
+            metadata={
+                "actor": actor,
+                "instruction_hash": source_id,
+                "suspicious_markers": suspicious,
+                "requires_review": bool(suspicious),
+                "policy_version": self.POLICY_VERSION,
+            },
+            idempotency_key=f"operation_graph:owner_instruction:{source_id}",
+        )
+        await self._create_graph_edge(node["id"], run_node_id, "triggered_run")
+        return node
+
     async def _has_operation_graph_history(self, session) -> bool:
         count = (
             await session.execute(select(func.count()).select_from(OperationGraphNode))
@@ -2046,6 +2128,74 @@ class ExecutiveCompanyOSService:
             # Memory indexing failure should be visible through readiness, not crash
             # the operating cycle after the durable DB graph has been written.
             return
+
+    async def _seed_owner_instruction_memory(
+        self,
+        *,
+        run_id: str,
+        actor: str,
+        action: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not settings.operation_graph_indexing_enabled:
+            return {
+                "status": "blocked",
+                "action": "owner_instruction_memory_seed_blocked",
+                "blocked_reason": "operation_graph_indexing_disabled",
+            }
+        if not self._memory:
+            return {
+                "status": "blocked",
+                "action": "owner_instruction_memory_seed_blocked",
+                "blocked_reason": "memory_service_unavailable",
+            }
+        payload = action.get("payload") or {}
+        instruction_summary = self._sanitize_instruction_text(
+            str(payload.get("instruction_summary") or ""),
+            limit=1000,
+        )
+        if not instruction_summary:
+            return {
+                "status": "blocked",
+                "action": "owner_instruction_memory_seed_blocked",
+                "blocked_reason": "empty_instruction_summary",
+            }
+        source_id = str(action.get("source_id") or "")[:64]
+        try:
+            memory = await self._memory.remember(
+                SimpleNamespace(
+                    agent_id="chief_operating_agent",
+                    memory_type="procedural",
+                    namespace="company:operation_graph",
+                    content=(
+                        "Owner instruction for the Chief Operating Agent: "
+                        f"{instruction_summary}"
+                    ),
+                    metadata={
+                        "source_type": "owner_instruction",
+                        "source_id": source_id,
+                        "run_id": run_id,
+                        "actor": actor,
+                        "policy_version": self.POLICY_VERSION,
+                        "action_idempotency_key": action.get("idempotency_key"),
+                        "operation_graph_indexed": True,
+                    },
+                    importance=0.88,
+                )
+            )
+            return {
+                "status": "completed",
+                "action": "owner_instruction_memory_seeded",
+                "memory_id": memory.get("id") if isinstance(memory, dict) else None,
+                "source_id": source_id,
+            }
+        except Exception as exc:
+            return {
+                "status": "blocked",
+                "action": "owner_instruction_memory_seed_blocked",
+                "blocked_reason": "memory_write_failed",
+                "error": str(exc),
+                "source_id": source_id,
+            }
 
     async def _upsert_graph_node(
         self,
@@ -2444,6 +2594,11 @@ class ExecutiveCompanyOSService:
             if key in thresholds:
                 sanitized[key] = thresholds[key]
         return sanitized
+
+    def _sanitize_instruction_text(self, text: str, *, limit: int = 1000) -> str:
+        sanitized = self.BEARER_PATTERN.sub("Bearer [redacted]", text)
+        sanitized = self.SECRET_ASSIGNMENT_PATTERN.sub(r"\1\2[redacted]", sanitized)
+        return sanitized.strip()[:limit]
 
     @staticmethod
     def _foss_constraints() -> list[str]:
