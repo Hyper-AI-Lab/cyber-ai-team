@@ -2917,3 +2917,44 @@
   - Local broad backend gate output from 2026-07-09T02:23Z.
 - Next step:
   - Commit the owner-instruction memory milestone, push to the public repo, watch public GitHub CI, then run staging promotion/smoke for the new release candidate.
+
+### 2026-07-09T02:32:30Z — STEP-089 — Released and promoted owner-instruction memory milestone
+- Files/services changed:
+  - Generated ignored release evidence under `dist/releases/`.
+  - Generated ignored staging promotion evidence under `dist/promotions/staging/`.
+  - Generated ignored staging backup under `backups/staging/`.
+  - Refreshed ignored GitHub CI evidence under `dist/ci/`.
+  - Staging Cyber-Team `core`, `worker`, and `ui` containers promoted to release `8cc96ea`.
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `gh run watch 28989177826 --repo Hyper-AI-Lab/cyber-ai-team --exit-status`
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) COMPOSE_PROJECT_NAME=cyberteam-release-smoke CYBERTEAM_CONTAINER_PREFIX=cyberteam-release-smoke API_PUBLISHED_PORT=18080 UI_PUBLISHED_PORT=13080 POSTGRES_PUBLISHED_PORT=15480 REDIS_PUBLISHED_PORT=16380 QDRANT_HTTP_PUBLISHED_PORT=16480 QDRANT_GRPC_PUBLISHED_PORT=16481 TEMPORAL_PUBLISHED_PORT=17280 OPA_PUBLISHED_PORT=18180 API_BASE=http://localhost:18080 UI_BASE=http://localhost:13080 NEXT_PUBLIC_API_URL=http://localhost:18080 NEXT_PUBLIC_WS_URL=ws://localhost:18080 COMPOSE_SMOKE_BUILD=0 SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) PROMOTE_DRY_RUN=0 ./scripts/promote-staging.sh`
+  - Live authenticated owner instruction check against `POST /api/operations/governor/instruct`.
+  - `gh workflow run CI --repo Hyper-AI-Lab/cyber-ai-team --ref main`
+  - `gh run watch 28989810039 --repo Hyper-AI-Lab/cyber-ai-team --exit-status`
+  - `GITHUB_REPOSITORY=Hyper-AI-Lab/cyber-ai-team GITHUB_DEFAULT_REF=main python3 scripts/github-ci-evidence.py`
+  - Live authenticated readiness check against `/api/operations/readiness?refresh=true`.
+- Result:
+  - Public push CI for `8cc96ea` passed.
+  - Full local release gate passed: backend lint/tests/compile/Alembic offline SQL/dependency audit, frontend build/typecheck/tests/audit, Compose config, operations syntax checks, secret scan, FOSS/resource scan, diff hygiene, migration rehearsals, isolated compose smoke, image build, and image scans.
+  - Backend and UI release images were tagged as `cyber-team-core:8cc96ea` and `cyber-team-ui:8cc96ea`.
+  - Trivy scans for both release images reported zero vulnerabilities.
+  - Staging backup was created before promotion.
+  - Staging promotion and public Caddy-backed compose smoke passed.
+  - Live `/health` reports build SHA `8cc96ea98c36dffee4f15196fe85cac0afd9a01c`.
+  - Live owner instruction execution completed, created owner instruction node `opnode_b63ef3a92d11476f`, and completed the `seed_memory` action.
+  - Manual full public CI run `28989810039` passed, including backend, frontend, observability, compose/secret/diff hygiene, Docker Compose smoke, and Docker image scan.
+  - Refreshed CI evidence is `ready` for repository `Hyper-AI-Lab/cyber-ai-team` at current head `8cc96ea98c36dffee4f15196fe85cac0afd9a01c`; scheduled proof is pending the next GitHub cron.
+  - Live `/api/operations/readiness?refresh=true` reports `status=ready`, `blockers=[]`, public repo CI evidence, and `executive_autonomy.status=ready`.
+- Evidence:
+  - Public push CI: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/28989177826`
+  - Public manual full CI: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/28989810039`
+  - `/home/projects/cyber-team/dist/releases/8cc96ea.json`
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-8cc96ea-20260709-022236.dump`
+  - `/home/projects/cyber-team/dist/promotions/staging/8cc96ea-20260709-022311.json`
+  - `/home/projects/cyber-team/dist/ci/github-ci-20260709T023202Z.json`
+  - Live owner instruction run `exegov_d991e112436a`
+  - Live owner instruction operation graph node `opnode_b63ef3a92d11476f`
+- Next step:
+  - Commit and push this release evidence to the public repo, then continue the next Autonomous Executive Company OS milestone.
