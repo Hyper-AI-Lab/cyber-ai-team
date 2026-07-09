@@ -2797,3 +2797,45 @@
   - Local quality gate output from 2026-07-09T01:34Z.
 - Next step:
   - Commit the executive brief milestone, push to `origin` and the public `cyber-ai-team` remote, then watch GitHub CI on the public repo.
+
+### 2026-07-09T01:53:00Z — STEP-084 — Verified executive brief release candidate with full release gate
+- Files/services changed:
+  - `dist/releases/b1ae6fb.json` generated as ignored release evidence.
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) COMPOSE_PROJECT_NAME=cyberteam-release-smoke CYBERTEAM_CONTAINER_PREFIX=cyberteam-release-smoke API_PUBLISHED_PORT=18080 UI_PUBLISHED_PORT=13080 POSTGRES_PUBLISHED_PORT=15480 REDIS_PUBLISHED_PORT=16380 QDRANT_HTTP_PUBLISHED_PORT=16480 QDRANT_GRPC_PUBLISHED_PORT=16481 TEMPORAL_PUBLISHED_PORT=17280 OPA_PUBLISHED_PORT=18180 API_BASE=http://localhost:18080 UI_BASE=http://localhost:13080 NEXT_PUBLIC_API_URL=http://localhost:18080 NEXT_PUBLIC_WS_URL=ws://localhost:18080 COMPOSE_SMOKE_BUILD=0 SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+- Result:
+  - Release candidate `b1ae6fb` passed the full release check.
+  - Quality gate passed again as part of the release check: backend lint/tests/compile/Alembic offline SQL/dependency audit, frontend build/typecheck/tests/audit, Compose config, operations syntax checks, secret scan, FOSS/resource scan, and diff hygiene.
+  - PostgreSQL migration rehearsal passed against legacy pre-Alembic and representative seeded schemas.
+  - Isolated Docker Compose smoke passed on non-conflicting local ports.
+  - Backend and UI production images were built and tagged as `cyber-team-core:b1ae6fb` and `cyber-team-ui:b1ae6fb`.
+  - Trivy scans for both images reported zero vulnerabilities.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/b1ae6fb.json`
+  - Local release-check output from 2026-07-09T01:53Z.
+- Next step:
+  - Promote `b1ae6fb` to staging, run live Cyber-Team checks, record evidence, then commit/push the appended progress evidence to both GitHub remotes.
+
+### 2026-07-09T01:54:10Z — STEP-085 — Promoted executive brief milestone to staging and verified live readiness
+- Files/services changed:
+  - Staging Cyber-Team `core`, `worker`, and `ui` containers promoted to release `b1ae6fb`.
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) PROMOTE_DRY_RUN=0 ./scripts/promote-staging.sh`
+  - Live authenticated checks against `https://cyberteam.hyperailab.com`: `/health`, `/api/operations/readiness?refresh=true`, `/api/operations/executive-brief/email/status`, and `POST /api/operations/executive-brief/email` with `{"dry_run": true, "force": true}`.
+- Result:
+  - Staging PostgreSQL backup was created before promotion.
+  - Staging promotion completed for `b1ae6fb`.
+  - Public Caddy-backed compose smoke passed: health, UI reachability, owner login, dashboard KPIs, integration status, WebSocket ticket, tool readiness, and approval queue flow.
+  - Live `/health` reports `status=ok`, `version=b1ae6fb`, and build SHA `b1ae6fb1cb65ee1fdb26d63371741168a4585487`.
+  - Live `/api/operations/readiness?refresh=true` reports `status=ready` and `blockers=[]`.
+  - Live executive brief email status reports `status=ready`, SMTP provider `mode=live`, recipient `contact@hyperailab.com`, 24-hour interval, and 20-hour cooldown.
+  - Executive brief dry run completed with audit event `69d4d172-a302-401b-bd03-dca3cc775667`; it summarized 3 objectives, 5 KPIs, 20 benchmark results, 0 blocked actions, and 0 open outsourcing requests without sending a live email.
+- Evidence:
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-b1ae6fb-20260709-015309.dump`
+  - `/home/projects/cyber-team/dist/promotions/staging/b1ae6fb-20260709-015346.json`
+  - `https://cyberteam.hyperailab.com/health`
+  - Live executive brief dry-run event `69d4d172-a302-401b-bd03-dca3cc775667`
+- Next step:
+  - Commit this progress evidence, push to private and public GitHub remotes, then watch GitHub CI for the progress-log update.
