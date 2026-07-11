@@ -3105,3 +3105,33 @@
   - Local broad backend gate output from 2026-07-11T00:57Z.
 - Next step:
   - Commit, push to `Hyper-AI-Lab/cyber-ai-team`, watch public CI, then deploy/promote to staging.
+
+### 2026-07-11T01:10:48Z — STEP-096 — Published and promoted role-backlog executive signal refinement
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `git add backend/src/cyber_team/agents/manager.py backend/src/cyber_team/operations/governor.py backend/src/cyber_team/operations/executive.py backend/src/cyber_team/company/context_sync.py backend/tests/test_role_backlog_review.py backend/tests/test_orchestration_governor.py backend/tests/test_executive_company_os.py backend/tests/test_company_context_sync.py docs/progress/erpnext-business-ops-completion.md`
+  - `git commit -m "feat: refine role backlog executive signals"`
+  - `git push origin main`
+  - `gh run watch 29133714951 --repo Hyper-AI-Lab/cyber-ai-team --exit-status`
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) COMPOSE_PROJECT_NAME=cyberteam-release-smoke CYBERTEAM_CONTAINER_PREFIX=cyberteam-release-smoke API_PUBLISHED_PORT=18080 UI_PUBLISHED_PORT=13080 POSTGRES_PUBLISHED_PORT=15480 REDIS_PUBLISHED_PORT=16380 QDRANT_HTTP_PUBLISHED_PORT=16480 QDRANT_GRPC_PUBLISHED_PORT=16481 TEMPORAL_PUBLISHED_PORT=17280 OPA_PUBLISHED_PORT=18180 API_BASE=http://localhost:18080 UI_BASE=http://localhost:13080 NEXT_PUBLIC_API_URL=http://localhost:18080 NEXT_PUBLIC_WS_URL=ws://localhost:18080 COMPOSE_SMOKE_BUILD=0 SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) PROMOTE_DRY_RUN=0 ./scripts/promote-staging.sh`
+  - Authenticated live staging checks against `https://cyberteam.hyperailab.com`: `/health`, `/api/operations/readiness?refresh=true`, `/api/roles/role-gaps/summary`, `/api/operations/company-context/drift-status`, and `POST /api/operations/governor/run`.
+- Result:
+  - Committed and pushed `16d0515 feat: refine role backlog executive signals` to the public canonical repository.
+  - Public GitHub CI run `29133714951` passed required jobs: Compose/Secrets/Diff, Frontend, and Backend.
+  - Full release gate passed for release `16d0515`, including backend quality, frontend quality, Alembic offline SQL, migration rehearsal, isolated compose smoke, image builds, and Trivy image scans with `0` reported vulnerabilities for core and UI images.
+  - Staging promotion completed with build SHA `16d0515af2471510ffa5ad1122b2c5f9bc76daa6`.
+  - Live `/health` reports version `16d0515` and environment `staging`.
+  - Live role backlog summary now reports `total=15`, `actionable=9`, `configuration_blocked=6`, `owner_pending=0`, and `by_recommended_action={"configure_tools": 6, "create_role": 6, "regenerate_approval": 3}`.
+  - Live company-context drift status now reports `stale_role_gap_count=0` for the latest drift run and `historical_stale_role_gap_count=32` for older stale recommendations.
+  - Live executive governor run `exegov_7f276c7d49db` completed and now observes `actionable_role_gaps=9`, `role_gaps_configuration_blocked=6`, `role_gaps_waiting_owner=0`, and `side_effect_tool_blockers=0`.
+  - Live readiness remains `degraded` only because the alert email delivery proof is stale.
+- Evidence:
+  - Public CI: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/29133714951`
+  - Release manifest: `dist/releases/16d0515.json`
+  - Staging promotion record: `dist/promotions/staging/16d0515-20260711-010835.json`
+  - Staging backup: `backups/staging/cyberteam-staging-16d0515-20260711-010758.dump`
+  - Live executive governor run: `exegov_7f276c7d49db`
+- Next step:
+  - Record this evidence entry in git, then clear the remaining stale alert-delivery proof with an owner-authorized alert email test.
