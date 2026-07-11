@@ -328,3 +328,35 @@ async def test_drift_scan_stales_previous_company_context_role_gaps_on_new_hash(
         assert gap.resolution["reason"] == "superseded_by_company_context_drift"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_drift_status_separates_latest_and_historical_stale_role_gaps():
+    engine, session_factory = await build_session_factory()
+    agent_manager = FakeAgentManager()
+    agent_manager.summarize_role_backlog = AsyncMock(
+        return_value={"counts": {"total": 3}}
+    )
+    try:
+        service = CompanyContextSyncService(
+            erpnext=FakeERPNext(),
+            agent_manager=agent_manager,
+            memory_service=FakeMemory(),
+            tool_registry=FakeToolRegistry(),
+            session_factory=session_factory,
+        )
+
+        await service.sync_from_erpnext(actor="owner@example.com", run_planner=False)
+        scan = await service.scan_for_erpnext_drift(
+            actor="scheduler",
+            apply_low_risk=False,
+            run_planner=False,
+        )
+        status = await service.drift_status()
+
+        assert scan["drift"]["stale_role_gaps"]["count"] == 0
+        assert status["latest_drift"]["status"] == "unchanged"
+        assert status["stale_role_gap_count"] == 0
+        assert status["historical_stale_role_gap_count"] == 3
+    finally:
+        await engine.dispose()

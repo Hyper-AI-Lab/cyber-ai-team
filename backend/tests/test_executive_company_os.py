@@ -227,6 +227,75 @@ async def test_executive_tool_benchmark_fails_required_side_effect_tools(
 
 
 @pytest.mark.asyncio
+async def test_executive_role_benchmark_uses_actionable_backlog_not_raw_active(
+    executive_session_factory,
+):
+    service = build_service(
+        snapshot={
+            "memory": {"open_findings": 0},
+            "role_backlog": {
+                "active": 20,
+                "actionable": 0,
+                "owner_pending": 12,
+                "configuration_blocked": 8,
+                "by_recommended_action": {
+                    "await_approval": 12,
+                    "configure_tools": 8,
+                },
+            },
+            "role_gap_samples": [],
+            "workflows": {"recent_failed": 0},
+            "tools": {"required_side_effects_not_live": []},
+        }
+    )
+
+    result = await service.run_executive_cycle(
+        actor="owner@example.com",
+        dry_run=False,
+        auto_apply_low_risk=True,
+        max_actions=5,
+    )
+
+    assert result["kpi_summary"]["values"]["active_role_gaps"] == 20.0
+    assert result["kpi_summary"]["values"]["actionable_role_gaps"] == 0.0
+    assert result["kpi_summary"]["values"]["role_gaps_waiting_owner"] == 12.0
+    assert result["kpi_summary"]["values"]["role_gaps_configuration_blocked"] == 8.0
+    assert "role_backlog_bounded" not in result["benchmark_summary"]["failed_keys"]
+    assert result["observer_review"]["status"] == "agreed"
+
+
+@pytest.mark.asyncio
+async def test_executive_role_benchmark_fails_large_actionable_backlog(
+    executive_session_factory,
+):
+    service = build_service(
+        snapshot={
+            "memory": {"open_findings": 0},
+            "role_backlog": {
+                "active": 12,
+                "actionable": 11,
+                "owner_pending": 1,
+                "configuration_blocked": 0,
+            },
+            "role_gap_samples": [],
+            "workflows": {"recent_failed": 0},
+            "tools": {"required_side_effects_not_live": []},
+        }
+    )
+
+    result = await service.run_executive_cycle(
+        actor="owner@example.com",
+        dry_run=False,
+        auto_apply_low_risk=True,
+        max_actions=5,
+    )
+
+    assert result["kpi_summary"]["values"]["actionable_role_gaps"] == 11.0
+    assert "role_backlog_bounded" in result["benchmark_summary"]["failed_keys"]
+    assert result["observer_review"]["status"] == "disagreed"
+
+
+@pytest.mark.asyncio
 async def test_large_impact_action_requests_approval(
     executive_session_factory,
 ):

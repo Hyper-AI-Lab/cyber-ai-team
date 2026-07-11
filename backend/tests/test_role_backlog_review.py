@@ -185,6 +185,102 @@ async def test_role_backlog_summary_groups_traceability_and_expired_approval(ses
     assert item["source_task_id"] == "task_review"
     assert item["approval"]["state"] == "expired"
     assert item["recommended_action"] == "regenerate_approval"
+    assert summary["counts"]["actionable"] == 1
+    assert summary["counts"]["by_recommended_action"] == {"regenerate_approval": 1}
+
+
+@pytest.mark.asyncio
+async def test_role_backlog_summary_separates_actionable_pending_and_config_blocked(
+    session_factory,
+):
+    now = utc_now()
+    async with session_factory() as session:
+        session.add_all(
+            [
+                RoleGap(
+                    id="gap_create",
+                    title="Need internal operations role",
+                    description="Can be created safely.",
+                    status="proposed",
+                    severity="medium",
+                    source_type="company_context_snapshot",
+                    company_namespace="company:acme",
+                    capability="operations",
+                    requested_tools=["memory_recall"],
+                    context={},
+                    proposed_role=proposed_role(["memory_recall"]),
+                    resolution={},
+                ),
+                RoleGap(
+                    id="gap_pending",
+                    title="Need calling role",
+                    description="Waiting for owner approval.",
+                    status="proposed",
+                    severity="medium",
+                    source_type="company_context_snapshot",
+                    company_namespace="company:acme",
+                    capability="communications",
+                    requested_tools=["make_call"],
+                    context={},
+                    proposed_role=proposed_role(["make_call", "memory_recall"]),
+                    resolution={},
+                ),
+                RoleGap(
+                    id="gap_config",
+                    title="Need analytics role",
+                    description="Blocked by missing analytics connector.",
+                    status="proposed",
+                    severity="medium",
+                    source_type="company_context_snapshot",
+                    company_namespace="company:acme",
+                    capability="analytics",
+                    requested_tools=["analytics_data_sync"],
+                    context={},
+                    proposed_role=proposed_role(
+                        ["analytics_data_sync", "memory_recall"]
+                    ),
+                    resolution={},
+                ),
+                ApprovalRequest(
+                    id="approval_pending",
+                    action_type="role_gap.tool_grant",
+                    action_description="Approve calling role",
+                    action_payload={
+                        "role_gap_id": "gap_pending",
+                        "high_risk_tools": ["make_call"],
+                        "default_tools": ["make_call", "memory_recall"],
+                    },
+                    requester="company_builder",
+                    requester_type="agent",
+                    risk_level="high",
+                    target_type="role_gap",
+                    target_id="gap_pending",
+                    status="pending",
+                    expires_at=now + timedelta(hours=1),
+                ),
+            ]
+        )
+        await session.commit()
+    manager = AgentManager(tool_registry=FakeToolRegistry({"make_call", "memory_recall"}))
+
+    summary = await manager.summarize_role_backlog(
+        statuses=["open", "proposed"],
+        source_type="company_context_snapshot",
+    )
+
+    assert summary["counts"]["total"] == 3
+    assert summary["counts"]["actionable"] == 1
+    assert summary["counts"]["owner_pending"] == 1
+    assert summary["counts"]["configuration_blocked"] == 1
+    assert summary["counts"]["by_recommended_action"] == {
+        "await_approval": 1,
+        "configure_tools": 1,
+        "create_role": 1,
+    }
+    operations_group = next(
+        group for group in summary["groups"] if group["business_function"] == "Operations"
+    )
+    assert operations_group["by_recommended_action"] == {"create_role": 1}
 
 
 @pytest.mark.asyncio

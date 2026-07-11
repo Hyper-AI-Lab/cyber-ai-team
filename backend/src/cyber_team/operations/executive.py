@@ -281,9 +281,9 @@ class ExecutiveCompanyOSService:
             },
             {
                 "key": "role_backlog_bounded",
-                "title": "Role backlog remains reviewable",
+                "title": "Actionable role backlog remains reviewable",
                 "description": "Role gaps should not grow without owner-visible review.",
-                "kpi_keys": ["active_role_gaps"],
+                "kpi_keys": ["actionable_role_gaps"],
                 "rule": {"comparison": "max", "threshold": 10},
                 "severity": "medium",
             },
@@ -312,6 +312,27 @@ class ExecutiveCompanyOSService:
                 ).all()
             }
             for definition in definitions:
+                if definition["key"] in existing:
+                    if definition["key"] == "role_backlog_bounded":
+                        existing_definition = (
+                            await session.execute(
+                                select(ExecutiveBenchmarkDefinition).where(
+                                    ExecutiveBenchmarkDefinition.key
+                                    == "role_backlog_bounded"
+                                )
+                            )
+                        ).scalar_one_or_none()
+                        if (
+                            existing_definition
+                            and existing_definition.kpi_keys != definition["kpi_keys"]
+                        ):
+                            existing_definition.title = definition["title"]
+                            existing_definition.description = definition["description"]
+                            existing_definition.kpi_keys = definition["kpi_keys"]
+                            existing_definition.rule = definition["rule"]
+                            existing_definition.severity = definition["severity"]
+                            existing_definition.updated_at = utc_now()
+                    continue
                 if definition["key"] not in existing:
                     session.add(
                         ExecutiveBenchmarkDefinition(
@@ -1371,18 +1392,38 @@ class ExecutiveCompanyOSService:
                 )
             )
         role_backlog = governor.get("role_backlog") or {}
-        if int(role_backlog.get("active") or 0) > 0:
+        active_role_gaps = int(role_backlog.get("active") or 0)
+        actionable_role_gaps = int(
+            role_backlog.get("actionable")
+            if role_backlog.get("actionable") is not None
+            else active_role_gaps
+        )
+        if actionable_role_gaps > 0:
             actions.append(
                 self._action_spec(
                     action_type="propose_role",
-                    title="Review active company role backlog",
-                    summary="Role gaps are available for owner-visible action.",
+                    title="Review actionable company role backlog",
+                    summary=(
+                        "Role gaps have a concrete next action such as propose, "
+                        "create, request approval, or regenerate approval."
+                    ),
                     risk_level="low",
                     confidence=0.86,
                     impact={"financial_usd": 0, "recipients": 0},
                     source_type="role_backlog",
-                    source_id="active",
-                    payload={"target_view": "agents"},
+                    source_id="actionable",
+                    payload={
+                        "target_view": "agents",
+                        "active_role_gaps": active_role_gaps,
+                        "actionable_role_gaps": actionable_role_gaps,
+                        "owner_pending": int(role_backlog.get("owner_pending") or 0),
+                        "configuration_blocked": int(
+                            role_backlog.get("configuration_blocked") or 0
+                        ),
+                        "by_recommended_action": (
+                            role_backlog.get("by_recommended_action") or {}
+                        ),
+                    },
                 )
             )
         for gap in governor.get("role_gap_samples") or []:
@@ -1855,6 +1896,12 @@ class ExecutiveCompanyOSService:
         role_backlog = governor.get("role_backlog") or {}
         workflows = governor.get("workflows") or {}
         tools = governor.get("tools") or {}
+        active_role_gaps = float(role_backlog.get("active") or 0)
+        actionable_role_gaps = float(
+            role_backlog.get("actionable")
+            if role_backlog.get("actionable") is not None
+            else active_role_gaps
+        )
         required_tool_blockers = (
             tools.get("required_side_effects_not_live")
             if "required_side_effects_not_live" in tools
@@ -1863,7 +1910,12 @@ class ExecutiveCompanyOSService:
         values = {
             "readiness_blockers": float(readiness_blockers),
             "open_memory_findings": float(memory.get("open_findings") or 0),
-            "active_role_gaps": float(role_backlog.get("active") or 0),
+            "active_role_gaps": active_role_gaps,
+            "actionable_role_gaps": actionable_role_gaps,
+            "role_gaps_waiting_owner": float(role_backlog.get("owner_pending") or 0),
+            "role_gaps_configuration_blocked": float(
+                role_backlog.get("configuration_blocked") or 0
+            ),
             "recent_workflow_failures": float(workflows.get("recent_failed") or 0),
             "side_effect_tool_blockers": float(len(required_tool_blockers or [])),
         }
@@ -1890,6 +1942,14 @@ class ExecutiveCompanyOSService:
             "readiness_blockers": ("Readiness blockers", "count", "max", 0),
             "open_memory_findings": ("Open memory findings", "count", "max", 5),
             "active_role_gaps": ("Active role gaps", "count", "max", 10),
+            "actionable_role_gaps": ("Actionable role gaps", "count", "max", 10),
+            "role_gaps_waiting_owner": ("Role gaps waiting for owner", "count", "max", 0),
+            "role_gaps_configuration_blocked": (
+                "Role gaps blocked by configuration",
+                "count",
+                "max",
+                0,
+            ),
             "recent_workflow_failures": ("Recent workflow failures", "count", "max", 0),
             "side_effect_tool_blockers": ("Side-effect tool blockers", "count", "max", 0),
         }
@@ -2538,12 +2598,20 @@ class ExecutiveCompanyOSService:
         governor = snapshot.get("governor_snapshot") or {}
         memory = governor.get("memory") or {}
         role_backlog = governor.get("role_backlog") or {}
+        actionable_role_gaps = (
+            role_backlog.get("actionable")
+            if role_backlog.get("actionable") is not None
+            else role_backlog.get("active", 0)
+        )
         return (
             "Executive Company OS assessed "
             f"{len(actions)} action(s). Autonomy mode={policy['mode']}, "
             f"paused={policy['paused']}, resource_policy={policy['resource_policy']}. "
             f"Open memory findings={memory.get('open_findings', 0)}, "
-            f"active role gaps={role_backlog.get('active', 0)}."
+            f"active role gaps={role_backlog.get('active', 0)}, "
+            f"actionable role gaps={actionable_role_gaps}, "
+            f"owner-pending role gaps={role_backlog.get('owner_pending', 0)}, "
+            f"configuration-blocked role gaps={role_backlog.get('configuration_blocked', 0)}."
         )
 
     @staticmethod

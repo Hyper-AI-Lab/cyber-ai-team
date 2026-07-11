@@ -3029,3 +3029,79 @@
   - Public CI: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/29001602731`
 - Next step:
   - Commit and push this progress evidence entry, then continue with the next executive-readiness target: reducing real role-backlog pressure and refreshing company-context drift evidence.
+
+### 2026-07-11T00:52:24Z — STEP-093 — Added actionable role-backlog benchmark semantics
+- Files/services changed:
+  - `backend/src/cyber_team/agents/manager.py`
+  - `backend/src/cyber_team/operations/governor.py`
+  - `backend/src/cyber_team/operations/executive.py`
+  - `backend/tests/test_role_backlog_review.py`
+  - `backend/tests/test_orchestration_governor.py`
+  - `backend/tests/test_executive_company_os.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `git status --short --branch`
+  - `rg -n "role_backlog_bounded|active_role_gaps|role-gaps/summary|recommended_action|stale_role_gap|company_context|drift_status|readiness_from_snapshot|role_backlog" backend/src backend/tests frontend/src`
+  - `sed` inspections of role backlog summary, company-context drift readiness, governor snapshots, executive benchmarks, and tests.
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/agents/manager.py backend/src/cyber_team/operations/governor.py backend/src/cyber_team/operations/executive.py backend/tests/test_role_backlog_review.py backend/tests/test_orchestration_governor.py backend/tests/test_executive_company_os.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_role_backlog_review.py backend/tests/test_orchestration_governor.py backend/tests/test_executive_company_os.py -q`
+- Result:
+  - Role backlog summaries now include `actionable`, `owner_pending`, `configuration_blocked`, and `by_recommended_action` counts.
+  - Governor operating snapshots enrich raw role-gap status counts with AgentManager actionability summaries when available.
+  - Executive KPIs now record raw active gaps plus actionable, owner-pending, and configuration-blocked role-gap counts.
+  - Default `role_backlog_bounded` benchmark now tracks `actionable_role_gaps` rather than raw active gaps, and startup updates existing default benchmark definitions to the corrected KPI.
+  - Chief Operating Agent action proposals and operating briefs now distinguish actionable backlog from owner-pending/configuration-blocked backlog.
+  - Focused Ruff check passed.
+  - Focused role/governor/executive tests passed: `26 passed, 2 warnings`.
+- Evidence:
+  - Local focused check outputs from 2026-07-11T00:52Z.
+- Next step:
+  - Run the broad backend quality gate, then perform live company-context/role-backlog checks against staging.
+
+### 2026-07-11T00:56:06Z — STEP-094 — Refreshed live company context and clarified drift stale-gap evidence
+- Files/services changed:
+  - `backend/src/cyber_team/company/context_sync.py`
+  - `backend/tests/test_company_context_sync.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - Live authenticated staging checks against `https://cyberteam.hyperailab.com`: `/api/operations/readiness?refresh=true`, `/api/operations/company-context`, `/api/operations/company-context/drift-status`, `/api/roles/role-gaps/summary`, `POST /api/operations/company-context/sync`, and `POST /api/operations/company-context/drift-scan`.
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/company/context_sync.py backend/src/cyber_team/agents/manager.py backend/src/cyber_team/operations/governor.py backend/src/cyber_team/operations/executive.py backend/tests/test_company_context_sync.py backend/tests/test_role_backlog_review.py backend/tests/test_orchestration_governor.py backend/tests/test_executive_company_os.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_company_context_sync.py backend/tests/test_role_backlog_review.py backend/tests/test_orchestration_governor.py backend/tests/test_executive_company_os.py -q`
+- Result:
+  - Live ERPNext company-context sync returned `noop` for snapshot `ctx_a21b46339b2f` with source hash `17b8dd89593eef73e8623cc25bd06aeaf16d21ea2e9ff341e9e2a100852abc10`.
+  - Live drift scan returned `unchanged`; latest drift staled `0` current role gaps.
+  - Live company-context readiness now reports `status=ready`, `stale=false`, `freshness_basis=sync_verification`, and a fresh `last_verified_at` timestamp.
+  - Live readiness remains degraded only because alert email proof is stale; company context is not a blocker.
+  - Found and fixed a drift-status ambiguity: `stale_role_gap_count` now reflects the latest drift run when available, while `historical_stale_role_gap_count` preserves total historical stale role recommendations separately.
+  - Hardened drift status when a partial/fake agent manager does not expose `summarize_role_backlog`.
+  - Focused Ruff check passed.
+  - Focused company-context/role/governor/executive tests passed: `32 passed, 2 warnings`.
+- Evidence:
+  - Live sync run `ctxsync_255a210b6ebc`.
+  - Live snapshot `ctx_a21b46339b2f`.
+  - Local focused check outputs from 2026-07-11T00:56Z.
+- Next step:
+  - Run the broad backend quality gate, commit, push to the public repo, watch public CI, then deploy to staging so the improved role-backlog/drift semantics are live.
+
+### 2026-07-11T00:57:15Z — STEP-095 — Verified role-backlog and company-context semantics with broad backend gate
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src backend/tests`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m compileall -q backend/src`
+  - `python3 scripts/secret-scan.py`
+  - `git diff --check`
+  - `git diff --stat`
+  - `git status --short --branch`
+- Result:
+  - Full backend Ruff check passed.
+  - Full backend test suite passed: `205 passed, 2 warnings`.
+  - Backend compile passed.
+  - Secret scan reported no high-confidence secrets.
+  - Git diff hygiene passed.
+  - Final diff is scoped to role-backlog actionability semantics, company-context drift status clarity, regression tests, and this append-only progress log.
+- Evidence:
+  - Local broad backend gate output from 2026-07-11T00:57Z.
+- Next step:
+  - Commit, push to `Hyper-AI-Lab/cyber-ai-team`, watch public CI, then deploy/promote to staging.

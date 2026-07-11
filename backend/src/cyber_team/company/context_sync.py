@@ -482,11 +482,17 @@ class CompanyContextSyncService:
                 }
                 break
         stale_summary = None
-        if self._agent_manager:
+        if self._agent_manager and hasattr(self._agent_manager, "summarize_role_backlog"):
             stale_summary = await self._agent_manager.summarize_role_backlog(
                 statuses=["stale"],
                 source_type="company_context_snapshot",
                 limit=200,
+            )
+        historical_stale_count = (stale_summary or {}).get("counts", {}).get("total", 0)
+        latest_stale_count = None
+        if latest_drift:
+            latest_stale_count = (
+                (latest_drift.get("stale_role_gaps") or {}).get("count")
             )
         return {
             "enabled": settings.erpnext_drift_detection_enabled,
@@ -498,7 +504,12 @@ class CompanyContextSyncService:
             "latest_drift": latest_drift,
             "latest_snapshot_id": (snapshot or {}).get("id"),
             "latest_source_hash": (snapshot or {}).get("source_hash"),
-            "stale_role_gap_count": (stale_summary or {}).get("counts", {}).get("total", 0),
+            "stale_role_gap_count": (
+                latest_stale_count
+                if latest_stale_count is not None
+                else historical_stale_count
+            ),
+            "historical_stale_role_gap_count": historical_stale_count,
         }
 
     def readiness_from_snapshot(

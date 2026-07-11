@@ -262,6 +262,7 @@ class OrchestrationGovernorService:
             recent_audit = await self._recent_audit(session)
             open_role_gaps = await self._open_role_gaps(session)
 
+        role_gap_counts = await self._enrich_role_gap_counts(role_gap_counts)
         tool_status = self._tool_status()
         owner_attention = await self._owner_attention_summary()
         production_evidence = await self._production_evidence_summary()
@@ -915,7 +916,48 @@ class OrchestrationGovernorService:
         )
         by_status = {status: count for status, count in result.all()}
         active = sum(by_status.get(status, 0) for status in self.ACTIVE_GAP_STATUSES)
-        return {"total": sum(by_status.values()), "active": active, "by_status": by_status}
+        return {
+            "total": sum(by_status.values()),
+            "active": active,
+            "actionable": active,
+            "owner_pending": 0,
+            "configuration_blocked": 0,
+            "by_status": by_status,
+            "by_recommended_action": {},
+            "summary_available": False,
+        }
+
+    async def _enrich_role_gap_counts(self, counts: dict[str, Any]) -> dict[str, Any]:
+        if not self._agent_manager or not hasattr(
+            self._agent_manager,
+            "summarize_role_backlog",
+        ):
+            return counts
+        try:
+            summary = await self._agent_manager.summarize_role_backlog(
+                statuses=["open", "proposed"],
+                source_type="company_context_snapshot",
+                limit=500,
+            )
+        except Exception as exc:
+            return {
+                **counts,
+                "summary_available": False,
+                "summary_error": str(exc),
+            }
+        summary_counts = summary.get("counts") or {}
+        return {
+            **counts,
+            "summary_available": True,
+            "active": summary_counts.get("total", counts.get("active", 0)),
+            "actionable": summary_counts.get("actionable", counts.get("active", 0)),
+            "owner_pending": summary_counts.get("owner_pending", 0),
+            "configuration_blocked": summary_counts.get("configuration_blocked", 0),
+            "by_recommended_action": summary_counts.get("by_recommended_action", {}),
+            "by_function": summary_counts.get("by_function", {}),
+            "by_risk": summary_counts.get("by_risk", {}),
+            "group_count": len(summary.get("groups") or []),
+        }
 
     async def _plan_counts(self, session) -> dict[str, Any]:
         result = await session.execute(

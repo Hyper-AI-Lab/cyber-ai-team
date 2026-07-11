@@ -74,6 +74,31 @@ class FakeERPNext:
         }
 
 
+class FakeAgentManager:
+    async def summarize_role_backlog(
+        self,
+        statuses=None,
+        source_type=None,
+        limit=500,
+    ):
+        return {
+            "counts": {
+                "total": 12,
+                "actionable": 2,
+                "owner_pending": 7,
+                "configuration_blocked": 3,
+                "by_recommended_action": {
+                    "create_role": 2,
+                    "await_approval": 7,
+                    "configure_tools": 3,
+                },
+                "by_function": {"Operations": 2, "Communications": 10},
+                "by_risk": {"medium": 5, "high": 7},
+            },
+            "groups": [{"business_function": "Operations"}],
+        }
+
+
 class FakeAudit:
     def __init__(self):
         self.events = []
@@ -145,8 +170,9 @@ async def seed_alias_role_gap(factory):
         await session.commit()
 
 
-def build_service(audit=None):
+def build_service(audit=None, agent_manager=None):
     return OrchestrationGovernorService(
+        agent_manager=agent_manager,
         planning_service=FakePlanning(),
         tool_registry=FakeToolRegistry(),
         audit_service=audit or FakeAudit(),
@@ -245,6 +271,27 @@ async def test_governor_snapshot_separates_required_and_optional_tool_blockers(
         item["readiness_required"] is False
         for item in tools["non_blocking_side_effects"]
     )
+
+
+@pytest.mark.asyncio
+async def test_governor_snapshot_uses_role_backlog_actionability_summary(
+    governor_session_factory,
+):
+    service = build_service(agent_manager=FakeAgentManager())
+
+    snapshot = await service.build_operating_snapshot()
+    role_backlog = snapshot["role_backlog"]
+
+    assert role_backlog["active"] == 12
+    assert role_backlog["actionable"] == 2
+    assert role_backlog["owner_pending"] == 7
+    assert role_backlog["configuration_blocked"] == 3
+    assert role_backlog["summary_available"] is True
+    assert role_backlog["by_recommended_action"] == {
+        "create_role": 2,
+        "await_approval": 7,
+        "configure_tools": 3,
+    }
 
 
 @pytest.mark.asyncio

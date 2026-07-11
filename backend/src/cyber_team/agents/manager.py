@@ -27,6 +27,15 @@ from cyber_team.memory.service import MemoryService
 
 class AgentManager:
     ACTIVE_ROLE_GAP_STATUSES = {"open", "proposed"}
+    ACTIONABLE_ROLE_GAP_ACTIONS = {
+        "propose_role",
+        "create_role",
+        "create_after_approval",
+        "request_approval",
+        "regenerate_approval",
+    }
+    OWNER_PENDING_ROLE_GAP_ACTIONS = {"await_approval"}
+    CONFIGURATION_BLOCKED_ROLE_GAP_ACTIONS = {"configure_tools"}
     HIGH_RISK_ROLE_TOOLS = {
         "make_call",
         "send_sms",
@@ -868,17 +877,31 @@ Propose a new role to fill this gap. Return JSON with:
             "dismissed": 0,
             "deferred": 0,
             "stale": 0,
+            "actionable": 0,
+            "owner_pending": 0,
+            "configuration_blocked": 0,
             "by_status": {},
             "by_function": {},
             "by_risk": {},
+            "by_recommended_action": {},
         }
         for item in items:
             status = item["status"]
             function = item["business_function"]
             risk = item["risk_level"]
+            recommended_action = item["recommended_action"]
             counts["by_status"][status] = counts["by_status"].get(status, 0) + 1
             counts["by_function"][function] = counts["by_function"].get(function, 0) + 1
             counts["by_risk"][risk] = counts["by_risk"].get(risk, 0) + 1
+            counts["by_recommended_action"][recommended_action] = (
+                counts["by_recommended_action"].get(recommended_action, 0) + 1
+            )
+            if recommended_action in self.ACTIONABLE_ROLE_GAP_ACTIONS:
+                counts["actionable"] += 1
+            elif recommended_action in self.OWNER_PENDING_ROLE_GAP_ACTIONS:
+                counts["owner_pending"] += 1
+            elif recommended_action in self.CONFIGURATION_BLOCKED_ROLE_GAP_ACTIONS:
+                counts["configuration_blocked"] += 1
             if status in counts:
                 counts[status] += 1
             group = groups_by_function.setdefault(
@@ -893,10 +916,14 @@ Propose a new role to fill this gap. Return JSON with:
                     "expired_approval_count": 0,
                     "risk_levels": [],
                     "requested_tools": [],
+                    "by_recommended_action": {},
                     "items": [],
                 },
             )
             group["count"] += 1
+            group["by_recommended_action"][recommended_action] = (
+                group["by_recommended_action"].get(recommended_action, 0) + 1
+            )
             if status == "open":
                 group["open_count"] += 1
             if status == "proposed":
