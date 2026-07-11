@@ -3135,3 +3135,24 @@
   - Live executive governor run: `exegov_7f276c7d49db`
 - Next step:
   - Record this evidence entry in git, then clear the remaining stale alert-delivery proof with an owner-authorized alert email test.
+
+### 2026-07-11T05:06:08Z — STEP-097 — Refreshed owner alert email proof and cleared readiness blocker
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - Inspected the owner alert proof API contract in `backend/src/cyber_team/api/routes/operations.py`.
+  - Read the alert-delivery runbook section in `docs/runbooks/production-readiness-closure.md`.
+  - Authenticated against live staging at `https://cyberteam.hyperailab.com/api/auth/login` using ignored staging owner credentials.
+  - Owner-authorized `POST /api/operations/alerts/test-email` with `dry_run=false`.
+  - Authenticated live staging `GET /api/operations/readiness?refresh=true`.
+- Result:
+  - Live alert email proof returned HTTP 200 with `status=ready`, `provider=smtp`, and `send_status=sent`.
+  - One alert proof email was sent to the configured owner recipient `contact@hyperailab.com`.
+  - Control evidence `d28f6008-a377-4584-95f4-5a005f593b83` was recorded with outcome `success`.
+  - Live staging readiness now returns `status=ready`, `alerts.status=ready`, `alerts.blocking=false`, and no required blockers.
+  - No secret values were printed or committed.
+- Evidence:
+  - Alert control evidence id: `d28f6008-a377-4584-95f4-5a005f593b83`
+  - Live readiness timestamp from alerts evidence: `2026-07-11T05:05:56.000250`
+- Next step:
+  - Commit and push this progress evidence entry, then continue the next development milestone from a ready staging baseline.
