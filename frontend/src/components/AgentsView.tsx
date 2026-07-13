@@ -7,9 +7,10 @@ import { Bot, Play, Plus, Cpu, Shield, HelpCircle, Check, X, RefreshCw, Database
 interface AgentsViewProps {
   agents: any[]
   onRefresh: () => void
+  onNavigate?: (view: 'approvals' | 'integrations' | 'operations') => void
 }
 
-export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
+export default function AgentsView({ agents, onRefresh, onNavigate }: AgentsViewProps) {
   const [invokeAgentId, setInvokeAgentId] = useState<string | null>(null)
   const [task, setTask] = useState('')
   const [result, setResult] = useState<string | null>(null)
@@ -59,6 +60,7 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
   const textareaClassName = 'h-32 w-full resize-none rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500'
   const selectClassName = 'w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-white focus:outline-none focus:border-blue-500'
   const roleBacklogItems = roleBacklog?.items || roleGaps
+  const roleBacklogCounts = roleBacklog?.counts || {}
 
   const loadOperatingCadence = useCallback(async (companyNamespace?: string) => {
     setOperatingCadenceError(null)
@@ -367,9 +369,31 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
     return 'badge-warning'
   }
 
+  const roleGapId = (item: any) => item.gap_id || item.id
+
+  const roleGapAction = (item: any) => (
+    item.recommended_action || (item.status === 'open' ? 'propose_role' : 'create_role')
+  )
+
+  const eligibleForBatchAction = (
+    item: any,
+    action: 'propose' | 'apply' | 'regenerate_approval' | 'defer' | 'dismiss'
+  ) => {
+    const recommendation = roleGapAction(item)
+    if (!['open', 'proposed'].includes(item.status)) return false
+    if (action === 'propose') return recommendation === 'propose_role'
+    if (action === 'apply') return ['create_role', 'create_after_approval'].includes(recommendation)
+    if (action === 'regenerate_approval') {
+      return ['request_approval', 'regenerate_approval'].includes(recommendation)
+    }
+    return true
+  }
+
   const selectableRoleGapIds = roleBacklogItems
-    .filter((item: any) => ['open', 'proposed'].includes(item.status))
-    .map((item: any) => item.gap_id || item.id)
+    .filter((item: any) => (
+      ['open', 'proposed'].includes(item.status) && roleGapAction(item) !== 'configure_tools'
+    ))
+    .map((item: any) => roleGapId(item))
 
   const toggleRoleGapSelection = (gapId: string) => {
     setSelectedRoleGapIds((current) => (
@@ -388,23 +412,31 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
     action: 'propose' | 'apply' | 'regenerate_approval' | 'defer' | 'dismiss'
   ) => {
     if (selectedRoleGapIds.length === 0) return
+    const eligibleIds = selectedRoleGapIds.filter((gapId) => {
+      const item = roleBacklogItems.find((candidate: any) => roleGapId(candidate) === gapId)
+      return item ? eligibleForBatchAction(item, action) : false
+    })
+    if (eligibleIds.length === 0) {
+      alert('No selected role recommendations are eligible for that action.')
+      return
+    }
     setBatchProcessing(true)
     try {
       const approvalIds = roleBacklogItems.reduce((acc: Record<string, string>, item: any) => {
-        const gapId = item.gap_id || item.id
-        if (selectedRoleGapIds.includes(gapId) && item.approval?.state === 'approved') {
+        const gapId = roleGapId(item)
+        if (eligibleIds.includes(gapId) && item.approval?.state === 'approved') {
           acc[gapId] = item.approval.approval_id
         }
         return acc
       }, {})
       const result = await api.batchRoleGapAction({
-        gap_ids: selectedRoleGapIds,
+        gap_ids: eligibleIds,
         action,
         company_profile: companyProfileForRoleGap(),
         approval_ids: approvalIds,
         note: `Batch ${action} from owner console`,
       })
-      setSelectedRoleGapIds([])
+      setSelectedRoleGapIds((current) => current.filter((id) => !eligibleIds.includes(id)))
       await loadRoleGaps()
       await loadOperatingCadence(companyContext?.snapshot?.company_namespace)
       onRefresh()
@@ -943,7 +975,7 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <div className="mt-4 grid gap-3 md:grid-cols-5">
           <div>
             <label className="mb-1 block text-xs text-slate-500">Status</label>
             <select
@@ -978,13 +1010,31 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
           <div className="rounded border border-slate-700 bg-slate-900/60 px-3 py-2">
             <p className="text-xs uppercase tracking-wide text-slate-500">Review Items</p>
             <p className="mt-1 text-xl font-semibold text-white">
-              {roleBacklog?.counts?.total ?? roleBacklogItems.length}
+              {roleBacklogCounts.total ?? roleBacklogItems.length}
+            </p>
+          </div>
+          <div className="rounded border border-slate-700 bg-slate-900/60 px-3 py-2">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Actionable</p>
+            <p className="mt-1 text-xl font-semibold text-emerald-300">
+              {roleBacklogCounts.actionable ?? 0}
             </p>
           </div>
           <div className="rounded border border-slate-700 bg-slate-900/60 px-3 py-2">
             <p className="text-xs uppercase tracking-wide text-slate-500">Needs Approval</p>
             <p className="mt-1 text-xl font-semibold text-white">
               {roleBacklog?.approval_count ?? 0}
+            </p>
+          </div>
+          <div className="rounded border border-slate-700 bg-slate-900/60 px-3 py-2">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Owner Pending</p>
+            <p className="mt-1 text-xl font-semibold text-amber-300">
+              {roleBacklogCounts.owner_pending ?? 0}
+            </p>
+          </div>
+          <div className="rounded border border-slate-700 bg-slate-900/60 px-3 py-2">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Setup Required</p>
+            <p className="mt-1 text-xl font-semibold text-red-300">
+              {roleBacklogCounts.configuration_blocked ?? 0}
             </p>
           </div>
         </div>
@@ -1000,21 +1050,39 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
             <div className="ml-auto flex flex-wrap gap-2">
               <button
                 onClick={() => handleBatchRoleGapAction('propose')}
-                disabled={batchProcessing || selectedRoleGapIds.length === 0}
+                disabled={
+                  batchProcessing
+                  || !roleBacklogItems.some((item: any) => (
+                    selectedRoleGapIds.includes(roleGapId(item))
+                    && eligibleForBatchAction(item, 'propose')
+                  ))
+                }
                 className="btn-secondary text-sm"
               >
                 Propose Selected
               </button>
               <button
                 onClick={() => handleBatchRoleGapAction('regenerate_approval')}
-                disabled={batchProcessing || selectedRoleGapIds.length === 0}
+                disabled={
+                  batchProcessing
+                  || !roleBacklogItems.some((item: any) => (
+                    selectedRoleGapIds.includes(roleGapId(item))
+                    && eligibleForBatchAction(item, 'regenerate_approval')
+                  ))
+                }
                 className="btn-primary text-sm"
               >
                 Request Approvals
               </button>
               <button
                 onClick={() => handleBatchRoleGapAction('apply')}
-                disabled={batchProcessing || selectedRoleGapIds.length === 0}
+                disabled={
+                  batchProcessing
+                  || !roleBacklogItems.some((item: any) => (
+                    selectedRoleGapIds.includes(roleGapId(item))
+                    && eligibleForBatchAction(item, 'apply')
+                  ))
+                }
                 className="btn-primary text-sm"
               >
                 Create Approved
@@ -1060,10 +1128,11 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
 
         <div className="mt-4 space-y-3">
           {roleBacklogItems.map((item: any) => {
-            const gapId = item.gap_id || item.id
+            const gapId = roleGapId(item)
             const proposal = item.proposed_role?.manifest_payload || item.proposed_role?.manifest_payload
             const readinessItems = item.tool_readiness?.items || []
-            const action = item.recommended_action || (item.status === 'open' ? 'propose_role' : 'create_role')
+            const action = roleGapAction(item)
+            const setupGuidance = item.setup_guidance
             return (
               <div key={gapId} className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
                 <div className="flex items-start justify-between gap-4">
@@ -1132,6 +1201,26 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
                         )}
                       </div>
                     )}
+                    {setupGuidance && action === 'configure_tools' && (
+                      <div className="mt-3 rounded border border-red-900/70 bg-red-950/30 p-3 text-xs text-red-100">
+                        <p className="font-semibold">Setup required</p>
+                        <p className="mt-1 text-red-100/80">{setupGuidance.summary}</p>
+                        <p className="mt-1 text-red-100/80">{setupGuidance.next_action}</p>
+                        {setupGuidance.provider_groups?.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {setupGuidance.provider_groups.map((group: any) => (
+                              <span
+                                key={`${gapId}-${group.provider}`}
+                                className="rounded-full bg-red-600/20 px-2 py-1 text-red-200"
+                                title={group.reason}
+                              >
+                                {group.provider}: {(group.tools || []).join(', ')}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="flex shrink-0 flex-wrap justify-end gap-2">
                     {action === 'propose_role' && (
@@ -1159,8 +1248,21 @@ export default function AgentsView({ agents, onRefresh }: AgentsViewProps) {
                       </button>
                     )}
                     {action === 'await_approval' && (
-                      <button disabled className="btn-secondary text-sm opacity-60">
+                      <button
+                        onClick={() => onNavigate?.('approvals')}
+                        disabled={!onNavigate}
+                        className="btn-secondary text-sm"
+                      >
                         Awaiting Approval
+                      </button>
+                    )}
+                    {action === 'configure_tools' && (
+                      <button
+                        onClick={() => onNavigate?.('integrations')}
+                        disabled={!onNavigate}
+                        className="btn-secondary text-sm"
+                      >
+                        Integrations
                       </button>
                     )}
                     {['open', 'proposed'].includes(item.status) && (

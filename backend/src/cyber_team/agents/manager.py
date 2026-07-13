@@ -1794,6 +1794,7 @@ Propose a new role to fill this gap. Return JSON with:
                             "state": readiness["state"],
                             "reason": readiness["readiness_reason"],
                             "side_effects": readiness["side_effects"],
+                            "executor_kind": readiness.get("executor_kind"),
                             "requires_configuration": readiness["requires_configuration"],
                             "executable": readiness["executable"],
                         }
@@ -1805,6 +1806,7 @@ Propose a new role to fill this gap. Return JSON with:
                             "state": "unknown",
                             "reason": "Tool registry does not expose readiness checks.",
                             "side_effects": False,
+                            "executor_kind": "unknown",
                             "requires_configuration": False,
                             "executable": False,
                         }
@@ -1817,6 +1819,7 @@ Propose a new role to fill this gap. Return JSON with:
                         "state": "unknown",
                         "reason": "Tool registry is unavailable.",
                         "side_effects": False,
+                        "executor_kind": "unknown",
                         "requires_configuration": False,
                         "executable": False,
                     }
@@ -1828,6 +1831,7 @@ Propose a new role to fill this gap. Return JSON with:
                     "state": "unavailable",
                     "reason": f"Tool not found: {tool_name}",
                     "side_effects": False,
+                    "executor_kind": "unavailable",
                     "requires_configuration": False,
                     "executable": False,
                 }
@@ -1873,6 +1877,11 @@ Propose a new role to fill this gap. Return JSON with:
             tool_readiness,
             approval,
         )
+        setup_guidance = self._role_gap_setup_guidance(
+            recommended_action,
+            tool_readiness,
+            approval,
+        )
         return {
             "gap_id": gap["id"],
             "title": gap["title"],
@@ -1896,6 +1905,7 @@ Propose a new role to fill this gap. Return JSON with:
             "proposed_role": gap.get("proposed_role") or {},
             "approval": approval,
             "recommended_action": recommended_action,
+            "setup_guidance": setup_guidance,
             "resolution": gap.get("resolution") or {},
             "created_at": gap.get("created_at"),
             "updated_at": gap.get("updated_at"),
@@ -2030,6 +2040,103 @@ Propose a new role to fill this gap. Return JSON with:
         if approval_state in {"expired", "consumed", "rejected"}:
             return "regenerate_approval"
         return "request_approval"
+
+    @staticmethod
+    def _role_gap_setup_guidance(
+        recommended_action: str,
+        tool_readiness: dict,
+        approval: dict,
+    ) -> dict:
+        blocking_tools = list(tool_readiness.get("blocking_tools") or [])
+        if recommended_action == "configure_tools":
+            provider_groups: dict[str, dict] = {}
+            for item in blocking_tools:
+                tool_name = str(item.get("tool_name") or "")
+                provider = AgentManager._provider_for_tool_name(tool_name)
+                group = provider_groups.setdefault(
+                    provider,
+                    {
+                        "provider": provider,
+                        "tools": [],
+                        "reason": item.get("reason") or "Configuration is required.",
+                    },
+                )
+                group["tools"].append(tool_name)
+            return {
+                "state": "configuration_required",
+                "summary": (
+                    "This role cannot be created yet because one or more requested "
+                    "tools are unavailable or need live provider configuration."
+                ),
+                "next_action": (
+                    "Configure the listed providers in Integrations, or defer/dismiss "
+                    "the role until those channels are actually needed."
+                ),
+                "provider_groups": list(provider_groups.values()),
+                "blocking_tools": blocking_tools,
+            }
+        if recommended_action == "await_approval":
+            return {
+                "state": "approval_pending",
+                "summary": "A fresh owner approval already exists for this role.",
+                "next_action": "Review and approve the request in Approvals, then create the role.",
+                "approval_id": approval.get("approval_id"),
+            }
+        if recommended_action == "regenerate_approval":
+            return {
+                "state": "approval_expired",
+                "summary": "The previous approval is expired, consumed, or rejected.",
+                "next_action": "Regenerate a fresh approval before creating this role.",
+                "approval_id": approval.get("approval_id"),
+            }
+        if recommended_action == "request_approval":
+            return {
+                "state": "approval_required",
+                "summary": "This role requests high-risk tools.",
+                "next_action": "Create an owner approval request before activating the role.",
+            }
+        if recommended_action in {"create_role", "create_after_approval"}:
+            return {
+                "state": "ready",
+                "summary": "All requested tools are ready for role creation.",
+                "next_action": "Create the role from the owner console.",
+            }
+        if recommended_action == "propose_role":
+            return {
+                "state": "proposal_required",
+                "summary": "This gap needs a generated role proposal.",
+                "next_action": "Generate a role proposal, then review readiness again.",
+            }
+        return {
+            "state": recommended_action,
+            "summary": f"Role recommendation is {recommended_action}.",
+            "next_action": "Review the recommendation state before taking action.",
+        }
+
+    @staticmethod
+    def _provider_for_tool_name(tool_name: str) -> str:
+        normalized = AgentManager.TOOL_ALIASES.get(tool_name, tool_name)
+        if normalized == "send_sms":
+            return "SMS"
+        if normalized == "make_call":
+            return "Voice"
+        if normalized == "send_message":
+            return "Messaging"
+        if normalized == "send_email":
+            return "Email"
+        if normalized.startswith("erpnext_") or normalized in {
+            "crm_contact_update",
+            "crm_deal_update",
+            "task_create",
+            "task_update",
+            "ticket_create",
+            "ticket_update",
+            "procurement_request",
+        }:
+            return "ERPNext"
+        if normalized == "ci_trigger":
+            return "GitHub CI"
+        return "Tool"
 
     def _find_manifest_for_role_spec(
         self,

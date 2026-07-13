@@ -3156,3 +3156,39 @@
   - Live readiness timestamp from alerts evidence: `2026-07-11T05:05:56.000250`
 - Next step:
   - Commit and push this progress evidence entry, then continue the next development milestone from a ready staging baseline.
+
+### 2026-07-13T02:44:37Z — STEP-098 — Clarified role-backlog setup guidance and safer owner actions
+- Files/services changed:
+  - `backend/src/cyber_team/agents/manager.py`
+  - `backend/tests/test_role_backlog_review.py`
+  - `frontend/src/app/page.tsx`
+  - `frontend/src/components/AgentsView.tsx`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - Live authenticated staging role-backlog summary check against `https://cyberteam.hyperailab.com/api/roles/role-gaps/summary?status=open,proposed&source_type=company_context_snapshot&limit=500`
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src/cyber_team/agents/manager.py backend/tests/test_role_backlog_review.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_role_backlog_review.py -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_role_backlog_review.py backend/tests/test_api_roles.py -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/ruff check backend/src backend/tests`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m compileall -q backend/src`
+  - `npm run build`
+  - `npm run lint`
+  - `docker run --rm -v /home/projects/cyber-team:/workspace -w /workspace/frontend node:20-bookworm-slim npm test`
+  - `python3 scripts/secret-scan.py`
+  - `git diff --check`
+- Result:
+  - Live staging backlog inspection found `15` active ERPNext-context role recommendations: `6` create-ready roles, `3` expired high-risk approval regenerations, and `6` configuration-blocked recommendations for intentionally disabled SMS/voice/messaging tools.
+  - Backend role-gap summaries now expose `executor_kind` per readiness item and structured `setup_guidance` for configuration-required, approval-pending, expired-approval, approval-required, proposal-required, and create-ready states.
+  - Agents owner console now shows actionable/setup/owner-pending counts, prevents setup-blocked recommendations from being swept into create/request-approval batch actions, links approval-waiting rows to Approvals, and links setup-blocked rows to Integrations.
+  - Backend focused role backlog tests passed: `6 passed, 2 warnings`.
+  - Backend role/API focused tests passed: `17 passed, 2 warnings`.
+  - Full backend Ruff, full backend tests, and backend compile passed: `205 passed, 2 warnings`.
+  - Frontend production build passed.
+  - Frontend lint passed with no ESLint warnings/errors.
+  - Local host `npm test` is blocked by Node `18.19.1` missing `node:util.styleText`; the same frontend tests passed under Dockerized Node 20, matching GitHub Actions: `22 passed`.
+  - Secret scan reported no high-confidence secrets and diff hygiene passed.
+- Evidence:
+  - Local verification output from 2026-07-13T02:44Z.
+- Next step:
+  - Commit, push, watch CI, deploy to staging, then use the owner-authorized role backlog APIs to create the six create-ready roles and regenerate three expired approvals.

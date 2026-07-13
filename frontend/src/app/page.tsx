@@ -191,7 +191,13 @@ export default function Home() {
           />
         )
       case 'agents':
-        return <AgentsView agents={agents} onRefresh={refreshData} />
+        return (
+          <AgentsView
+            agents={agents}
+            onRefresh={refreshData}
+            onNavigate={setActiveView}
+          />
+        )
       case 'memory':
         return <MemoryView />
       case 'workflows':

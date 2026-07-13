@@ -185,6 +185,9 @@ async def test_role_backlog_summary_groups_traceability_and_expired_approval(ses
     assert item["source_task_id"] == "task_review"
     assert item["approval"]["state"] == "expired"
     assert item["recommended_action"] == "regenerate_approval"
+    assert item["setup_guidance"]["state"] == "approval_expired"
+    assert item["setup_guidance"]["next_action"].startswith("Regenerate")
+    assert item["tool_readiness"]["items"][0]["executor_kind"] == "live"
     assert summary["counts"]["actionable"] == 1
     assert summary["counts"]["by_recommended_action"] == {"regenerate_approval": 1}
 
@@ -277,6 +280,18 @@ async def test_role_backlog_summary_separates_actionable_pending_and_config_bloc
         "configure_tools": 1,
         "create_role": 1,
     }
+    config_item = next(item for item in summary["items"] if item["gap_id"] == "gap_config")
+    assert config_item["setup_guidance"]["state"] == "configuration_required"
+    assert config_item["setup_guidance"]["provider_groups"] == [
+        {
+            "provider": "Tool",
+            "tools": ["analytics_data_sync"],
+            "reason": "Tool not found: analytics_data_sync",
+        }
+    ]
+    assert config_item["tool_readiness"]["blocking_tools"][0]["executor_kind"] == (
+        "unavailable"
+    )
     operations_group = next(
         group for group in summary["groups"] if group["business_function"] == "Operations"
     )
