@@ -3192,3 +3192,24 @@
   - Local verification output from 2026-07-13T02:44Z.
 - Next step:
   - Commit, push, watch CI, deploy to staging, then use the owner-authorized role backlog APIs to create the six create-ready roles and regenerate three expired approvals.
+
+### 2026-07-13T02:59:32Z — STEP-099 — Refreshed backend image security layer after Trivy DB update
+- Files/services changed:
+  - `backend/Dockerfile`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) ... RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `docker run --rm cyber-team-core:115e129 sh -lc "dpkg-query -W curl libcurl4t64 || true"`
+  - `docker build -t cyber-team-core:security-refresh-check backend`
+  - `docker run --rm cyber-team-core:security-refresh-check sh -lc "dpkg-query -W curl libcurl4t64"`
+  - `./scripts/image-scan.sh cyber-team-core:security-refresh-check`
+- Result:
+  - Release gate initially failed at the Trivy image scan because the cached backend image layer still had `curl` and `libcurl4t64` version `8.14.1-2+deb13u3`, while the updated Trivy DB requires fixed version `8.14.1-2+deb13u4`.
+  - Updated `backend/Dockerfile` so `DEBIAN_SECURITY_REFRESH` participates in the apt-upgrade layer cache key, and bumped it to `2026-07-13`.
+  - Targeted rebuilt backend image installed `curl` and `libcurl4t64` version `8.14.1-2+deb13u4`.
+  - Targeted Trivy scan for `cyber-team-core:security-refresh-check` reported `0` vulnerabilities.
+- Evidence:
+  - Package verification: `curl 8.14.1-2+deb13u4`, `libcurl4t64 8.14.1-2+deb13u4`.
+  - Targeted image scan output from 2026-07-13T02:59Z.
+- Next step:
+  - Commit and push the Dockerfile security-refresh fix, watch CI, then rerun the full release gate and staging promotion.
