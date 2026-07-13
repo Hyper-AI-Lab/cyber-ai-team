@@ -3213,3 +3213,48 @@
   - Targeted image scan output from 2026-07-13T02:59Z.
 - Next step:
   - Commit and push the Dockerfile security-refresh fix, watch CI, then rerun the full release gate and staging promotion.
+
+### 2026-07-13T03:14:28Z — STEP-100 — Promoted role-backlog operations and applied safe backlog actions
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `git push origin main` after commit `115e129 feat: clarify role backlog operations`
+  - Watched GitHub Actions run `29220162498`
+  - `git push origin main` after commit `8092087 fix: refresh backend image security layer`
+  - Watched GitHub Actions run `29220677037`
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) ... RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) PROMOTE_DRY_RUN=0 ./scripts/promote-staging.sh`
+  - Authenticated live staging health/readiness checks against `https://cyberteam.hyperailab.com`
+  - Authenticated live staging role backlog batch apply for six `create_role` items.
+  - Authenticated live staging role backlog approval regeneration for three expired approval items.
+  - Authenticated live staging checks for `/health`, `/api/operations/readiness?refresh=true`, `/api/roles/role-gaps/summary?status=open,proposed&source_type=company_context_snapshot&limit=500`, `/api/agents/`, and `/api/dashboard/approval-queue?status=pending`.
+- Result:
+  - GitHub Actions run `29220162498` passed for commit `115e129`.
+  - GitHub Actions run `29220677037` passed for commit `8092087`.
+  - Full local release gate passed for `8092087`, including backend quality/tests/compile, Alembic offline SQL, dependency audit, frontend build/lint/tests under Node 20, Docker Compose config, operations syntax, secret scan, FOSS/resource scan, diff hygiene, migration rehearsal, isolated compose smoke, image builds, and Trivy image scans with `0` vulnerabilities.
+  - Staging promotion succeeded for build SHA `8092087fa3d2c72944cdd3026c9fb9b51a15022d`.
+  - Staging backup was created before promotion.
+  - Live compose smoke passed at `https://cyberteam.hyperailab.com`.
+  - Live `/health` returned `status=ok`, `environment=staging`, `version=8092087`, and build SHA `8092087fa3d2c72944cdd3026c9fb9b51a15022d`.
+  - Live `/api/operations/readiness?refresh=true` returned `status=ready` with zero required blockers.
+  - Six safe ERPNext-derived role backlog items were applied successfully and created role agents/manifests:
+    - `review_erpnext_derived_role_legal_policy_agent`
+    - `review_erpnext_derived_role_company_builder_specialist`
+    - `review_erpnext_derived_role_software_engineering_qa_agent`
+    - `review_erpnext_derived_role_supervisor_orchestrator_specialist`
+    - `review_erpnext_derived_role_product_project_management_agent`
+    - `review_erpnext_derived_role_security_compliance_agent`
+  - Three expired high-risk role-gap approvals were regenerated and left pending for explicit owner decision:
+    - `2fd0986a-de24-4c04-ba14-e49ef2955115`
+    - `055665ce-d5df-410a-a0a0-009f5a99ffe8`
+    - `59f6ebd7-8eb3-4cff-b8b1-a9c8f027a7c8`
+  - Live role backlog summary now reports `9` remaining proposed items: `3` owner-pending approval items and `6` configuration-blocked items for intentionally disabled optional communications/messaging providers.
+  - Live agents endpoint reports `25` agents total, including the newly applied ERPNext-derived review roles.
+  - No high-risk approvals were auto-approved, no optional SMS/voice/messaging providers were configured, and no secrets were printed or committed.
+- Evidence:
+  - Release manifest: `/home/projects/cyber-team/dist/releases/8092087.json`
+  - Staging promotion record: `/home/projects/cyber-team/dist/promotions/staging/8092087-20260713-031028.json`
+  - Staging backup: `/home/projects/cyber-team/backups/staging/cyberteam-staging-8092087-20260713-030952.dump`
+  - GitHub Actions run ids: `29220162498`, `29220677037`
+- Next step:
+  - Commit and push this progress evidence entry, then the owner can review the three pending high-risk role approvals in the Approvals tab and defer/dismiss the six optional-provider recommendations until those channels are actually needed.
