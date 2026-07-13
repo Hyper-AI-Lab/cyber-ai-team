@@ -1,0 +1,35 @@
+name: Feature request
+description: Propose a new capability, integration, or improvement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user/company problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior, API, UI, or integration you want.
+    validations:
+      required: true
+  - type: dropdown
+    id: resource-policy
+    attributes:
+      label: Resource policy fit
+      description: Cyber AI Team is FOSS-first and self-hosted by default.
+      options:
+        - Uses only free/open-source/self-hosted resources
+        - Optional paid/SaaS provider, not readiness-blocking
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety, approval, and data impact
+      description: Note external side effects, credentials, customer-visible actions, data sharing, or migration impact.

@@ -1,24 +1,88 @@
-# Cyber-Team
+# Cyber AI Team
 
-AI-powered digital company operating system — a multi-agent platform that instantiates AI specialists (project manager, legal advisor, accountant, PR manager, ops manager, etc.) as a cooperative digital team for running your startup.
+[![CI](https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/workflows/ci.yml/badge.svg)](https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Self-hosted](https://img.shields.io/badge/self--hosted-Docker-blue)](docker-compose.yml)
+[![FOSS-first](https://img.shields.io/badge/resource%20policy-FOSS--first-green)](docs/architecture/autonomous-company-os.md)
+
+![Cyber AI Team social preview](docs/assets/cyber-ai-team-social-preview.svg)
+
+**Cyber AI Team is a self-hosted AI company operating system for solo founders, one-person companies, and small digital startups.** It runs a governed team of AI workers around a human owner: a Chief Operating Agent, Observer Agent, company builder, memory steward, finance/accounting, legal, sales, marketing, support, product, engineering, operations, security, research, and communications roles.
+
+The goal is not another chatbot. The goal is a practical open-source foundation for an autonomous digital company: agents can observe company state, recall long-term memory, update canonical business records, propose or create roles, run safe internal actions, and escalate high-impact decisions to the owner.
+
+## The Problem
+
+Solo founders and tiny teams increasingly need the operating surface of a real company: CRM, accounting, project management, customer support, knowledge work, compliance, security, outreach, monitoring, and decision logs. Hiring a full team is expensive, but gluing together many disconnected AI tools creates fragile context, duplicated work, and invisible risk.
+
+Cyber AI Team takes the opposite path:
+
+- **One company memory**, not scattered chat histories.
+- **One owner console**, not hidden autonomous actions.
+- **One canonical business record**, powered by ERPNext and PostgreSQL.
+- **Many specialized AI workers**, coordinated by a governed executive loop.
+- **Aggressive autonomy below impact thresholds**, with approval gates for risky or external actions.
+- **FOSS-first and self-hosted**, so early-stage founders are not forced into paid SaaS before revenue.
+
+This category is emerging quickly. [Business Insider reported](https://www.businessinsider.com/ai-agents-one-person-companies-china-openclaw-alibaba-president-2026-3) that AI agents are helping drive the rise of "one-person companies" in China, with Alibaba.com leadership estimating that 30-40% of its platform customers are solo entrepreneurs and describing agents as employees for those founders. [PwC's 2025 agentic AI survey](https://www.pwc.com/us/en/tech-effect/ai-analytics/ai-agent-survey.html) found that 79% of surveyed executives were already adopting AI agents and 66% of adopters reported measurable productivity value. Cyber AI Team turns that idea into a self-hosted, inspectable operating system.
+
+## What It Does
+
+| Capability | What Cyber AI Team provides |
+| --- | --- |
+| Autonomous company orchestration | Chief Operating Agent observes readiness, ERPNext, memory, agents, workflows, approvals, role gaps, KPIs, benchmarks, and owner instructions. |
+| Independent critique | Observer Agent reviews governor decisions for weak evidence, goal drift, prompt-injection-style instructions, policy violations, and unsafe assumptions. |
+| Dynamic role creation | Company Builder and role backlog detect missing business capabilities and create safe roles or request approval for risky ones. |
+| Long-term memory | Four-layer memory fabric: pinned identity, workflow state, retrieval memory with Qdrant, and canonical records in PostgreSQL/ERPNext. |
+| Business system of record | ERPNext integration for CRM, accounting, projects, tasks, tickets, procurement, customers, suppliers, leads, opportunities, and invoices. |
+| Human-in-the-loop governance | Owner approvals, replay protection, target matching, expiry, consumed-state checks, audit evidence, and readiness gates. |
+| Owner console | Next.js console for agents, memory, workflows, chat, approvals, integrations, audit trail, operations readiness, executive cockpit, role backlog, and governor state. |
+| Production-shaped operations | Docker Compose deployment, Caddy staging edge, migrations, backup/restore drills, smoke tests, load gate, CI, Trivy image scanning, Prometheus/Grafana-ready observability. |
+| FOSS-first resource policy | New tools and dependencies must declare license, cost, self-hostability, hosted-service dependency, data-sharing risk, and free-tier limitations. |
 
 ## Architecture
 
-Compositional stack built on open-source components:
+```mermaid
+flowchart TD
+    Owner["Human owner"] --> Console["Owner Console"]
+    Console --> API["FastAPI control plane"]
+    API --> Governor["Chief Operating Agent"]
+    API --> Observer["Observer Agent"]
+    Governor --> Planner["Autonomous planning"]
+    Governor --> Roles["AI role team"]
+    Observer --> Governor
+    Roles --> Tools["Governed tools"]
+    Tools --> ERP["ERPNext canonical business records"]
+    Tools --> Comms["Email and optional communications"]
+    API --> Memory["Memory fabric"]
+    Memory --> Qdrant["Qdrant retrieval"]
+    Memory --> Postgres["PostgreSQL system state"]
+    Planner --> Temporal["Temporal workflows"]
+    API --> Audit["Audit and control evidence"]
+    API --> Metrics["Metrics and readiness"]
+```
+
+Core stack:
 
 | Layer | Technology |
-|-------|-----------|
-| Agent Runtime | LangGraph + CrewAI |
-| Durable Workflows | Temporal |
-| Memory | 4-layer: Pinned → Workflow → Retrieval (Mem0+Qdrant) → Canonical (PostgreSQL+ERPNext) |
-| Interoperability | MCP (agent↔tool), A2A (agent↔agent) |
-| Communications | Runtime: Twilio voice/SMS/WhatsApp, Asterisk ARI voice, Jasmin SMS, SMTP email, Slack, Telegram, simulated fallback |
-| System of Record | PostgreSQL; ERPNext client and optional Compose profile |
-| Owner Console | Next.js + TailwindCSS |
-| Governance | Runtime: owner JWT auth + OPA/local authorization; optional profiles: Keycloak, OpenFGA |
-| Observability | Runtime: `/metrics`; optional profiles: Langfuse, Prometheus alerts, Grafana dashboard |
-| LLM Gateway | LiteLLM (Mistral default) |
-| Deployment | Docker Compose (~15 containers) |
+| --- | --- |
+| Backend | FastAPI, SQLAlchemy, Alembic, PostgreSQL, Redis |
+| Agent orchestration | LangGraph/CrewAI-inspired role orchestration, governed planning services, Temporal workflows |
+| Memory | PostgreSQL, Qdrant, structured memory protocol, operation graph indexing |
+| System of record | ERPNext plus PostgreSQL |
+| Frontend | Next.js, React, Tailwind CSS |
+| Governance | Owner JWT auth, local/OPA authorization, approval records, audit/control evidence |
+| Observability | `/health`, `/ready`, `/metrics`, Prometheus/Grafana-compatible configs |
+| Deployment | Docker Compose, Caddy edge, staging promotion scripts, backup/restore runbooks |
+| Interoperability direction | MCP-style tool contracts and A2A-style agent interoperability surfaces |
+
+## Who This Is For
+
+- Solo founders building AI-native businesses.
+- One-person companies that want digital workers without hiring a full staff.
+- Small startups that need operational leverage before they can afford a larger team.
+- Developers researching multi-agent systems, AI employees, autonomous agents, memory layers, ERP-backed agents, and human-in-the-loop AI governance.
+- Teams that want a self-hosted alternative to opaque agent SaaS.
 
 ## Quick Start
 
@@ -26,140 +90,77 @@ Compositional stack built on open-source components:
 
 ```bash
 cp .env.example .env
-# Edit .env — at minimum set MISTRAL_API_KEY
+# Edit .env. At minimum set owner credentials and your LLM provider key.
 ```
+
+For production-like operation, replace all default secrets, set `OWNER_PASSWORD_HASH`, configure exact CORS origins, keep external side effects approval-gated, and validate integrations before enabling them.
 
 ### 2. Start
 
 ```bash
-# Option A: Screen session (recommended)
+# Recommended: managed screen session
 ./start.sh
-screen -r cyber-team    # attach
+screen -r cyber-team
 
-# Option B: Direct
+# Or direct Docker Compose
 docker compose up --build
-
-# Option C: CLI
-pip install -e ./backend
-cyber-team start --build
 ```
 
-> **Remote server?** The start script auto-detects your server IP. If you're running on a remote server and accessing from your PC, use the **remote URLs** shown after startup. You can also set `HOST_IP` manually: `HOST_IP=192.168.1.100 ./start.sh`
+### 3. Open
 
-### 3. Access
-
-**If running on the same machine** (local):
-
-| Service | URL |
-|---------|-----|
+| Service | Local URL |
+| --- | --- |
 | Owner Console | http://localhost:3001 |
 | API | http://localhost:8000 |
-| API Docs | http://localhost:8000/docs |
+| API docs | http://localhost:8000/docs |
 
-**If running on a remote server** (from your PC):
+Sign in with `OWNER_EMAIL` and `OWNER_PASSWORD` from `.env`.
 
-| Service | URL |
-|---------|-----|
-| Owner Console | http://YOUR_SERVER_IP:3001 |
-| API | http://YOUR_SERVER_IP:8000 |
-| API Docs | http://YOUR_SERVER_IP:8000/docs |
-| Grafana | http://YOUR_SERVER_IP:3500 |
-| Langfuse | http://YOUR_SERVER_IP:3100 |
+### 4. Build Your AI Company
 
-> Make sure your firewall allows ports: 3001, 8000, 3500, 3100
+1. Open the Owner Console.
+2. Go to **Agents** and run the Company Builder.
+3. Sync ERPNext company context if ERPNext is configured.
+4. Review recommended roles in the role backlog.
+5. Approve high-risk role/tool grants only when the payload and target are correct.
 
-Sign in with `OWNER_EMAIL` and `OWNER_PASSWORD` from `.env`. For production, set
-`ENVIRONMENT=production`, replace all default secrets, set `OWNER_PASSWORD_HASH`,
-set `COMMUNICATIONS_ALLOW_SIMULATION=false`, and configure `CORS_ALLOWED_ORIGINS`
-to the exact console URL instead of `*`.
+## Main AI Roles
 
-### 4. Set Up Your Team
+Cyber AI Team includes role families for:
 
-1. Open the Owner Console (use your server URL from step 3)
-2. Go to **Agents** → **Company Builder**
-3. Enter your company name and industry
-4. The builder will propose an optimal team structure
-5. Review and approve the proposed roles
+- Chief Operating Agent / governor
+- Observer Agent
+- Company Builder
+- Supervisor / orchestrator
+- Memory Steward
+- Finance and accounting
+- Legal and policy
+- Sales and CRM
+- Marketing and PR
+- Customer support and success
+- Product and project management
+- Software engineering and QA
+- Operations and procurement
+- People and HR
+- Security and compliance
+- Knowledge and research
+- Communications
 
-## Role Families
+New roles can be proposed from company context, ERPNext drift, blocked work, role gaps, workflow failures, memory findings, or owner instructions. Low-risk internal roles can be created automatically; side-effectful or high-risk capabilities require owner approval.
 
-14 core role families are pre-loaded:
+## Safety Model
 
-1. **Company Builder** — Sets up initial team based on company profile
-2. **Supervisor** — Oversees all agents, resolves conflicts
-3. **Finance & Accounting** — Invoices, cash-flow, expenses (approval-gated)
-4. **Legal & Policy** — Contracts, NDAs, compliance (approval-gated)
-5. **Sales & CRM** — Lead research, outreach, pipeline management
-6. **Marketing & PR** — Content, social media, brand monitoring
-7. **Customer Support** — Tickets, chat, phone support
-8. **Product & Project Management** — Sprints, tasks, coordination
-9. **Software Engineering & QA** — Code, CI/CD, testing (approval-gated)
-10. **Operations & Procurement** — Day-to-day ops, vendor management
-11. **People & HR** — Recruitment, onboarding, HR records
-12. **Security & Compliance** — Security posture, access control, incidents
-13. **Knowledge & Research** — Knowledge base, market research
-14. **Communications** — Email, chat, voice, SMS, messaging
+Cyber AI Team is designed for autonomy with explicit control boundaries:
 
-New roles can be created dynamically via the **role-gap workflow** when unmet needs are detected.
+- No fake-success tool execution.
+- No external side effects without matching approval in staging/production policy.
+- No approval replay, wrong-target approval, expired approval, or consumed approval execution.
+- No generated-code hot loading into the live runtime.
+- No paid/SaaS-only tool dependency as a readiness blocker under the FOSS-first policy.
+- No deletion of audit evidence through normal APIs.
+- Prompt-injection-style requests are downgraded to review instead of executed directly.
 
-## Memory System
-
-4-layer memory stack ensures agents behave as if they have infinite recall:
-
-1. **Pinned Identity Memory** — Role charters, company constitution, approval matrix
-2. **Workflow Memory** — LangGraph checkpoints, thread state, pending approvals
-3. **Retrieval Memory** — Mem0 + Qdrant for semantic search across episodic/semantic/procedural/entity memories
-4. **Canonical Records** — PostgreSQL + ERPNext as source of truth (invoices, contracts, CRM, etc.)
-
-## Approval & Governance
-
-Sensitive actions require human approval:
-- Payments and invoices above threshold
-- Contract signing
-- Production deployments
-- External communications to new contacts
-- Hiring/termination decisions
-- Data deletion
-
-Approval policies are enforced via OPA and managed through the **Approvals** panel in the console.
-
-## Communications
-
-Runtime communication support is explicit in the **Integrations** console view and
-`GET /api/integrations/status`.
-
-- **Voice**: Twilio outbound calls when `TWILIO_*` credentials are configured;
-  Asterisk ARI outbound calls when `ASTERISK_ARI_ENABLED=true` and ARI
-  credentials are configured; otherwise simulated in development if
-  `COMMUNICATIONS_ALLOW_SIMULATION=true`.
-- **SMS**: Twilio outbound SMS when `TWILIO_*` credentials are configured, or
-  Jasmin SMS when `JASMIN_*` gateway credentials are configured.
-- **Email**: SMTP outbound email when `SMTP_HOST` and `SMTP_FROM_EMAIL` are set.
-- **Messaging**: Slack incoming webhooks, Telegram Bot API, and Twilio WhatsApp
-  are supported when their provider credentials are configured.
-- **Asterisk**: the telephony Compose profile can run an Asterisk container, and
-  the runtime ARI adapter can originate calls into the configured Stasis app.
-
-All outbound communication tools accept an optional `idempotency_key`. Reusing
-the same key returns the stored communication result instead of producing another
-external send. Provider calls use bounded timeouts, retries, and circuit breakers;
-the Integrations view and `/api/integrations/status` expose each provider circuit
-state.
-
-## API
-
-Full REST API available at `http://localhost:8000/docs` (Swagger UI).
-
-Key endpoints:
-- `POST /api/roles/company-builder` — Generate team blueprint
-- `GET /api/agents/` — List all agents
-- `POST /api/agents/{id}/invoke` — Invoke an agent
-- `POST /api/chat/send` — Chat with agents
-- `POST /api/memory/recall` — Search memories
-- `GET /api/dashboard/kpis` — Dashboard KPIs
-- `GET /api/dashboard/approval-queue` — Pending approvals
-- `GET /api/integrations/status` — Runtime integration modes
-- `GET /live` and `GET /ready` — Liveness and dependency readiness
+The owner can inspect decisions, approvals, memory traces, role gaps, tool readiness, workflows, audit events, and governor/observer state from the console.
 
 ## Development
 
@@ -175,59 +176,41 @@ npm install
 npm run dev
 ```
 
-### Quality Gate
-
 Run the local production-readiness gate before opening a pull request:
 
 ```bash
 ./scripts/quality-gate.sh
 ```
 
-If dependencies are already installed, reuse them for a faster check:
-
-```bash
-BACKEND_VENV=/tmp/cyberteam-venv \
-SKIP_BACKEND_INSTALL=1 \
-SKIP_FRONTEND_INSTALL=1 \
-./scripts/quality-gate.sh
-```
-
-The gate runs backend Ruff lint, backend tests, Python compile checks, Alembic SQL
-generation, backend and frontend dependency audits, frontend TypeScript checks,
-frontend tests, frontend production build, Docker Compose configuration validation,
-operations script/dashboard syntax, high-confidence secret scanning, and
-`git diff --check`.
-
-Heavyweight checks can be added when needed:
+Heavier checks are available:
 
 ```bash
 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 ./scripts/quality-gate.sh
 ```
 
-Operational runbooks live in [`docs/runbooks`](docs/runbooks):
+## Documentation
 
-- [`compose-smoke-test.md`](docs/runbooks/compose-smoke-test.md)
-- [`migration-rehearsal.md`](docs/runbooks/migration-rehearsal.md)
-- [`backup-restore.md`](docs/runbooks/backup-restore.md)
-- [`release-rollback.md`](docs/runbooks/release-rollback.md)
-- [`deployment-promotion.md`](docs/runbooks/deployment-promotion.md)
-- [`staging-promotion.md`](docs/runbooks/staging-promotion.md)
-- [`data-retention.md`](docs/runbooks/data-retention.md)
+- [Autonomous Company OS architecture](docs/architecture/autonomous-company-os.md)
+- [Production readiness plan](docs/production-readiness-plan.md)
+- [ERPNext runbook](docs/runbooks/erpnext.md)
+- [Backup and restore runbook](docs/runbooks/backup-restore.md)
+- [Deployment promotion runbook](docs/runbooks/deployment-promotion.md)
+- [Staging promotion runbook](docs/runbooks/staging-promotion.md)
+- [Release rollback runbook](docs/runbooks/release-rollback.md)
+- [GitHub discoverability notes](docs/visibility/github-discoverability.md)
 
-The production readiness roadmap is tracked in
-[`docs/production-readiness-plan.md`](docs/production-readiness-plan.md).
+## Repository Keywords
 
-## Stopping
+AI agents, AI agent, agentic AI, autonomous agents, multi-agent system, AI employees, digital workers, one-person company, solo founder, startup automation, company OS, autonomous company, ERPNext, LangGraph, CrewAI, Temporal, Qdrant, FastAPI, Next.js, Docker Compose, MCP, A2A, RAG, long-term memory, human-in-the-loop, owner console.
 
-```bash
-# If using screen
-screen -S cyber-team -X quit
-docker compose down
+## Status
 
-# To also remove data volumes
-docker compose down -v
-```
+This is an active open-source project and a production-shaped reference implementation. The system already includes authenticated owner flows, ERPNext-backed operations, governed role backlog, readiness evidence, CI, staging deployment scripts, backup/restore drills, and safety gates. It is still evolving quickly, especially around the executive governor, observer critiques, adaptive benchmarks, and richer business integrations.
+
+## Contributing
+
+Contributions are welcome if they preserve the core principles: self-hosted, FOSS-first, auditable, owner-visible, approval-gated for high impact, and honest about unavailable tools. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).

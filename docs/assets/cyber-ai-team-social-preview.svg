@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">Cyber AI Team social preview</title>
+  <desc id="desc">A dark social preview card for Cyber AI Team, a self-hosted AI company OS for solo founders.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#07111f"/>
+      <stop offset="52%" stop-color="#0d1728"/>
+      <stop offset="100%" stop-color="#102b2a"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#17223a"/>
+      <stop offset="100%" stop-color="#0f1a2b"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect x="64" y="64" width="1152" height="512" rx="28" fill="url(#panel)" stroke="#2f4268" stroke-width="2" filter="url(#shadow)"/>
+  <g transform="translate(102 104)">
+    <rect x="0" y="0" width="86" height="86" rx="18" fill="#2563eb"/>
+    <path d="M47 14 22 48h21l-8 24 30-39H43l4-19Z" fill="#ffffff"/>
+  </g>
+  <text x="216" y="144" fill="#e5f0ff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="36" font-weight="800">Cyber AI Team</text>
+  <text x="216" y="184" fill="#9fb2d0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="22" font-weight="600">Self-hosted autonomous AI company OS</text>
+  <text x="102" y="270" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="54" font-weight="900">AI workers for</text>
+  <text x="102" y="330" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="54" font-weight="900">solo founders</text>
+  <text x="102" y="382" fill="#d8e4f8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="25" font-weight="650">A self-hosted company OS with governed agents,</text>
+  <text x="102" y="416" fill="#d8e4f8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="25" font-weight="650">long-term memory, ERPNext, approvals, and owner control.</text>
+  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="22" font-weight="700">
+    <rect x="102" y="450" width="160" height="48" rx="24" fill="#0f766e"/>
+    <text x="130" y="481" fill="#ecfeff">FOSS-first</text>
+    <rect x="282" y="450" width="180" height="48" rx="24" fill="#1d4ed8"/>
+    <text x="310" y="481" fill="#eff6ff">Self-hosted</text>
+    <rect x="482" y="450" width="190" height="48" rx="24" fill="#7c3aed"/>
+    <text x="510" y="481" fill="#f5f3ff">ERP-backed</text>
+    <rect x="692" y="450" width="230" height="48" rx="24" fill="#b45309"/>
+    <text x="720" y="481" fill="#fff7ed">Human-in-loop</text>
+  </g>
+  <g transform="translate(930 124)" opacity="0.95">
+    <rect x="0" y="0" width="210" height="70" rx="16" fill="#101f34" stroke="#40567d"/>
+    <text x="22" y="30" fill="#9fb2d0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="15" font-weight="700">Chief Operating Agent</text>
+    <text x="22" y="54" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="18" font-weight="800">Observe -> decide</text>
+    <rect x="-46" y="118" width="210" height="70" rx="16" fill="#101f34" stroke="#40567d"/>
+    <text x="-24" y="148" fill="#9fb2d0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="15" font-weight="700">Observer Agent</text>
+    <text x="-24" y="172" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="18" font-weight="800">Critique -> gate</text>
+    <rect x="44" y="236" width="210" height="70" rx="16" fill="#101f34" stroke="#40567d"/>
+    <text x="66" y="266" fill="#9fb2d0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="15" font-weight="700">AI Role Team</text>
+    <text x="66" y="290" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="18" font-weight="800">Execute -> learn</text>
+    <path d="M102 76v34M74 194l44 34M148 194l-24 34" stroke="#6ee7b7" stroke-width="4" stroke-linecap="round"/>
+  </g>
+  <text x="102" y="536" fill="#8ea4c5" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="20" font-weight="600">github.com/Hyper-AI-Lab/cyber-ai-team</text>
+</svg>
