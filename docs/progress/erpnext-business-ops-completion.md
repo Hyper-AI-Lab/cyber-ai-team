@@ -3429,3 +3429,39 @@
   - Local quality-gate output from 2026-07-21T03:29Z through 2026-07-21T03:35Z.
 - Next step:
   - Commit and push the owner-attention scheduler fix, build a small follow-up release, promote it to staging, and verify the cadence loop is no longer blocked by the communication-log foreign key.
+
+### 2026-07-21T03:59:55Z — STEP-107 — Promoted owner-attention scheduler fix and tightened cadence recovery status
+- Files/services changed:
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/tests/test_api_operations.py`
+  - Live `cyberteam-staging` Docker Compose app services promoted from `6d2b303` to `3cc70cd`.
+- Commands run:
+  - `git add backend/src/cyber_team/operations/owner_attention.py backend/tests/test_owner_attention_notifications.py docs/progress/erpnext-business-ops-completion.md`
+  - `git commit -m "fix: log owner attention notifications without fake agent"`
+  - `git push origin main`
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 COMPOSE_PROJECT_NAME=cyberteam-release-smoke CYBERTEAM_CONTAINER_PREFIX=cyberteam-release-smoke API_PUBLISHED_PORT=127.0.0.1:28080 UI_PUBLISHED_PORT=127.0.0.1:23081 POSTGRES_PUBLISHED_PORT=127.0.0.1:25432 REDIS_PUBLISHED_PORT=127.0.0.1:26379 QDRANT_HTTP_PUBLISHED_PORT=127.0.0.1:26333 QDRANT_GRPC_PUBLISHED_PORT=127.0.0.1:26334 TEMPORAL_PUBLISHED_PORT=127.0.0.1:27233 OPA_PUBLISHED_PORT=127.0.0.1:28181 API_BASE=http://localhost:28080 UI_BASE=http://localhost:23081 NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com COMPOSE_SMOKE_BUILD=0 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=3cc70cd ./scripts/promote-staging.sh`
+  - Authenticated live staging check for `POST /api/operations/owner-attention/notify` with `{"dry_run": true, "limit": 3}`.
+  - Authenticated live staging checks for `/health`, `/api/operations/readiness?refresh=true`, `/api/operations/executive-cadence`, and `/api/operations/owner-attention/notifications/status`.
+  - `gh run list --repo Hyper-AI-Lab/cyber-ai-team --branch main --limit 5`
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest backend/tests/test_api_operations.py::test_executive_cadence_route_combines_runtime_and_durable_history backend/tests/test_owner_attention_notifications.py -q`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/api/routes/operations.py backend/tests/test_api_operations.py backend/src/cyber_team/operations/owner_attention.py backend/tests/test_owner_attention_notifications.py`
+  - `python3 -m compileall -q backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/operations/owner_attention.py backend/tests/test_api_operations.py backend/tests/test_owner_attention_notifications.py`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 ./scripts/quality-gate.sh`
+- Result:
+  - GitHub Actions run `29799003386` for `fix: log owner attention notifications without fake agent` passed.
+  - Strict release candidate `3cc70cd` passed full quality gate, real PostgreSQL migration rehearsal, isolated Docker Compose smoke, image builds, and Trivy image scan with zero vulnerabilities reported for the release images.
+  - Promotion created a PostgreSQL backup, recreated `core`, `worker`, and `ui` on `cyber-team-core:3cc70cd` / `cyber-team-ui:3cc70cd`, and passed live staging smoke.
+  - Live `/health` reports `version=3cc70cd`, `build_sha=3cc70cdfd9a5716052d13cf0c62fba94b1f429e5`, and `environment=staging`.
+  - Owner-attention notification dry run passed on staging with `reviewed=3`, `skipped=3`, and `failed=0`; notification service status reports `ready`.
+  - The owner-attention loop no longer has a current foreign-key error; its runtime status is no longer failed. Historical durable failure events remain visible in cadence evidence.
+  - Tightened cadence status semantics so historical failures remain counted but do not keep the cadence board degraded after all loops have recovered.
+  - Focused tests passed (`4 passed`), Ruff and compileall passed, and the full quality gate passed (`206` backend tests, `22` frontend tests, audits, secret scan, FOSS/resource scan, and diff hygiene).
+  - Overall operations readiness still reports `degraded` because alert-email proof is stale; no real alert-test email was sent without explicit owner authorization.
+- Evidence:
+  - Release manifest: `/home/projects/cyber-team/dist/releases/3cc70cd.json`
+  - Staging promotion record: `/home/projects/cyber-team/dist/promotions/staging/3cc70cd-20260721-035237.json`
+  - Staging backup: `/home/projects/cyber-team/backups/staging/cyberteam-staging-3cc70cd-20260721-035132.dump`
+  - GitHub Actions run: `29799003386`
+- Next step:
+  - Commit and push the cadence recovery-status refinement, build and promote one final small release, then verify the Executive Cadence board reports ready except for the separate stale alert-email proof readiness blocker.

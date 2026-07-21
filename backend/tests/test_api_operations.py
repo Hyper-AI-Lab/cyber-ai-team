@@ -242,6 +242,23 @@ def test_executive_cadence_route_combines_runtime_and_durable_history(monkeypatc
                     "metadata": {"run_id": "exegov_1"},
                 }
             ]
+        if event_type == "owner_attention.notification":
+            return [
+                {
+                    "id": "audit_owner_attention_1",
+                    "event_type": "owner_attention.notification",
+                    "outcome": "sent",
+                    "created_at": recent_sent,
+                    "metadata": {"notification_key": "plan_1:execute_plan"},
+                },
+                {
+                    "id": "audit_owner_attention_2",
+                    "event_type": "owner_attention.notification",
+                    "outcome": "failure",
+                    "created_at": "2026-07-20T00:00:00+00:00",
+                    "metadata": {"notification_key": "plan_2:execute_plan"},
+                },
+            ]
         return []
 
     app.state.audit_service.list_events.side_effect = list_events
@@ -336,6 +353,7 @@ def test_executive_cadence_route_combines_runtime_and_durable_history(monkeypatc
     assert body["status"] == "ready"
     assert body["counts"]["loops"] == 4
     assert body["counts"]["enabled"] == 4
+    assert body["counts"]["recent_failures"] == 1
     assert body["latest_executive_run"]["run_id"] == "exegov_1"
     assert body["latest_observer_review"]["id"] == "obs_1"
     assert body["idempotency"]["latest_snapshot_hash"] == "hash-1"

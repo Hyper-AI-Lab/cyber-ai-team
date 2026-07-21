@@ -507,7 +507,7 @@ async def _build_executive_cadence_summary(request: Request) -> dict[str, Any]:
             for item in loops
         ),
     }
-    if counts["degraded"] or counts["recent_failures"]:
+    if counts["degraded"]:
         status = "degraded"
     elif counts["enabled"]:
         status = "ready"
