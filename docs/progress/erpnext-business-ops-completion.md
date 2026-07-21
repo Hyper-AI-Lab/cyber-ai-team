@@ -3369,3 +3369,63 @@
   - Local quality-gate output from 2026-07-21T02:26Z through 2026-07-21T02:33Z.
 - Next step:
   - Commit and push the cadence slice, build a release candidate from the clean commit, deploy it to staging, verify the live cadence endpoint and Owner Console, then watch GitHub CI.
+
+### 2026-07-21T03:36:09Z — STEP-105 — Deployed Executive Operating Cadence v1 to staging
+- Files/services changed:
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/OperationsView.tsx`
+  - `DEVELOPMENT_PLAN.md`
+  - Live `cyberteam-staging` Docker Compose app services promoted from `8092087` to `6d2b303`.
+- Commands run:
+  - `git add backend/src/cyber_team/api/routes/operations.py backend/tests/test_api_operations.py frontend/src/lib/api.ts frontend/src/lib/api.test.ts frontend/src/components/OperationsView.tsx DEVELOPMENT_PLAN.md docs/progress/erpnext-business-ops-completion.md`
+  - `git commit -m "feat: add executive operating cadence cockpit"`
+  - `git push origin main`
+  - `docker builder prune -af`
+  - `docker build --build-arg NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com --build-arg NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com --build-arg NEXT_PUBLIC_APP_VERSION=6d2b303 --build-arg NEXT_PUBLIC_BUILD_SHA=6d2b30353741ab6fbc4cdeaa45fa58fcfc8ceef5 -t cyber-team-ui:6d2b303 frontend`
+  - `RUN_QUALITY_GATE=0 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 BUILD_IMAGES=0 RUN_IMAGE_SCAN=1 NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com ./scripts/release-check.sh`
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) RELEASE_ALLOW_DIRTY=1 SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 COMPOSE_PROJECT_NAME=cyberteam-release-smoke CYBERTEAM_CONTAINER_PREFIX=cyberteam-release-smoke API_PUBLISHED_PORT=127.0.0.1:28080 UI_PUBLISHED_PORT=127.0.0.1:23081 POSTGRES_PUBLISHED_PORT=127.0.0.1:25432 REDIS_PUBLISHED_PORT=127.0.0.1:26379 QDRANT_HTTP_PUBLISHED_PORT=127.0.0.1:26333 QDRANT_GRPC_PUBLISHED_PORT=127.0.0.1:26334 TEMPORAL_PUBLISHED_PORT=127.0.0.1:27233 OPA_PUBLISHED_PORT=127.0.0.1:28181 API_BASE=http://localhost:28080 UI_BASE=http://localhost:23081 NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com COMPOSE_SMOKE_BUILD=0 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=6d2b303 ./scripts/promote-staging.sh`
+  - Authenticated live staging checks for `/health`, `/ready`, `/api/operations/readiness?refresh=true`, `/api/operations/executive-cadence`, and `/api/operations/governor/latest`.
+  - `gh run list --repo Hyper-AI-Lab/cyber-ai-team --branch main --limit 5`
+- Result:
+  - Recovered Docker disk pressure by pruning build cache; `/var/lib/docker` had about `24G` free afterward. No Docker volumes or running staging services were deleted.
+  - Strict release candidate `6d2b303` passed full quality gate, real PostgreSQL migration rehearsal, isolated Docker Compose smoke, image builds, and Trivy image scan with zero vulnerabilities reported for the release images.
+  - Promotion created a PostgreSQL backup, recreated `core`, `worker`, and `ui` on `cyber-team-core:6d2b303` / `cyber-team-ui:6d2b303`, and passed live staging smoke.
+  - Live `/health` reports `version=6d2b303`, `build_sha=6d2b30353741ab6fbc4cdeaa45fa58fcfc8ceef5`, and `environment=staging`; `/ready` reports all dependency checks ready.
+  - GitHub Actions run `29796178759` for `feat: add executive operating cadence cockpit` passed.
+  - A live executive-governor dry run (`exegov_13d9f414ea1e`) and safe run (`exegov_9bdba1dc0a5b`) completed with no external side effects; the safe run completed two low-risk internal actions and created three owner-action-required provider-configuration follow-ups.
+  - Live readiness remains `degraded` only because alert-email proof is stale; no real alert email was sent without explicit owner authorization.
+- Evidence:
+  - Release manifest: `/home/projects/cyber-team/dist/releases/6d2b303.json`
+  - Staging promotion record: `/home/projects/cyber-team/dist/promotions/staging/6d2b303-20260721-032315.json`
+  - Staging backup: `/home/projects/cyber-team/backups/staging/cyberteam-staging-6d2b303-20260721-032215.dump`
+  - GitHub Actions run: `29796178759`
+- Next step:
+  - Fix the owner-attention notification scheduler regression found during live cadence verification, then release and redeploy the fix.
+
+### 2026-07-21T03:36:09Z — STEP-106 — Fixed owner-attention scheduler communication-log agent reference
+- Files/services changed:
+  - `backend/src/cyber_team/operations/owner_attention.py`
+  - `backend/tests/test_owner_attention_notifications.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - Authenticated live staging check for `/api/operations/executive-cadence`.
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest backend/tests/test_owner_attention_notifications.py -q`
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest backend/tests/test_api_operations.py::test_executive_cadence_route_combines_runtime_and_durable_history backend/tests/test_api_operations.py::test_operations_readiness_keeps_optional_disabled_non_blocking -q`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/operations/owner_attention.py backend/tests/test_owner_attention_notifications.py backend/src/cyber_team/api/routes/operations.py`
+  - `python3 -m compileall -q backend/src/cyber_team/operations/owner_attention.py backend/tests/test_owner_attention_notifications.py`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 ./scripts/quality-gate.sh`
+- Result:
+  - Live cadence verification found the owner-attention notification loop failing on PostgreSQL foreign-key enforcement because `OwnerAttentionEmail.agent_id` defaulted to the synthetic value `owner-attention-notifier`, which is not a row in `agents`.
+  - Changed owner-attention emails to use `agent_id=None`, matching the nullable `communication_logs.agent_id` model for system-originated communication logs.
+  - Added a regression assertion that owner-attention notification payloads do not carry a fake agent id.
+  - Focused tests passed: owner-attention notifications (`3 passed`) and cadence/readiness API tests (`2 passed`).
+  - Ruff, compileall, and the full quality gate passed: backend tests (`206 passed`), Alembic offline SQL, `pip-audit`, frontend build/typecheck/tests/audit, compose config, script syntax, secret scan, FOSS/resource scan, and diff hygiene.
+- Evidence:
+  - Live cadence failure detail from 2026-07-21T03:28Z showing `communication_logs_agent_id_fkey` violation on `agent_id=owner-attention-notifier`.
+  - Local quality-gate output from 2026-07-21T03:29Z through 2026-07-21T03:35Z.
+- Next step:
+  - Commit and push the owner-attention scheduler fix, build a small follow-up release, promote it to staging, and verify the cadence loop is no longer blocked by the communication-log foreign key.

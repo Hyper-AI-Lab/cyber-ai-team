@@ -22,7 +22,7 @@ class OwnerAttentionEmail:
     to_address: str
     subject: str
     body: str
-    agent_id: str | None = "owner-attention-notifier"
+    agent_id: str | None = None
     cc: list[str] | None = None
     idempotency_key: str | None = None
 

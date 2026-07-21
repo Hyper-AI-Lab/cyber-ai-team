@@ -143,6 +143,7 @@ async def test_owner_attention_notification_sends_and_dedupes(monkeypatch):
     assert first["counts"]["sent"] == 1
     assert first["events"][0]["outcome"] == "sent"
     assert comms.sent[0].to_address == "owner@example.com"
+    assert comms.sent[0].agent_id is None
     assert "Finance operating review" in comms.sent[0].subject
     assert "https://cyberteam.example.com" in comms.sent[0].body
     assert second["counts"]["sent"] == 0
