@@ -94,6 +94,15 @@ By default, execution:
 - Runs the Compose smoke test against the already-started stack.
 - Writes a promotion record to `dist/promotions/<environment>`.
 
+## Restart Without Promoting
+
+For staging, use `scripts/start-staging-current.sh` when containers were stopped
+and the goal is to resume the latest promoted release. It reads the promotion
+record and supplies the recorded image tags/build metadata to Compose. Do not use
+an unqualified `docker compose up` for a promoted environment because the compose
+defaults intentionally fall back to local development image names and build
+metadata.
+
 ## Useful Switches
 
 - `DEPLOYMENT_MANIFEST=/path/to/env.json` uses a custom deployment manifest.

@@ -40,6 +40,23 @@ By default, the script:
 - Starts the staging stack with `--no-build` so it runs the release artifacts.
 - Runs the Compose smoke test against the already-started stack.
 
+## Restart Current Promoted Staging Stack
+
+If the staging containers were intentionally stopped and you only need to bring the
+same promoted release back online, use the current-release restart helper instead
+of a raw `docker compose up`.
+
+```bash
+./scripts/start-staging-current.sh
+START_STAGING_DRY_RUN=0 ./scripts/start-staging-current.sh
+```
+
+The helper reads the latest promotion record in `dist/promotions/staging`, exports
+the recorded `CORE_IMAGE`, `UI_IMAGE`, `APP_VERSION`, `BUILD_SHA`, and
+`COMPOSE_PROJECT_NAME`, and starts the full staging stack including the ERPNext
+profile. This prevents direct Compose restarts from accidentally falling back to
+`cyber-team-core:latest`, `cyber-team-ui:latest`, or `BUILD_SHA=local`.
+
 ## Useful Switches
 
 - `RELEASE_MANIFEST=/path/to/manifest.json` uses an explicit manifest path.

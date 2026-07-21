@@ -3258,3 +3258,40 @@
   - GitHub Actions run ids: `29220162498`, `29220677037`
 - Next step:
   - Commit and push this progress evidence entry, then the owner can review the three pending high-risk role approvals in the Approvals tab and defer/dismiss the six optional-provider recommendations until those channels are actually needed.
+
+### 2026-07-21T02:00:54Z — STEP-101 — Restarted staging and resumed pending role-backlog work
+- Files/services changed:
+  - `scripts/start-staging-current.sh`
+  - `docs/runbooks/staging-promotion.md`
+  - `docs/runbooks/deployment-promotion.md`
+  - `DEVELOPMENT_PLAN.md`
+  - `docs/progress/erpnext-business-ops-completion.md`
+  - Live `cyberteam-staging` Docker Compose services were restarted; no volumes or data were deleted.
+- Commands run:
+  - `docker compose --env-file deploy/environments/staging.env --profile erp up -d --no-build`
+  - `CORE_IMAGE=cyber-team-core:8092087 UI_IMAGE=cyber-team-ui:8092087 APP_VERSION=8092087 BUILD_SHA=8092087fa3d2c72944cdd3026c9fb9b51a15022d docker compose --env-file deploy/environments/staging.env --profile erp up -d --no-build --force-recreate core worker ui`
+  - `COMPOSE_SMOKE_SKIP_UP=1 COMPOSE_SMOKE_BUILD=0 API_BASE=https://cyberteam.hyperailab.com UI_BASE=https://cyberteam.hyperailab.com python3 scripts/compose-smoke.py` with staging owner credentials loaded from the ignored env file.
+  - Authenticated live staging checks for `/health`, `/api/operations/readiness?refresh=true`, `/api/dashboard/approval-queue?status=pending`, `/api/roles/role-gaps/summary?status=open,proposed&source_type=company_context_snapshot&limit=500`, `/api/operations/company-context`, and `/api/operations/governor/latest`.
+  - Authenticated `POST /api/roles/role-gaps/{gap_id}/approval/regenerate` for `gap_27d2833b51f0`, `gap_0891713e6f1b`, and `gap_4e5ecf37e3b8`.
+  - `bash -n scripts/start-staging-current.sh`
+  - `./scripts/start-staging-current.sh`
+  - `START_STAGING_DRY_RUN=0 ./scripts/start-staging-current.sh`
+- Result:
+  - Staging is running again with `cyber-team-core:8092087` and `cyber-team-ui:8092087`.
+  - Live `/health` reports `version=8092087`, `build_sha=8092087fa3d2c72944cdd3026c9fb9b51a15022d`, and `environment=staging`.
+  - Compose smoke passed after sourcing the ignored staging owner credentials.
+  - Live readiness reports `status=ready`; alert email proof remains recent, and ERPNext company-context drift check recorded `noop` with fresh verification after restart.
+  - Role backlog now has `9` active recommendations: `3` actionable high-risk approvals and `6` configuration-required optional-provider items.
+  - Regenerated fresh pending approvals for the three high-risk ERPNext-derived role gaps:
+    - `6b5251b5-85f0-43e9-982a-9ea95709c811` for Operations & Procurement Agent / `procurement_request`
+    - `1a7d931f-41e4-4298-bfb2-0f59e216303a` for Marketing & PR Agent / `send_email`
+    - `65b71768-77da-41f4-8e53-14b62f08f862` for Finance & Accounting Agent / `erpnext_invoice_create`
+  - Added `scripts/start-staging-current.sh` so future restarts read the latest promotion record and supply the recorded image tags/build metadata to Compose, avoiding accidental fallback to `latest` images or `BUILD_SHA=local`.
+  - Updated promotion runbooks and reconciled `DEVELOPMENT_PLAN.md` to the current shipped state and next milestone: Executive Operating Cadence v1.
+  - No high-risk approvals were approved or consumed, no optional communications providers were configured, and no secrets were printed or committed.
+- Evidence:
+  - Current staging promotion record: `/home/projects/cyber-team/dist/promotions/staging/8092087-20260713-031028.json`
+  - Current release manifest: `/home/projects/cyber-team/dist/releases/8092087.json`
+  - Live health output from 2026-07-21T02:00Z.
+- Next step:
+  - Run local hygiene checks, commit and push the restart-helper/roadmap updates, watch GitHub CI, then continue Executive Operating Cadence v1 after the owner reviews or leaves the three high-risk role approvals.

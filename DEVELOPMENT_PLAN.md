@@ -17,21 +17,29 @@ The core operating principle is:
 
 ## 2. Current State
 
-The repository already has a working control-plane foundation:
+The repository now has a working production-shaped staging foundation:
 
 - FastAPI backend with auth, audit log, role catalog, agents, workflows, tools, memory,
   approvals, communications, integrations, and health checks.
 - Next.js owner console with dashboard, agents, memory, workflows, chat, approvals,
-  integrations, and audit views.
+  integrations, audit, operations readiness, role backlog, and executive-governor views.
 - PostgreSQL, Redis, Qdrant, OPA, Langfuse, Temporal, and related services defined for
   Docker Compose deployment.
-- Staging deployment path through Caddy and compose release scripts.
+- ERPNext running as the canonical CRM/accounting/project/support/procurement system of
+  record for staging.
+- Staging deployment path through Caddy, release manifests, promotion records, backup
+  artifacts, smoke tests, image scans, and restart helpers.
 - Seed role manifests covering company builder, supervisor, finance, legal, sales,
   marketing, support, product, engineering, operations, HR, security, knowledge, and
   communications.
+- Company-context sync, ERPNext drift detection, role backlog review, readiness evidence,
+  Chief Operating Agent, Observer Agent, operation graph, benchmark/reflection records,
+  outsourcing requests, and FOSS-first resource policy are implemented at v1/v2
+  production-readiness depth.
 
-The main product gap is that the existing behavior is still too static. It can provision
-roles, but it does not yet act as a self-evolving digital organization.
+The main product gap has moved from "static demo agents" to "useful continuous executive
+operation": scheduled governor/observer runs, owner digest cadence, richer autonomous
+remediation, and clearer cockpit workflows need to become routine operating behavior.
 
 ## 3. Target Architecture
 
@@ -129,8 +137,8 @@ Priority integration families:
 
 ### Phase 1: Dynamic Company Builder Foundation
 
-Status: first foundation slice implemented; remaining Phase 1 work is UI depth,
-role-gap persistence, and deployment validation.
+Status: completed as the first production foundation. Ongoing improvements now belong to
+role-backlog, governor, and owner-console phases.
 
 Deliverables:
 
@@ -140,9 +148,9 @@ Deliverables:
 - [x] Capability gap detection from tool registry and profile signals.
 - [x] Owner console builder form for richer company context.
 - [x] Focused tests for role inference and builder integration.
-- [ ] Persist role-gap events and generated operating-loop state.
-- [ ] Add deeper owner-console views for operating model details.
-- [ ] Deploy and validate the slice in hosted staging.
+- [x] Persist role-gap events and generated operating-loop state.
+- [x] Add deeper owner-console views for operating model details.
+- [x] Deploy and validate the slice in hosted staging.
 
 Exit criteria:
 
@@ -156,8 +164,9 @@ Exit criteria:
 
 ### Phase 2: Role Gap Runtime Loop
 
-Status: first persistent role-gap slice implemented; remaining work is deeper
-Supervisor routing, approval-policy refinement, and loop-driven automatic gap review.
+Status: production v1 complete. The role backlog now supports summary grouping,
+traceability, approval regeneration, setup guidance, batch-safe UI actions, staging
+application of low-risk roles, and explicit blocking for optional provider configuration.
 
 Deliverables:
 
@@ -179,17 +188,17 @@ Exit criteria:
 
 ### Phase 3: Memory Protocol and Memory Steward
 
-Status: first invocation protocol slice implemented; remaining work is broader protocol
-coverage across chat/workflows/tools, explicit namespace enforcement beyond recall policy,
-conflict workflows, and deeper UI.
+Status: production foundation implemented. Memory protocol, traces, steward findings, and
+operation-graph indexing are present. Remaining work is richer graph/timeline exploration,
+conflict-resolution workflows, and deeper benchmark-driven memory-quality remediation.
 
 Deliverables:
 
 - [x] Explicit memory write/read protocol for agent invocation.
-- Memory namespace policy per company, role, workflow, and entity.
-- Memory consolidation job.
-- Conflict detection between memory and canonical records.
-- UI memory timeline with provenance and importance.
+- [x] Memory namespace policy per company, role, workflow, and entity.
+- [x] Memory consolidation/steward findings foundation.
+- [ ] Conflict detection workflow between memory and canonical records.
+- [x] UI memory timeline with provenance and importance foundation.
 
 Exit criteria:
 
@@ -199,13 +208,18 @@ Exit criteria:
 
 ### Phase 4: Adaptive Workflow Engine
 
+Status: partial production foundation. Autonomous plans, durable plan tasks, Temporal
+workers, owner approvals, and ERPNext/company-context workflows exist. The remaining work
+is converting more business objectives into adaptive generated workflow intents rather
+than static routes or manually triggered APIs.
+
 Deliverables:
 
-- Operating loops represented as workflow intents.
-- Supervisor-driven routing from intent to agent tasks.
-- Durable execution through Temporal where long-running work is needed.
-- Human interruption and resume for sensitive steps.
-- Workflow templates generated from role capabilities and business context.
+- [x] Operating loops represented as autonomous plans/cadence tasks.
+- [x] Supervisor/governor-driven routing from signals to plan tasks.
+- [x] Durable execution through Temporal where long-running work is needed.
+- [x] Human interruption and resume for sensitive steps.
+- [ ] Workflow templates generated broadly from role capabilities and business context.
 
 Exit criteria:
 
@@ -214,14 +228,20 @@ Exit criteria:
 
 ### Phase 5: Integration Activation
 
+Status: ERPNext plus email are live in staging. SMS, voice, WhatsApp, Slack, and Telegram
+remain optional-disabled/configuration-required until the business needs them. The current
+policy is to show unavailable providers clearly without degrading readiness.
+
 Deliverables:
 
-- Integration Architect runtime checklist.
-- Credential readiness and health checks for each provider.
-- Email, calendar, CRM, accounting, docs, support, analytics, SMS, and voice connectors
-  activated as the business requires them.
-- Simulation mode for every external side effect.
-- Idempotency and retries for external writes.
+- [x] Integration Architect runtime checklist foundation.
+- [x] Credential readiness and health checks for each provider.
+- [x] Email, CRM, accounting, project, support, procurement, and ERPNext-backed business
+  connectors activated for staging.
+- [ ] Calendar, docs, analytics, SMS, voice, and messaging connectors activated only when
+  explicitly required and configured.
+- [x] Simulation/configuration-required modes for external side effects.
+- [x] Idempotency and retries for external writes.
 
 Exit criteria:
 
@@ -230,12 +250,18 @@ Exit criteria:
 
 ### Phase 6: Governance and Permissions
 
+Status: production safety foundation implemented for the single-owner model. Approval
+target matching, expiry, consumed-state protection, manual-only external side effects,
+audit evidence, prompt-injection downgrade behavior, and FOSS/resource policy checks are
+in place. OpenFGA/Keycloak remain optional profiles rather than required staging blockers.
+
 Deliverables:
 
-- Policy matrix by role, tool, action type, data class, and environment.
-- OpenFGA relationship model for company, owner, agent, role, workflow, and memory access.
-- OPA policies for approval requirements and external side effects.
-- Red-team tests for tool misuse, prompt injection, and authorization bypass.
+- [x] Policy matrix by role, tool, action type, data class, and environment.
+- [ ] OpenFGA relationship model for company, owner, agent, role, workflow, and memory
+  access as a production-required path.
+- [x] OPA/local policies for approval requirements and external side effects.
+- [x] Red-team tests for tool misuse, prompt injection, and authorization bypass.
 
 Exit criteria:
 
@@ -244,14 +270,20 @@ Exit criteria:
 
 ### Phase 7: Owner Console v2
 
+Status: production foundation implemented. The owner can inspect dashboard state, agents,
+memory, workflows, chat, approvals, integrations, audit events, readiness, company
+context, role backlog, governor/observer activity, objectives, benchmarks, and
+outsourcing requests. The next UI work is an Executive Operating Cadence cockpit that
+makes scheduled decisions and daily briefs easier to understand.
+
 Deliverables:
 
-- Operating model view.
-- Role backlog and role-gap inbox.
-- Agent trace and decision timeline.
-- Memory graph browser.
-- Integration readiness board.
-- Workflow intent builder and live execution view.
+- [x] Operating model view.
+- [x] Role backlog and role-gap inbox.
+- [x] Agent trace and decision timeline foundation.
+- [x] Memory graph/timeline foundation.
+- [x] Integration readiness board.
+- [ ] Workflow intent builder and live execution view.
 
 Exit criteria:
 
@@ -260,13 +292,20 @@ Exit criteria:
 
 ### Phase 8: Production Hardening
 
+Status: staging production-readiness foundation implemented. GitHub CI, local release
+gate, staging deploy, smoke, backup/restore evidence, load/business workflow smokes,
+credential inventory, alert proof, image scanning, restart helper, and runbooks exist.
+Production cutover remains intentionally out of scope until real production secrets and a
+formal owner approval ceremony are supplied.
+
 Deliverables:
 
-- Hosted staging validation with real staging secrets.
-- Backup and restore rehearsal.
-- Load and soak tests for API, worker, memory, and tool execution.
-- Dependency and image scanning in CI.
-- Runbooks for deploy, rollback, incident response, provider outages, and memory recovery.
+- [x] Hosted staging validation with real staging secrets.
+- [x] Backup and restore rehearsal.
+- [x] Conservative load and business workflow smoke tests for staging.
+- [x] Dependency and image scanning in CI/release gates.
+- [x] Runbooks for deploy, rollback, provider outages, data retention, ERPNext, and
+  backup/restore.
 
 Exit criteria:
 
@@ -275,39 +314,34 @@ Exit criteria:
 
 ## 5. Immediate Execution Plan
 
-1. Implement Phase 1 dynamic Company Builder foundation.
-2. Add tests for deterministic operating-model decisions.
-3. Add tests for `AgentManager.run_company_builder` dynamic manifest creation and memory
-   seeding.
-4. Update the owner console Company Builder form and result view.
-5. Run focused backend and frontend tests.
-6. Deploy the foundation slice to staging after tests pass.
+1. Keep staging running from the latest promotion record with
+   `START_STAGING_DRY_RUN=0 ./scripts/start-staging-current.sh`.
+2. Owner reviews the three fresh high-risk role approvals:
+   Finance & Accounting (`erpnext_invoice_create`), Marketing & PR (`send_email`), and
+   Operations & Procurement (`procurement_request`).
+3. Defer or leave the six optional communications/provider role gaps until SMS, voice,
+   WhatsApp/Slack/Telegram, or related channels become business requirements.
+4. Implement **Executive Operating Cadence v1**:
+   scheduled governor/observer runs, daily owner email brief, idempotency evidence,
+   automatic low-risk remediation, and clearer Executive Cockpit history.
+5. Run backend/frontend quality gates, staging smoke, release gate, deploy, and GitHub CI
+   for the cadence milestone.
 
 ## 6. Current Slice Notes
 
-The current Phase 2 slice turns role gaps into runtime events. Missing agent invocations,
-missing tool execution, unavailable integrations, and explicit blocked-work language in
-agent/chat responses create de-duplicated `role_gaps` records. The Role Gap Inbox can then
-ask Company Builder for a deterministic role proposal and apply or dismiss the proposal.
+The current live staging slice is the ERPNext-backed autonomous operations foundation.
+ERPNext drift detection refreshed company-context freshness after restart, readiness is
+`ready`, and the role backlog contains nine active ERPNext-derived recommendations: three
+high-risk role approvals waiting for owner review and six optional-provider configuration
+items.
 
-High-risk generated tool grants now create explicit approval requests before role
-instantiation. The owner applies the role-gap proposal once to create or reuse an approval,
-approves it in the approval queue, then applies the proposal again to consume that approval
-and instantiate the role.
+The app was intentionally stopped for several days and restarted on 2026-07-21. Direct
+Compose restart initially exposed a restart drift risk because Compose defaults can fall
+back to `latest` images and `BUILD_SHA=local`; `scripts/start-staging-current.sh` now reads
+the latest promotion record and starts the staging/ERP stack with the exact promoted image
+tags and build metadata.
 
-The scheduled Supervisor review now periodically scans open/proposed role gaps, stale
-approvals, and repeated workflow failures. It annotates role gaps with review guidance,
-generates deterministic proposals for open gaps, and creates de-duplicated workflow
-reliability gaps when repeated failures cross the configured threshold.
-
-The first Phase 3 slice now extracts agent invocation memory behavior into an explicit
-`AgentMemoryProtocol`. Agent execution prepares a read policy, injects provenance-aware
-memory context into the LLM prompt, writes a durable episodic invocation summary after
-completion, and records trace metadata that includes protocol version, read/write policy,
-recalled memory IDs, written memory IDs, memory coverage, and memory operation errors.
-Failed LLM invocations now record a failure trace without writing a successful episodic
-summary.
-
-The next Phase 3 slice should extend this protocol beyond direct agent invocation into
-chat, workflow activities, and tool execution, then surface the resulting memory timeline
-and Memory Steward findings more clearly in the owner console.
+The next development milestone is Executive Operating Cadence v1. Its purpose is to make
+the Chief Operating Agent and Observer useful as a routine operating layer, not only a
+manual/scheduled diagnostic: recurring executive runs, daily owner brief, richer
+idempotency and cooldown evidence, low-risk remediation, and better cockpit timelines.
