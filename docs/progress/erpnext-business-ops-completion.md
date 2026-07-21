@@ -3558,3 +3558,29 @@
   - Full quality gate output from 2026-07-21T06:30Z through 2026-07-21T06:36Z.
 - Next step:
   - Commit and push the canonical conflict slice, run release candidate checks with migration rehearsal/compose smoke/image scan, promote to staging, then run live memory conflict scan/list/readiness checks.
+
+### 2026-07-21T06:52:12Z — STEP-111 — Released canonical conflict workflow to staging
+- Files/services changed:
+  - Live `cyberteam-staging` Docker Compose app services promoted from `e31013e` to `5467af2`.
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `git commit -m "feat: add memory canonical conflict workflow"`
+  - `git push origin main`
+  - `gh run list --repo Hyper-AI-Lab/cyber-ai-team --branch main --limit 5`
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 COMPOSE_PROJECT_NAME=cyberteam-release-smoke CYBERTEAM_CONTAINER_PREFIX=cyberteam-release-smoke API_PUBLISHED_PORT=127.0.0.1:28080 UI_PUBLISHED_PORT=127.0.0.1:23081 POSTGRES_PUBLISHED_PORT=127.0.0.1:25432 REDIS_PUBLISHED_PORT=127.0.0.1:26379 QDRANT_HTTP_PUBLISHED_PORT=127.0.0.1:26333 QDRANT_GRPC_PUBLISHED_PORT=127.0.0.1:26334 TEMPORAL_PUBLISHED_PORT=127.0.0.1:27233 OPA_PUBLISHED_PORT=127.0.0.1:28181 API_BASE=http://localhost:28080 UI_BASE=http://localhost:23081 NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com COMPOSE_SMOKE_BUILD=0 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=5467af2 ./scripts/promote-staging.sh`
+  - Authenticated live staging checks for `/health`, `/ready`, `POST /api/memory/conflicts/scan`, `GET /api/memory/conflicts?status=open,acknowledged&limit=10`, and `/api/operations/readiness?refresh=true`.
+- Result:
+  - GitHub Actions run `29807579787` for `feat: add memory canonical conflict workflow` passed.
+  - Strict release candidate `5467af2` passed full quality gate, real PostgreSQL migration rehearsal, isolated Docker Compose smoke, image builds, and Trivy image scan with zero vulnerabilities reported for the release images.
+  - Promotion created a PostgreSQL backup, recreated `core`, `worker`, and `ui` on `cyber-team-core:5467af2` / `cyber-team-ui:5467af2`, and passed live staging smoke.
+  - Live `/health` reports `version=5467af2`, `build_sha=5467af23fbe908279dd434d083b9e279d27e1f9b`, and `environment=staging`; `/ready` reports all dependency checks ready.
+  - Live memory conflict scan completed against snapshot `ctx_a21b46339b2f`, scanned `24` memory entries, found and created `18` medium-severity stale ERPNext company-context memory conflicts, and recorded them for owner review.
+  - Live readiness reports `memory_canonical_conflicts.status=ready`, `open_count=18`, `blocking_count=0`, and `by_type.stale_canonical_memory=18`; overall readiness remains `degraded` only because alert-email proof is stale.
+- Evidence:
+  - Release manifest: `/home/projects/cyber-team/dist/releases/5467af2.json`
+  - Staging promotion record: `/home/projects/cyber-team/dist/promotions/staging/5467af2-20260721-064953.json`
+  - Staging backup: `/home/projects/cyber-team/backups/staging/cyberteam-staging-5467af2-20260721-064908.dump`
+  - GitHub Actions run: `29807579787`
+- Next step:
+  - Owner can review the 18 stale canonical-memory conflicts in the Memory tab. The next development milestone is Phase 4: generated workflow intents from role capabilities and company context.
