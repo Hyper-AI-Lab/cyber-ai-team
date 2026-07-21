@@ -69,6 +69,7 @@ def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
         "role_gaps",
         "memory_traces",
         "memory_steward_findings",
+        "memory_canonical_conflicts",
         "autonomous_plans",
         "autonomous_tasks",
     ]:
@@ -91,6 +92,9 @@ def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
     assert "CREATE INDEX IF NOT EXISTS ix_memory_steward_findings_status" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_memory_steward_findings_finding_type" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_memory_steward_findings_created_at" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_memory_canonical_conflicts_status" in sql
+    assert "CREATE INDEX IF NOT EXISTS ix_memory_canonical_conflicts_memory_id" in sql
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_canonical_conflicts_dedupe_key" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_autonomous_plans_status" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_autonomous_plans_source_active" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_autonomous_tasks_status" in sql

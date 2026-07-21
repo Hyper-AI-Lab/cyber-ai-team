@@ -188,16 +188,17 @@ Exit criteria:
 
 ### Phase 3: Memory Protocol and Memory Steward
 
-Status: production foundation implemented. Memory protocol, traces, steward findings, and
-operation-graph indexing are present. Remaining work is richer graph/timeline exploration,
-conflict-resolution workflows, and deeper benchmark-driven memory-quality remediation.
+Status: production foundation implemented. Memory protocol, traces, steward findings,
+operation-graph indexing, and ERPNext/company-context canonical conflict detection are
+present. Remaining work is richer graph/timeline exploration and deeper
+benchmark-driven memory-quality remediation.
 
 Deliverables:
 
 - [x] Explicit memory write/read protocol for agent invocation.
 - [x] Memory namespace policy per company, role, workflow, and entity.
 - [x] Memory consolidation/steward findings foundation.
-- [ ] Conflict detection workflow between memory and canonical records.
+- [x] Conflict detection workflow between memory and canonical records.
 - [x] UI memory timeline with provenance and importance foundation.
 
 Exit criteria:
@@ -321,19 +322,18 @@ Exit criteria:
    Operations & Procurement (`procurement_request`).
 3. Defer or leave the six optional communications/provider role gaps until SMS, voice,
    WhatsApp/Slack/Telegram, or related channels become business requirements.
-4. Complete the remaining **Executive Operating Cadence v1** operational pass:
-   staging deployment, live cadence endpoint verification, safe executive dry run, safe
-   executive run, and owner-visible evidence check.
-5. Run final backend/frontend quality gates, staging smoke, release gate, deploy, and GitHub CI
-   for the cadence milestone.
+4. Release and verify the **Memory vs ERPNext Canonical Conflict Detection v1** slice:
+   migration, conflict scan/list/resolve API, recall exclusion, readiness/governor
+   signals, Memory UI review panel, and live staging scan.
+5. Continue with Phase 4 by building generated workflow intents from role capabilities
+   and company context.
 
 ## 6. Current Slice Notes
 
 The current live staging slice is the ERPNext-backed autonomous operations foundation.
-ERPNext drift detection refreshed company-context freshness after restart, readiness is
-`ready`, and the role backlog contains nine active ERPNext-derived recommendations: three
-high-risk role approvals waiting for owner review and six optional-provider configuration
-items.
+ERPNext drift detection refreshed company-context freshness after restart, and the role
+backlog contains nine active ERPNext-derived recommendations: three high-risk role
+approvals waiting for owner review and six optional-provider configuration items.
 
 The app was intentionally stopped for several days and restarted on 2026-07-21. Direct
 Compose restart initially exposed a restart drift risk because Compose defaults can fall
@@ -341,9 +341,14 @@ back to `latest` images and `BUILD_SHA=local`; `scripts/start-staging-current.sh
 the latest promotion record and starts the staging/ERP stack with the exact promoted image
 tags and build metadata.
 
-Executive Operating Cadence v1 now has a first-class API/UI slice in progress:
-`GET /api/operations/executive-cadence` consolidates scheduler runtime state, durable
-audit history, latest executive runs, Observer reviews, brief cooldown/idempotency, and
+Executive Operating Cadence v1 is deployed and verified in staging. `GET
+/api/operations/executive-cadence` consolidates scheduler runtime state, durable audit
+history, latest executive runs, Observer reviews, brief cooldown/idempotency, and
 low-risk remediation counts. The Owner Console Executive Cockpit renders those loops as
-an operating-cadence history panel. The remaining work in this milestone is broad quality
-gating, staging deployment, live cadence verification, and GitHub CI.
+an operating-cadence history panel.
+
+Memory vs ERPNext Canonical Conflict Detection v1 is the active milestone. The backend now
+persists canonical conflict records, scans ERPNext/company-context-seeded memory for stale
+source hashes and structured canonical-claim mismatches, excludes conflicted or
+canonical-superseded memory from agent recall, exposes conflict scan/list/resolve APIs,
+adds readiness/governor/executive metrics, and adds a Memory tab review panel.

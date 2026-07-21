@@ -546,6 +546,13 @@ def test_operations_readiness_reports_tool_and_integration_blockers(monkeypatch)
     app.state.memory_service.list_memory_traces.return_value = [
         {"errors": ["write:failed"], "metadata": {"coverage": "error"}}
     ]
+    app.state.memory_conflict_service = AsyncMock()
+    app.state.memory_conflict_service.readiness.return_value = {
+        "status": "ready",
+        "blocking": False,
+        "open_count": 0,
+        "blocking_count": 0,
+    }
     monkeypatch.setattr(
         "cyber_team.api.routes.operations.settings.require_live_tool_executors",
         True,
@@ -596,6 +603,13 @@ def test_operations_readiness_caches_snapshot_until_refresh(monkeypatch):
     app.state.audit_service.list_events.return_value = []
     app.state.memory_service = AsyncMock()
     app.state.memory_service.list_memory_traces.return_value = []
+    app.state.memory_conflict_service = AsyncMock()
+    app.state.memory_conflict_service.readiness.return_value = {
+        "status": "ready",
+        "blocking": False,
+        "open_count": 0,
+        "blocking_count": 0,
+    }
     monkeypatch.setattr(
         "cyber_team.api.routes.operations.settings.required_communication_providers",
         "",
@@ -802,6 +816,13 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
     app.state.audit_service.list_events.return_value = []
     app.state.memory_service = AsyncMock()
     app.state.memory_service.list_memory_traces.return_value = []
+    app.state.memory_conflict_service = AsyncMock()
+    app.state.memory_conflict_service.readiness.return_value = {
+        "status": "ready",
+        "blocking": False,
+        "open_count": 0,
+        "blocking_count": 0,
+    }
     monkeypatch.setattr(
         "cyber_team.api.routes.operations.settings.require_live_tool_executors",
         True,

@@ -135,6 +135,43 @@ class MemoryStewardPlanResponse(BaseModel):
     plans: list[dict] = Field(default_factory=list)
 
 
+class MemoryCanonicalConflictResponse(BaseModel):
+    id: str
+    conflict_type: str
+    severity: str
+    status: str
+    memory_id: str
+    memory_namespace: str
+    company_namespace: str
+    canonical_source_type: str
+    canonical_source_id: str | None = None
+    canonical_source_hash: str | None = None
+    memory_source_hash: str | None = None
+    claim_path: str | None = None
+    title: str
+    description: str
+    recommendation: str
+    memory_excerpt: str
+    canonical_excerpt: str
+    evidence: dict = Field(default_factory=dict)
+    resolution: dict = Field(default_factory=dict)
+    dedupe_key: str
+    created_at: str
+    updated_at: str
+    resolved_at: str | None = None
+
+
+class MemoryCanonicalConflictScanRequest(BaseModel):
+    dry_run: bool = False
+    limit: int = Field(default=500, ge=1, le=2000)
+
+
+class MemoryCanonicalConflictResolve(BaseModel):
+    status: Literal["open", "acknowledged", "resolved", "dismissed"] = "resolved"
+    resolution_strategy: str = Field(default="prefer_canonical", max_length=80)
+    note: str = Field(default="", max_length=2000)
+
+
 @router.post("/remember", response_model=MemoryResponse)
 async def remember(
     data: MemoryWrite,
@@ -279,6 +316,98 @@ async def plan_memory_steward_remediations(
         request_approvals=data.request_approvals,
         limit=data.limit,
     )
+
+
+@router.post("/conflicts/scan")
+async def scan_memory_canonical_conflicts(
+    data: MemoryCanonicalConflictScanRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "scan",
+        "memory_canonical_conflict",
+        "latest",
+        context={"dry_run": data.dry_run, "limit": data.limit},
+    )
+    return await request.app.state.memory_conflict_service.scan(
+        actor=principal.email,
+        dry_run=data.dry_run,
+        limit=data.limit,
+    )
+
+
+@router.get("/conflicts", response_model=list[MemoryCanonicalConflictResponse])
+async def list_memory_canonical_conflicts(
+    request: Request,
+    status: str | None = "open",
+    severity: str | None = None,
+    company_namespace: str | None = None,
+    limit: int = Query(default=50, ge=1, le=500),
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "memory_canonical_conflict",
+        status,
+        context={
+            "severity": severity,
+            "company_namespace": company_namespace,
+            "limit": limit,
+        },
+    )
+    return await request.app.state.memory_conflict_service.list_conflicts(
+        status=status,
+        severity=severity,
+        company_namespace=company_namespace,
+        limit=limit,
+    )
+
+
+@router.post(
+    "/conflicts/{conflict_id}/resolve",
+    response_model=MemoryCanonicalConflictResponse,
+)
+async def resolve_memory_canonical_conflict(
+    conflict_id: str,
+    data: MemoryCanonicalConflictResolve,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        data.status,
+        "memory_canonical_conflict",
+        conflict_id,
+        context={
+            "resolution_strategy": data.resolution_strategy,
+            "note": data.note,
+        },
+    )
+    try:
+        conflict = await request.app.state.memory_conflict_service.resolve_conflict(
+            conflict_id,
+            status=data.status,
+            resolution_strategy=data.resolution_strategy,
+            note=data.note,
+            actor=principal.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    if conflict is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="Memory canonical conflict not found",
+        )
+    return conflict
 
 
 @router.get("/steward/findings", response_model=list[MemoryStewardFindingResponse])

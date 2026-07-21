@@ -280,6 +280,17 @@ class ExecutiveCompanyOSService:
                 "severity": "medium",
             },
             {
+                "key": "memory_canonical_conflicts_zero",
+                "title": "Canonical memory conflicts stay at zero",
+                "description": (
+                    "Agent memory should not disagree with ERPNext/company-context "
+                    "canonical records."
+                ),
+                "kpi_keys": ["open_memory_conflicts"],
+                "rule": {"comparison": "max", "threshold": 0},
+                "severity": "high",
+            },
+            {
                 "key": "role_backlog_bounded",
                 "title": "Actionable role backlog remains reviewable",
                 "description": "Role gaps should not grow without owner-visible review.",
@@ -1910,6 +1921,9 @@ class ExecutiveCompanyOSService:
         values = {
             "readiness_blockers": float(readiness_blockers),
             "open_memory_findings": float(memory.get("open_findings") or 0),
+            "open_memory_conflicts": float(
+                memory.get("open_canonical_conflicts") or 0
+            ),
             "active_role_gaps": active_role_gaps,
             "actionable_role_gaps": actionable_role_gaps,
             "role_gaps_waiting_owner": float(role_backlog.get("owner_pending") or 0),
@@ -1941,6 +1955,7 @@ class ExecutiveCompanyOSService:
         labels = {
             "readiness_blockers": ("Readiness blockers", "count", "max", 0),
             "open_memory_findings": ("Open memory findings", "count", "max", 5),
+            "open_memory_conflicts": ("Open memory/canonical conflicts", "count", "max", 0),
             "active_role_gaps": ("Active role gaps", "count", "max", 10),
             "actionable_role_gaps": ("Actionable role gaps", "count", "max", 10),
             "role_gaps_waiting_owner": ("Role gaps waiting for owner", "count", "max", 0),

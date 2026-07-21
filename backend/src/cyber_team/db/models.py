@@ -188,6 +188,60 @@ class MemoryStewardFinding(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class MemoryCanonicalConflict(Base):
+    __tablename__ = "memory_canonical_conflicts"
+    __table_args__ = (
+        UniqueConstraint(
+            "dedupe_key",
+            name="uq_memory_canonical_conflicts_dedupe_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    conflict_type: Mapped[str] = mapped_column(String(80), index=True)
+    severity: Mapped[str] = mapped_column(String(20), default="medium", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="open", index=True)
+    memory_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("memory_entries.id"),
+        index=True,
+    )
+    memory_namespace: Mapped[str] = mapped_column(String(200), index=True)
+    company_namespace: Mapped[str] = mapped_column(String(200), index=True)
+    canonical_source_type: Mapped[str] = mapped_column(
+        String(80),
+        default="erpnext_company_context",
+        index=True,
+    )
+    canonical_source_id: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+        index=True,
+    )
+    canonical_source_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+    )
+    memory_source_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+    )
+    claim_path: Mapped[str | None] = mapped_column(String(240), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(240))
+    description: Mapped[str] = mapped_column(Text)
+    recommendation: Mapped[str] = mapped_column(Text)
+    memory_excerpt: Mapped[str] = mapped_column(Text, default="")
+    canonical_excerpt: Mapped[str] = mapped_column(Text, default="")
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    resolution: Mapped[dict] = mapped_column(JSON, default=dict)
+    dedupe_key: Mapped[str] = mapped_column(String(240), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class ApprovalRequest(Base):
     __tablename__ = "approval_requests"
 

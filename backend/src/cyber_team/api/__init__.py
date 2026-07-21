@@ -51,6 +51,7 @@ from cyber_team.operations.autonomous import AutonomousOperationsService
 from cyber_team.operations.executive import ExecutiveCompanyOSService
 from cyber_team.operations.executive_briefing import ExecutiveBriefEmailService
 from cyber_team.operations.governor import OrchestrationGovernorService
+from cyber_team.operations.memory_conflicts import MemoryCanonicalConflictService
 from cyber_team.operations.memory_steward import MemoryStewardService
 from cyber_team.operations.owner_attention import OwnerAttentionNotificationService
 from cyber_team.operations.planning import AutonomousPlanningService
@@ -119,6 +120,9 @@ async def lifespan(app: FastAPI):
         audit_service=app.state.audit_service,
         memory_service=app.state.memory_service,
         agent_manager=app.state.agent_manager,
+    )
+    app.state.memory_conflict_service = MemoryCanonicalConflictService(
+        audit_service=app.state.audit_service,
     )
     app.state.autonomous_planning_service = AutonomousPlanningService(
         agent_manager=app.state.agent_manager,

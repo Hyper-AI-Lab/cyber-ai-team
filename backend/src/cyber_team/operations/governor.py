@@ -21,6 +21,7 @@ from cyber_team.db.models import (
     AutonomousPlan,
     AutonomousTask,
     CompanyContextSnapshot,
+    MemoryCanonicalConflict,
     MemoryStewardFinding,
     OrchestrationGovernorDecision,
     OrchestrationGovernorRun,
@@ -502,6 +503,25 @@ class OrchestrationGovernorService:
                     payload={
                         "recommended_action": "review_memory_steward_findings",
                         "target_view": "memory",
+                    },
+                )
+            )
+        if int(memory.get("open_canonical_conflicts") or 0) > 0:
+            decisions.append(
+                self._decision_spec(
+                    "create_plan",
+                    "Review memory and ERPNext canonical conflicts",
+                    "Open memory/canonical conflicts can make autonomous decisions rely "
+                    "on outdated company facts and should be reviewed.",
+                    risk_level="medium",
+                    source_type="memory_canonical_conflict",
+                    source_id="open_conflicts",
+                    target_type="memory",
+                    target_id="canonical_conflicts",
+                    payload={
+                        "recommended_action": "scan_and_review_memory_canonical_conflicts",
+                        "target_view": "memory",
+                        "blocking_count": memory.get("canonical_conflict_blocking_count", 0),
                     },
                 )
             )
@@ -1001,11 +1021,36 @@ class OrchestrationGovernorService:
             .where(MemoryStewardFinding.status == "open")
             .group_by(MemoryStewardFinding.severity)
         )
+        canonical_statuses = await session.execute(
+            select(MemoryCanonicalConflict.status, func.count()).group_by(
+                MemoryCanonicalConflict.status
+            )
+        )
+        canonical_by_status = {status: count for status, count in canonical_statuses.all()}
+        canonical_severity = await session.execute(
+            select(MemoryCanonicalConflict.severity, func.count())
+            .where(MemoryCanonicalConflict.status.in_(("open", "acknowledged")))
+            .group_by(MemoryCanonicalConflict.severity)
+        )
+        canonical_open_by_severity = {
+            item: count for item, count in canonical_severity.all()
+        }
         return {
             "total": sum(by_status.values()),
             "open_findings": by_status.get("open", 0),
             "by_status": by_status,
             "open_by_severity": {item: count for item, count in severity.all()},
+            "open_canonical_conflicts": sum(
+                canonical_by_status.get(status, 0)
+                for status in ("open", "acknowledged")
+            ),
+            "canonical_conflict_blocking_count": sum(
+                count
+                for item, count in canonical_open_by_severity.items()
+                if item in {"high", "critical"}
+            ),
+            "canonical_conflicts_by_status": canonical_by_status,
+            "canonical_conflicts_by_severity": canonical_open_by_severity,
         }
 
     async def _latest_company_context(self, session) -> dict[str, Any]:
@@ -1451,10 +1496,15 @@ class OrchestrationGovernorService:
         blockers = (snapshot.get("production_evidence") or {}).get("alerts", {})
         active_gaps = (snapshot.get("role_backlog") or {}).get("active", 0)
         memory_findings = (snapshot.get("memory") or {}).get("open_findings", 0)
+        memory_conflicts = (snapshot.get("memory") or {}).get(
+            "open_canonical_conflicts",
+            0,
+        )
         decision_titles = [spec["title"] for spec in specs[:5]]
         return (
             "Chief Operating Agent reviewed the current operating snapshot. "
             f"Active role gaps: {active_gaps}; open memory findings: {memory_findings}; "
+            f"open memory/canonical conflicts: {memory_conflicts}; "
             f"alert evidence status: {blockers.get('status', 'unknown')}. "
             "Recommended decisions: "
             + ("; ".join(decision_titles) if decision_titles else "none")

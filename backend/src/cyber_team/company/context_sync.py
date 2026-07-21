@@ -694,6 +694,11 @@ class CompanyContextSyncService:
                         "source_hash": snapshot["source_hash"],
                         "company_namespace": snapshot["company_namespace"],
                         "seed_id": seed["id"],
+                        **(
+                            {"canonical_claims": seed["canonical_claims"]}
+                            if seed.get("canonical_claims")
+                            else {}
+                        ),
                     },
                     importance=seed["importance"],
                 )
@@ -1061,6 +1066,12 @@ class CompanyContextSyncService:
                     "memory_type": "semantic",
                     "namespace": company_namespace,
                     "importance": 0.94,
+                    "canonical_claims": {
+                        "company_name": profile.get("company_name"),
+                        "name": profile.get("name"),
+                        "default_currency": profile.get("default_currency"),
+                        "source_site": profile.get("source_site"),
+                    },
                     "content": (
                         "ERPNext company profile snapshot:\n"
                         + json.dumps(profile, sort_keys=True, indent=2)
@@ -1071,6 +1082,10 @@ class CompanyContextSyncService:
                     "memory_type": "procedural",
                     "namespace": f"{company_namespace}:operations",
                     "importance": 0.88,
+                    "canonical_claims": {
+                        "erpnext_summary.counts": counts,
+                        "erpnext_summary.statuses": statuses,
+                    },
                     "content": (
                         "ERPNext operational baseline counts and statuses:\n"
                         + json.dumps(

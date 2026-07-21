@@ -486,6 +486,48 @@ class ApiClient {
     });
   }
 
+  async scanMemoryCanonicalConflicts(dryRun: boolean = false, limit: number = 500) {
+    return this.request('/api/memory/conflicts/scan', {
+      method: 'POST',
+      body: JSON.stringify({ dry_run: dryRun, limit }),
+    });
+  }
+
+  async listMemoryCanonicalConflicts(filters: {
+    status?: string;
+    severity?: string;
+    companyNamespace?: string;
+    limit?: number;
+  } = {}) {
+    const params = new URLSearchParams({
+      status: filters.status ?? 'open',
+      limit: String(filters.limit ?? 50),
+    });
+    if (filters.severity) {
+      params.set('severity', filters.severity);
+    }
+    if (filters.companyNamespace) {
+      params.set('company_namespace', filters.companyNamespace);
+    }
+    return this.request(`/api/memory/conflicts?${params.toString()}`);
+  }
+
+  async resolveMemoryCanonicalConflict(
+    conflictId: string,
+    status: string = 'resolved',
+    resolutionStrategy: string = 'prefer_canonical',
+    note: string = 'Reviewed in owner console'
+  ) {
+    return this.request(`/api/memory/conflicts/${conflictId}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({
+        status,
+        resolution_strategy: resolutionStrategy,
+        note,
+      }),
+    });
+  }
+
   // Workflows
   async listWorkflows() {
     return this.request('/api/workflows/');

@@ -492,6 +492,51 @@ describe('ApiClient', () => {
     })
   })
 
+  it('manages memory canonical conflict scan and resolution', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ status: 'completed', conflicts_found: 1 }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'memconf-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'memconf-1', status: 'resolved' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.scanMemoryCanonicalConflicts(true, 10)
+    await client.listMemoryCanonicalConflicts({
+      status: 'open,acknowledged',
+      severity: 'high',
+      companyNamespace: 'company:acme',
+      limit: 5,
+    })
+    await client.resolveMemoryCanonicalConflict(
+      'memconf-1',
+      'resolved',
+      'prefer_canonical',
+      'Reviewed',
+    )
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/memory/conflicts/scan')
+    expect(fetchMock.mock.calls[0][1]?.method).toBe('POST')
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({
+      dry_run: true,
+      limit: 10,
+    })
+    const listUrl = new URL(fetchMock.mock.calls[1][0] as string)
+    expect(listUrl.pathname).toBe('/api/memory/conflicts')
+    expect(listUrl.searchParams.get('status')).toBe('open,acknowledged')
+    expect(listUrl.searchParams.get('severity')).toBe('high')
+    expect(listUrl.searchParams.get('company_namespace')).toBe('company:acme')
+    expect(listUrl.searchParams.get('limit')).toBe('5')
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/memory/conflicts/memconf-1/resolve',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toEqual({
+      status: 'resolved',
+      resolution_strategy: 'prefer_canonical',
+      note: 'Reviewed',
+    })
+  })
+
   it('lists and runs autonomous operation cycles', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ event_type: 'autonomous_operations.cycle' }]))

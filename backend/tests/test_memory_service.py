@@ -95,7 +95,9 @@ async def test_memory_trace_record_and_list_filters_by_agent(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_policy_recall_queries_agent_and_company_scopes():
+async def test_policy_recall_queries_agent_and_company_scopes(monkeypatch):
+    engine, session_factory = await build_session_factory()
+    monkeypatch.setattr(memory_module, "async_session", session_factory)
     service = MemoryService()
     calls = []
 
@@ -139,27 +141,30 @@ async def test_policy_recall_queries_agent_and_company_scopes():
             ]
         return []
 
-    service.recall = fake_recall
+    try:
+        service.recall = fake_recall
 
-    result = await service.recall_with_policy(
-        SimpleNamespace(
-            query="launch operations",
-            agent_id="ops_agent",
-            memory_namespace="company:acme:ops",
-            role_family="operations",
-            role_name="Operations Manager",
-            limit=8,
+        result = await service.recall_with_policy(
+            SimpleNamespace(
+                query="launch operations",
+                agent_id="ops_agent",
+                memory_namespace="company:acme:ops",
+                role_family="operations",
+                role_name="Operations Manager",
+                limit=8,
+            )
         )
-    )
 
-    assert [call.namespace for call in calls][:3] == [
-        "company:acme:ops",
-        "company:acme",
-        "company:acme:roles",
-    ]
-    assert result["policy"]["company_namespace"] == "company:acme"
-    assert result["policy"]["strategy"] == "agent-private-plus-company-shared"
-    assert result["policy"]["scope_results"][0]["name"] == "agent_private"
-    assert [memory["id"] for memory in result["items"]] == ["private-1", "company-1"]
-    assert result["items"][0]["scope"] == "agent_private"
-    assert result["items"][1]["scope"] == "company_constitution"
+        assert [call.namespace for call in calls][:3] == [
+            "company:acme:ops",
+            "company:acme",
+            "company:acme:roles",
+        ]
+        assert result["policy"]["company_namespace"] == "company:acme"
+        assert result["policy"]["strategy"] == "agent-private-plus-company-shared"
+        assert result["policy"]["scope_results"][0]["name"] == "agent_private"
+        assert [memory["id"] for memory in result["items"]] == ["private-1", "company-1"]
+        assert result["items"][0]["scope"] == "agent_private"
+        assert result["items"][1]["scope"] == "company_constitution"
+    finally:
+        await engine.dispose()

@@ -250,6 +250,7 @@ class AgentMemoryProtocol:
     def prompt_context(self, context: AgentMemoryContext) -> str:
         if not context.items:
             return ""
+        excluded_count = context.read_policy.get("excluded_conflicted_count") or 0
         lines = [
             "",
             "",
@@ -261,6 +262,12 @@ class AgentMemoryProtocol:
             "- Preserve provenance when you rely on remembered facts.",
             "Relevant memories:",
         ]
+        if excluded_count:
+            lines.insert(
+                -1,
+                f"- {excluded_count} memory item(s) were excluded because canonical "
+                "ERPNext/company-context records supersede or conflict with them.",
+            )
         for memory in context.items[:8]:
             scope = memory.get("scope") or "agent_private"
             content = str(memory.get("content") or "").strip()

@@ -1735,6 +1735,26 @@ async def operations_readiness(
                 "reason": company_context_status.get("detail"),
             }
         )
+    memory_conflict_service = getattr(request.app.state, "memory_conflict_service", None)
+    if memory_conflict_service:
+        try:
+            memory_canonical_conflicts = await memory_conflict_service.readiness()
+        except Exception as exc:
+            memory_canonical_conflicts = {
+                "status": "degraded",
+                "blocking": True,
+                "open_count": 0,
+                "blocking_count": 1,
+                "detail": str(exc),
+            }
+    else:
+        memory_canonical_conflicts = {
+            "status": "unavailable",
+            "blocking": True,
+            "open_count": 0,
+            "blocking_count": 1,
+            "detail": "Memory/canonical conflict service is not available.",
+        }
 
     planner = getattr(request.app.state, "autonomous_planning_service", None)
     operating_cadence_status = {
@@ -2093,6 +2113,13 @@ async def operations_readiness(
         }
         if executive_status.get("blocking")
         else None,
+        {
+            "area": "memory_canonical_conflicts",
+            "mode": memory_canonical_conflicts.get("status"),
+            "reason": memory_canonical_conflicts.get("detail"),
+        }
+        if memory_canonical_conflicts.get("blocking")
+        else None,
     ]
     blockers = (
         side_effect_blockers
@@ -2160,7 +2187,9 @@ async def operations_readiness(
         "memory": {
             "recent_traces_reviewed": len(traces),
             "recent_trace_errors": len(trace_errors),
+            "canonical_conflicts": memory_canonical_conflicts,
         },
+        "memory_canonical_conflicts": memory_canonical_conflicts,
         "controls": {
             "recent_evidence_count": len(evidence),
             "recent_evidence": evidence,

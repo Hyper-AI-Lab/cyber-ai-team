@@ -3493,3 +3493,68 @@
   - GitHub Actions run: `29800052115`
 - Next step:
   - Run the owner-authorized alert email proof when the owner explicitly approves sending that real test email; until then, the alert-delivery evidence blocker intentionally remains the only live readiness degradation.
+
+### 2026-07-21T06:26:35Z — STEP-109 — Implemented Memory vs ERPNext canonical conflict detection
+- Files/services changed:
+  - `backend/src/cyber_team/db/models.py`
+  - `backend/alembic/versions/0013_memory_canonical_conflicts.py`
+  - `backend/src/cyber_team/operations/memory_conflicts.py`
+  - `backend/src/cyber_team/api/__init__.py`
+  - `backend/src/cyber_team/api/routes/memory.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/src/cyber_team/company/context_sync.py`
+  - `backend/src/cyber_team/memory/service.py`
+  - `backend/src/cyber_team/memory/protocol.py`
+  - `backend/src/cyber_team/operations/governor.py`
+  - `backend/src/cyber_team/operations/executive.py`
+  - `backend/tests/test_api_memory.py`
+  - `backend/tests/test_memory_canonical_conflicts.py`
+  - `backend/tests/test_api_operations.py`
+  - `backend/tests/test_migrations.py`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/MemoryView.tsx`
+  - `DEVELOPMENT_PLAN.md`
+- Commands run:
+  - `python3 -m py_compile backend/src/cyber_team/operations/memory_conflicts.py backend/src/cyber_team/memory/service.py backend/src/cyber_team/memory/protocol.py backend/src/cyber_team/api/routes/memory.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/operations/governor.py backend/src/cyber_team/operations/executive.py backend/src/cyber_team/company/context_sync.py backend/src/cyber_team/api/__init__.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest backend/tests/test_memory_canonical_conflicts.py backend/tests/test_api_memory.py backend/tests/test_migrations.py backend/tests/test_api_operations.py::test_operations_readiness_reports_tool_and_integration_blockers backend/tests/test_api_operations.py::test_operations_readiness_caches_snapshot_until_refresh backend/tests/test_api_operations.py::test_operations_readiness_keeps_optional_disabled_non_blocking -q`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/api/__init__.py backend/src/cyber_team/api/routes/memory.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/company/context_sync.py backend/src/cyber_team/db/models.py backend/src/cyber_team/memory/protocol.py backend/src/cyber_team/memory/service.py backend/src/cyber_team/operations/memory_conflicts.py backend/src/cyber_team/operations/governor.py backend/src/cyber_team/operations/executive.py backend/alembic/versions/0013_memory_canonical_conflicts.py backend/tests/test_api_memory.py backend/tests/test_memory_canonical_conflicts.py backend/tests/test_migrations.py backend/tests/test_api_operations.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest backend/tests/test_orchestration_governor.py backend/tests/test_executive_company_os.py backend/tests/test_memory_protocol.py backend/tests/test_company_context_sync.py -q`
+  - `npm test -- --run src/lib/api.test.ts` from `frontend` using local Node v18.19.1.
+- Result:
+  - Added durable `memory_canonical_conflicts` persistence with Alembic migration, dedupe key, source/hash traceability, excerpts, evidence, and owner resolution metadata.
+  - Added a `MemoryCanonicalConflictService` that scans active ERPNext/company-context snapshots against company memory, detects stale source hashes and structured canonical-claim mismatches, marks conflicted memory as excluded from recall, resolves superseded conflicts when scans no longer find them, records audit/control evidence, and summarizes readiness.
+  - ERPNext company-context memory seeds now include structured canonical claims for company profile and operational counts/statuses.
+  - Agent policy recall now attaches DB metadata to recalled IDs and excludes active canonical conflicts or canonical-superseded memory before prompt construction; prompt context notes when exclusions happened.
+  - Added owner APIs for scanning, listing, and resolving memory/canonical conflicts, plus readiness, governor-decision, executive-KPI, and benchmark integration.
+  - Added a Memory tab Canonical Conflicts panel with scan, refresh, prefer-canonical, acknowledge, and dismiss actions.
+  - Focused backend tests passed (`14 passed`) and governor/executive/context protocol tests passed (`30 passed`). Ruff passed on touched backend files.
+  - Local frontend API test could not start under host Node v18.19.1 because current Vitest/Rolldown imports `node:util.styleText`, which is only available in newer Node runtimes used by the Docker/CI path.
+- Evidence:
+  - Focused backend pytest output from 2026-07-21T06:24Z.
+  - Governor/executive/context pytest output from 2026-07-21T06:25Z.
+  - Ruff output from 2026-07-21T06:24Z.
+  - Local frontend runtime mismatch output from 2026-07-21T06:24Z.
+- Next step:
+  - Run Docker/CI-aligned frontend verification, full release gate, commit, push, deploy to staging, run live conflict scan/list/readiness checks, and watch GitHub CI.
+
+### 2026-07-21T06:36:20Z — STEP-110 — Verified canonical conflict slice with full quality gate
+- Files/services changed:
+  - `backend/tests/test_memory_service.py`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `docker run --rm -v /home/projects/cyber-team/frontend:/app:ro -w /app node:20-bookworm-slim npm test -- --run src/lib/api.test.ts`
+  - `docker run --rm -v /home/projects/cyber-team/frontend:/app -w /app node:20-bookworm-slim npm test -- --run src/lib/api.test.ts`
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest backend/tests/test_memory_service.py::test_policy_recall_queries_agent_and_company_scopes backend/tests/test_memory_canonical_conflicts.py -q`
+  - `.venv-quality/bin/ruff check backend/tests/test_memory_service.py backend/tests/test_memory_canonical_conflicts.py`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 ./scripts/quality-gate.sh`
+- Result:
+  - Read-only Docker frontend test attempt correctly failed because Vitest writes a temporary bundled config under `node_modules/.vite-temp`; reran with a writable frontend mount and Node 20, and API client tests passed (`23 passed`).
+  - Full quality gate passed: backend Ruff, backend tests (`211 passed`), backend compile, Alembic offline SQL through `0013_memory_canonical_conflicts`, `pip-audit`, frontend production build, TypeScript check, frontend tests (`23 passed`), `npm audit`, Docker Compose config, script/dashboard syntax, secret scan, FOSS/resource policy scan, and `git diff --check`.
+  - Updated the existing memory policy recall unit test to use the in-memory DB fixture so the new canonical-conflict metadata lookup path is exercised without depending on local PostgreSQL.
+- Evidence:
+  - Docker Node 20 frontend API test output from 2026-07-21T06:28Z.
+  - Focused memory-service pytest/Ruff output from 2026-07-21T06:29Z.
+  - Full quality gate output from 2026-07-21T06:30Z through 2026-07-21T06:36Z.
+- Next step:
+  - Commit and push the canonical conflict slice, run release candidate checks with migration rehearsal/compose smoke/image scan, promote to staging, then run live memory conflict scan/list/readiness checks.

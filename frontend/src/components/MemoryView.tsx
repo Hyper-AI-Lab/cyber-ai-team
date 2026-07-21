@@ -13,6 +13,7 @@ import {
   Play,
   RefreshCw,
   Search,
+  ShieldCheck,
   Tag,
 } from 'lucide-react'
 
@@ -34,6 +35,10 @@ export default function MemoryView() {
   const [runningSteward, setRunningSteward] = useState(false)
   const [planningRemediations, setPlanningRemediations] = useState(false)
   const [runningAction, setRunningAction] = useState<string | null>(null)
+  const [conflicts, setConflicts] = useState<any[]>([])
+  const [loadingConflicts, setLoadingConflicts] = useState(false)
+  const [scanningConflicts, setScanningConflicts] = useState(false)
+  const [resolvingConflict, setResolvingConflict] = useState<string | null>(null)
 
   const handleSearch = async () => {
     if (!query) return
@@ -89,10 +94,26 @@ export default function MemoryView() {
     }
   }, [])
 
+  const loadConflicts = useCallback(async () => {
+    setLoadingConflicts(true)
+    try {
+      const res = await api.listMemoryCanonicalConflicts({
+        status: 'open,acknowledged',
+        limit: 25,
+      })
+      setConflicts(res)
+    } catch (e: any) {
+      console.error('Memory canonical conflict fetch failed:', e)
+    } finally {
+      setLoadingConflicts(false)
+    }
+  }, [])
+
   useEffect(() => {
     void loadTraces()
     void loadFindings()
-  }, [loadFindings, loadTraces])
+    void loadConflicts()
+  }, [loadConflicts, loadFindings, loadTraces])
 
   const runSteward = async () => {
     setRunningSteward(true)
@@ -117,6 +138,39 @@ export default function MemoryView() {
       console.error('Memory steward planning failed:', e)
     } finally {
       setPlanningRemediations(false)
+    }
+  }
+
+  const scanConflicts = async () => {
+    setScanningConflicts(true)
+    try {
+      await api.scanMemoryCanonicalConflicts(false, 500)
+      await loadConflicts()
+    } catch (e: any) {
+      console.error('Memory canonical conflict scan failed:', e)
+    } finally {
+      setScanningConflicts(false)
+    }
+  }
+
+  const updateConflict = async (
+    conflictId: string,
+    status: string,
+    strategy: string = 'prefer_canonical',
+  ) => {
+    setResolvingConflict(`${conflictId}:${status}`)
+    try {
+      await api.resolveMemoryCanonicalConflict(
+        conflictId,
+        status,
+        strategy,
+        'Reviewed in owner console',
+      )
+      await loadConflicts()
+    } catch (e: any) {
+      console.error('Memory canonical conflict update failed:', e)
+    } finally {
+      setResolvingConflict(null)
     }
   }
 
@@ -201,6 +255,122 @@ export default function MemoryView() {
           No results found. Try a different query.
         </div>
       )}
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">Canonical Conflicts</h3>
+            <p className="text-sm text-slate-400 mt-1">
+              ERPNext/company-context checks that keep memory from overriding source-of-record facts
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={loadConflicts}
+              disabled={loadingConflicts}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <RefreshCw className={`w-4 h-4 ${loadingConflicts ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+            <button
+              onClick={scanConflicts}
+              disabled={scanningConflicts}
+              className="btn-primary flex items-center gap-2"
+            >
+              <ShieldCheck className="w-4 h-4" />
+              {scanningConflicts ? 'Scanning...' : 'Scan'}
+            </button>
+          </div>
+        </div>
+
+        {conflicts.length > 0 ? (
+          <div className="space-y-3">
+            {conflicts.map((conflict: any) => (
+              <div key={conflict.id} className="card">
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <AlertTriangle className="w-4 h-4 text-amber-300" />
+                  <span className={
+                    conflict.severity === 'high' || conflict.severity === 'critical'
+                      ? 'badge-danger'
+                      : 'badge-warning'
+                  }>
+                    {conflict.severity}
+                  </span>
+                  <span className="badge-info">{conflict.conflict_type}</span>
+                  <span className="rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-300">
+                    {conflict.status}
+                  </span>
+                  <span className="text-xs text-slate-500">{conflict.company_namespace}</span>
+                </div>
+                <h4 className="font-semibold text-slate-100">{conflict.title}</h4>
+                <p className="mt-2 text-sm text-slate-300">{conflict.description}</p>
+                <p className="mt-2 text-sm text-slate-400">{conflict.recommendation}</p>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div className="rounded border border-slate-700 bg-slate-900/40 p-3">
+                    <div className="mb-1 text-xs font-medium text-slate-400">Memory</div>
+                    <div className="break-all text-xs text-slate-500">{conflict.memory_id}</div>
+                    <p className="mt-2 text-sm text-slate-300">{conflict.memory_excerpt}</p>
+                  </div>
+                  <div className="rounded border border-slate-700 bg-slate-900/40 p-3">
+                    <div className="mb-1 text-xs font-medium text-slate-400">Canonical</div>
+                    <div className="break-all text-xs text-slate-500">
+                      {conflict.canonical_source_id || conflict.canonical_source_hash || 'latest'}
+                    </div>
+                    <p className="mt-2 text-sm text-slate-300">{conflict.canonical_excerpt}</p>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
+                  <span className="rounded border border-slate-700 px-2 py-1">
+                    {conflict.memory_namespace}
+                  </span>
+                  {conflict.claim_path && (
+                    <span className="rounded border border-slate-700 px-2 py-1">
+                      {conflict.claim_path}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => updateConflict(conflict.id, 'resolved', 'prefer_canonical')}
+                    disabled={Boolean(resolvingConflict)}
+                    className="btn-secondary text-xs flex items-center gap-1"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    {resolvingConflict === `${conflict.id}:resolved`
+                      ? 'Resolving...'
+                      : 'Prefer Canonical'}
+                  </button>
+                  <button
+                    onClick={() => updateConflict(conflict.id, 'acknowledged', 'owner_review')}
+                    disabled={Boolean(resolvingConflict)}
+                    className="btn-secondary text-xs"
+                  >
+                    {resolvingConflict === `${conflict.id}:acknowledged`
+                      ? 'Saving...'
+                      : 'Acknowledge'}
+                  </button>
+                  <button
+                    onClick={() => updateConflict(conflict.id, 'dismissed', 'memory_verified')}
+                    disabled={Boolean(resolvingConflict)}
+                    className="btn-secondary text-xs"
+                  >
+                    {resolvingConflict === `${conflict.id}:dismissed`
+                      ? 'Dismissing...'
+                      : 'Dismiss'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="card text-center text-slate-500">
+            {loadingConflicts
+              ? 'Loading canonical conflicts...'
+              : 'No open memory/canonical conflicts.'}
+          </div>
+        )}
+      </div>
 
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">

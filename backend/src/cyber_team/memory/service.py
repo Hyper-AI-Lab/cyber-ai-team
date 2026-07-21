@@ -265,6 +265,11 @@ class MemoryService:
                 break
 
         policy["scope_results"] = scope_results
+        results, excluded = await self._filter_conflicted_results(results)
+        if excluded:
+            policy["excluded_conflicted_memory_ids"] = excluded
+            policy["excluded_conflicted_count"] = len(excluded)
+            errors.append(f"canonical_conflict:excluded:{len(excluded)}")
         policy["returned"] = len(results)
         return {
             "items": results,
@@ -477,6 +482,31 @@ class MemoryService:
                 for e in entries
             ]
 
+    async def _filter_conflicted_results(
+        self,
+        results: list[dict],
+    ) -> tuple[list[dict], list[str]]:
+        """Attach DB metadata and exclude memories superseded by canonical records."""
+        ids = [str(item.get("id")) for item in results if item.get("id")]
+        if not ids:
+            return results, []
+        async with async_session() as session:
+            entries = (
+                await session.execute(select(MemoryEntry).where(MemoryEntry.id.in_(ids)))
+            ).scalars().all()
+            metadata_by_id = {entry.id: dict(entry.metadata_ or {}) for entry in entries}
+
+        filtered: list[dict] = []
+        excluded: list[str] = []
+        for item in results:
+            memory_id = str(item.get("id") or "")
+            metadata = metadata_by_id.get(memory_id, dict(item.get("metadata") or {}))
+            if self._metadata_excludes_from_recall(metadata):
+                excluded.append(memory_id)
+                continue
+            filtered.append({**item, "metadata": metadata})
+        return filtered, excluded
+
     async def delete_memory(self, memory_id: str):
         async with async_session() as session:
             result = await session.execute(
@@ -601,6 +631,21 @@ class MemoryService:
         if len(parts) >= 2 and parts[0] == "company" and parts[1]:
             return ":".join(parts[:2])
         return None
+
+    @staticmethod
+    def _metadata_excludes_from_recall(metadata: dict) -> bool:
+        reason = str(metadata.get("exclude_from_recall_reason") or "")
+        if reason in {
+            "active_memory_canonical_conflict",
+            "canonical_record_preferred",
+        }:
+            return True
+        if metadata.get("canonical_superseded") is True:
+            return True
+        if metadata.get("canonical_conflict_status") == "active":
+            return True
+        conflicts = metadata.get("canonical_conflicts")
+        return isinstance(conflicts, dict) and bool(conflicts)
 
     @staticmethod
     def _excerpt(text: str, limit: int = 240) -> str:
