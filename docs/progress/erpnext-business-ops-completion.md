@@ -3696,3 +3696,32 @@
   - Full quality gate output from 2026-07-21T10:53Z through 2026-07-21T10:58Z.
 - Next step:
   - Commit and push the LLM-readiness hardening, run release checks for the new SHA, promote staging again, regenerate workflow intents, and verify they no longer report false `ready` while Mistral credentials are rejected.
+
+### 2026-07-21T11:14:48Z — STEP-116 — Released LLM-gated workflow intents to staging
+- Files/services changed:
+  - Released commit `2b1a1c1` to staging.
+  - Recreated staging `core`, `worker`, and `ui` containers with `cyber-team-core:2b1a1c1` and `cyber-team-ui:2b1a1c1`.
+  - Generated additional live workflow-intent rows from the current company-context snapshot after deployment.
+- Commands run:
+  - `gh run view 29824338794 --repo Hyper-AI-Lab/cyber-ai-team --json status,conclusion,displayTitle,createdAt,updatedAt,jobs`
+  - `RELEASE_VERSION=2b1a1c1 ... RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=2b1a1c1 ./scripts/promote-staging.sh`
+  - Live staging owner-authenticated checks against `https://cyberteam.hyperailab.com`: `/health`, `/api/integrations/status`, `/api/operations/readiness?refresh=true`, `POST /api/workflows/intents/generate`, and `GET /api/workflows/intents`.
+- Result:
+  - GitHub CI for `2b1a1c1` completed successfully.
+  - Release candidate `2b1a1c1` passed full quality gate, Alembic migration rehearsal, isolated Docker Compose smoke, tagged image builds, and Trivy image scans with zero detected vulnerabilities.
+  - Release manifest created at `/home/projects/cyber-team/dist/releases/2b1a1c1.json`.
+  - Staging backup created at `/home/projects/cyber-team/backups/staging/cyberteam-staging-2b1a1c1-20260721-111222.dump`.
+  - Staging promotion completed and live smoke passed.
+  - Promotion record created at `/home/projects/cyber-team/dist/promotions/staging/2b1a1c1-20260721-111309.json`.
+  - Live `/health` reports version `2b1a1c1` and build SHA `2b1a1c12d1188d436fa98f42f7f8a16aa10af689`.
+  - Live integration readiness now reports the required Mistral LLM provider as `configuration_required` because the provider rejected the configured credentials; ERPNext, SMTP, and IMAP remain live.
+  - Regenerating workflow intents completed with `32` current-snapshot proposals: `19` blocked by missing/inactive agents and `13` configuration-required due to LLM validation. The full live intent list now has `50` active proposed intents with `0` ready and `0` owner-review entries while Mistral remains rejected, so the prior false-ready path is closed.
+- Evidence:
+  - GitHub Actions run `29824338794`.
+  - Release manifest `/home/projects/cyber-team/dist/releases/2b1a1c1.json`.
+  - Staging backup `/home/projects/cyber-team/backups/staging/cyberteam-staging-2b1a1c1-20260721-111222.dump`.
+  - Promotion record `/home/projects/cyber-team/dist/promotions/staging/2b1a1c1-20260721-111309.json`.
+  - Live staging API validation output from 2026-07-21T11:13Z.
+- Next step:
+  - Replace or revalidate the staging Mistral API credential, then rerun LLM validation, regenerate workflow intents, and execute one generated workflow only after LLM readiness is `live`.
