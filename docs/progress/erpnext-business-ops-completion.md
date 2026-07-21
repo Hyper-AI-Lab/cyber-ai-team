@@ -3295,3 +3295,34 @@
   - Live health output from 2026-07-21T02:00Z.
 - Next step:
   - Run local hygiene checks, commit and push the restart-helper/roadmap updates, watch GitHub CI, then continue Executive Operating Cadence v1 after the owner reviews or leaves the three high-risk role approvals.
+
+### 2026-07-21T02:08:50Z — STEP-102 — Cleared frontend dependency audit advisory
+- Files/services changed:
+  - `frontend/package-lock.json`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - Watched GitHub Actions run `29794730360`.
+  - `gh run view 29794730360 --repo Hyper-AI-Lab/cyber-ai-team --job 88523643456 --log`
+  - `npm audit --audit-level=moderate`
+  - `npm audit fix`
+  - `docker run --rm -v /home/projects/cyber-team:/workspace -w /workspace/frontend node:20-bookworm-slim sh -lc 'npm ci && npm test && npm audit --audit-level=moderate && npm run build && npx tsc --noEmit --incremental false'`
+  - `bash -n scripts/start-staging-current.sh`
+  - `python3 scripts/secret-scan.py`
+  - `python3 scripts/resource-policy-check.py`
+  - `git diff --check`
+- Result:
+  - Initial GitHub Actions push run `29794730360` passed backend and compose/hygiene jobs but failed the frontend dependency audit.
+  - The failing frontend audit reported high-severity advisories for transitive dev dependencies:
+    - `brace-expansion` below `1.1.16` / `5.0.7`
+    - `js-yaml` `4.0.0` through `4.2.0`
+  - `npm audit fix` updated the lockfile to:
+    - `brace-expansion` `1.1.16`
+    - `brace-expansion` `5.0.7`
+    - `js-yaml` `4.3.0`
+  - Frontend verification under Dockerized Node 20 passed: `npm ci`, `npm test` (`22 passed`), `npm audit --audit-level=moderate` (`0 vulnerabilities`), `npm run build`, and `npx tsc --noEmit --incremental false`.
+  - Root hygiene checks passed: restart-helper shell syntax, secret scan, resource-policy scan, and diff whitespace.
+- Evidence:
+  - Failed GitHub Actions run: `29794730360`
+  - Frontend audit advisory IDs from GitHub log: `GHSA-3jxr-9vmj-r5cp`, `GHSA-52cp-r559-cp3m`
+- Next step:
+  - Commit and push the frontend lockfile audit fix and progress evidence, then watch the replacement GitHub CI run to green.
