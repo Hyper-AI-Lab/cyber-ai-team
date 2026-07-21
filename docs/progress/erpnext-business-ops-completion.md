@@ -3465,3 +3465,31 @@
   - GitHub Actions run: `29799003386`
 - Next step:
   - Commit and push the cadence recovery-status refinement, build and promote one final small release, then verify the Executive Cadence board reports ready except for the separate stale alert-email proof readiness blocker.
+
+### 2026-07-21T04:16:09Z — STEP-108 — Released cadence recovery-status refinement to staging
+- Files/services changed:
+  - Live `cyberteam-staging` Docker Compose app services promoted from `3cc70cd` to `e31013e`.
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `git commit -m "fix: let cadence recover after historical failures"`
+  - `git push origin main`
+  - `RELEASE_VERSION=$(git rev-parse --short HEAD) SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 COMPOSE_PROJECT_NAME=cyberteam-release-smoke CYBERTEAM_CONTAINER_PREFIX=cyberteam-release-smoke API_PUBLISHED_PORT=127.0.0.1:28080 UI_PUBLISHED_PORT=127.0.0.1:23081 POSTGRES_PUBLISHED_PORT=127.0.0.1:25432 REDIS_PUBLISHED_PORT=127.0.0.1:26379 QDRANT_HTTP_PUBLISHED_PORT=127.0.0.1:26333 QDRANT_GRPC_PUBLISHED_PORT=127.0.0.1:26334 TEMPORAL_PUBLISHED_PORT=127.0.0.1:27233 OPA_PUBLISHED_PORT=127.0.0.1:28181 API_BASE=http://localhost:28080 UI_BASE=http://localhost:23081 NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com COMPOSE_SMOKE_BUILD=0 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=e31013e ./scripts/promote-staging.sh`
+  - Authenticated live staging checks for `/health`, `/ready`, `/api/operations/readiness?refresh=true`, `/api/operations/executive-cadence`, and `/api/operations/owner-attention/notifications/status`.
+  - `docker ps --format '{{.Names}} {{.Image}} {{.Status}}'`
+  - `gh run list --repo Hyper-AI-Lab/cyber-ai-team --branch main --limit 5`
+- Result:
+  - GitHub Actions run `29800052115` for `fix: let cadence recover after historical failures` passed.
+  - Strict release candidate `e31013e` passed full quality gate, real PostgreSQL migration rehearsal, isolated Docker Compose smoke, image builds, and Trivy image scan with zero vulnerabilities reported for the release images.
+  - Promotion created a PostgreSQL backup, recreated `core`, `worker`, and `ui` on `cyber-team-core:e31013e` / `cyber-team-ui:e31013e`, and passed live staging smoke.
+  - Live `/health` reports `version=e31013e`, `build_sha=e31013e0c454b33fe02d931bbc3e102522738a4b`; `/ready` reports `ready`.
+  - Live `/api/operations/executive-cadence` reports `status=ready`, `degraded=0`, `due=0`, `enabled=4`, `loops=4`; historical `recent_failures=11` remain visible as evidence without making the recovered cadence board degraded.
+  - Live owner-attention notification status reports `ready` with no current `last_failure`.
+  - Overall operations readiness still reports `degraded` because alert-email proof is stale; no real alert-test email was sent without explicit owner authorization.
+- Evidence:
+  - Release manifest: `/home/projects/cyber-team/dist/releases/e31013e.json`
+  - Staging promotion record: `/home/projects/cyber-team/dist/promotions/staging/e31013e-20260721-041505.json`
+  - Staging backup: `/home/projects/cyber-team/backups/staging/cyberteam-staging-e31013e-20260721-041348.dump`
+  - GitHub Actions run: `29800052115`
+- Next step:
+  - Run the owner-authorized alert email proof when the owner explicitly approves sending that real test email; until then, the alert-delivery evidence blocker intentionally remains the only live readiness degradation.
