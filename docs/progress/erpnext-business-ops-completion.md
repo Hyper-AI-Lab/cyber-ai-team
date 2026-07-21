@@ -3326,3 +3326,46 @@
   - Frontend audit advisory IDs from GitHub log: `GHSA-3jxr-9vmj-r5cp`, `GHSA-52cp-r559-cp3m`
 - Next step:
   - Commit and push the frontend lockfile audit fix and progress evidence, then watch the replacement GitHub CI run to green.
+
+### 2026-07-21T02:15:05Z — STEP-103 — Added Executive Operating Cadence API/UI slice
+- Files/services changed:
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/tests/test_api_operations.py`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/OperationsView.tsx`
+  - `DEVELOPMENT_PLAN.md`
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest backend/tests/test_api_operations.py::test_executive_cadence_route_combines_runtime_and_durable_history backend/tests/test_api_operations.py::test_executive_brief_email_routes backend/tests/test_api_operations.py::test_operations_readiness_keeps_optional_disabled_non_blocking -q`
+  - `docker run --rm -v /home/projects/cyber-team:/workspace -w /workspace/frontend node:20-bookworm-slim sh -lc 'npm test -- src/lib/api.test.ts'`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/api/routes/operations.py backend/tests/test_api_operations.py`
+  - `python3 -m compileall -q backend/src/cyber_team/api/routes/operations.py backend/tests/test_api_operations.py`
+  - `docker run --rm -v /home/projects/cyber-team:/workspace -w /workspace/frontend node:20-bookworm-slim sh -lc 'npm run build && npx tsc --noEmit --incremental false'`
+  - `git diff --check`
+- Result:
+  - Added `GET /api/operations/executive-cadence` to consolidate scheduler runtime state, durable audit history, latest executive governor runs, Observer reviews, daily-brief cooldown/idempotency, and low-risk remediation counts without adding a new migration.
+  - Extended `/api/operations/readiness` with `executive_cadence` so the production readiness board can distinguish scheduled cadence health from the broader executive-autonomy health.
+  - Updated the frontend API client and Executive Cockpit to render a concise Executive Cadence panel with each loop's last run, next due time, durable evidence count, daily-brief cooldown, and latest low-risk remediation totals.
+  - Added focused backend and frontend tests for the new cadence route/client behavior.
+  - Focused backend tests passed (`3 passed`); frontend API tests passed (`22 passed`); touched Python lint and compile checks passed; frontend production build and TypeScript check passed.
+- Evidence:
+  - Local focused backend test output from 2026-07-21T02:21Z.
+  - Local Dockerized frontend API test output from 2026-07-21T02:22Z.
+- Next step:
+  - Run the broader local quality gate, deploy the cadence slice to staging, verify the live cadence endpoint/Owner Console, then commit, push, and watch GitHub CI.
+
+### 2026-07-21T02:33:35Z — STEP-104 — Ran full local quality gate for cadence slice
+- Files/services changed:
+  - `docs/progress/erpnext-business-ops-completion.md`
+- Commands run:
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 ./scripts/quality-gate.sh`
+- Result:
+  - Full project quality gate passed.
+  - Backend checks passed: Ruff, `206` pytest tests, compileall, Alembic offline SQL, and `pip-audit` with no known vulnerabilities.
+  - Frontend checks passed: Next.js production build, TypeScript typecheck, Vitest (`22` tests), and `npm audit --audit-level=moderate` with `0` vulnerabilities.
+  - Compose config, shell/dashboard syntax, secret scan, FOSS/resource scan, and git diff hygiene passed.
+- Evidence:
+  - Local quality-gate output from 2026-07-21T02:26Z through 2026-07-21T02:33Z.
+- Next step:
+  - Commit and push the cadence slice, build a release candidate from the clean commit, deploy it to staging, verify the live cadence endpoint and Owner Console, then watch GitHub CI.

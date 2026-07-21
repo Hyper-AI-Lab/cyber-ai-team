@@ -272,9 +272,9 @@ Exit criteria:
 
 Status: production foundation implemented. The owner can inspect dashboard state, agents,
 memory, workflows, chat, approvals, integrations, audit events, readiness, company
-context, role backlog, governor/observer activity, objectives, benchmarks, and
-outsourcing requests. The next UI work is an Executive Operating Cadence cockpit that
-makes scheduled decisions and daily briefs easier to understand.
+context, role backlog, governor/observer activity, objectives, benchmarks, outsourcing
+requests, and the executive operating cadence that ties scheduled governor, Observer,
+owner-attention, operating-loop, and daily-brief work together.
 
 Deliverables:
 
@@ -321,10 +321,10 @@ Exit criteria:
    Operations & Procurement (`procurement_request`).
 3. Defer or leave the six optional communications/provider role gaps until SMS, voice,
    WhatsApp/Slack/Telegram, or related channels become business requirements.
-4. Implement **Executive Operating Cadence v1**:
-   scheduled governor/observer runs, daily owner email brief, idempotency evidence,
-   automatic low-risk remediation, and clearer Executive Cockpit history.
-5. Run backend/frontend quality gates, staging smoke, release gate, deploy, and GitHub CI
+4. Complete the remaining **Executive Operating Cadence v1** operational pass:
+   staging deployment, live cadence endpoint verification, safe executive dry run, safe
+   executive run, and owner-visible evidence check.
+5. Run final backend/frontend quality gates, staging smoke, release gate, deploy, and GitHub CI
    for the cadence milestone.
 
 ## 6. Current Slice Notes
@@ -341,7 +341,9 @@ back to `latest` images and `BUILD_SHA=local`; `scripts/start-staging-current.sh
 the latest promotion record and starts the staging/ERP stack with the exact promoted image
 tags and build metadata.
 
-The next development milestone is Executive Operating Cadence v1. Its purpose is to make
-the Chief Operating Agent and Observer useful as a routine operating layer, not only a
-manual/scheduled diagnostic: recurring executive runs, daily owner brief, richer
-idempotency and cooldown evidence, low-risk remediation, and better cockpit timelines.
+Executive Operating Cadence v1 now has a first-class API/UI slice in progress:
+`GET /api/operations/executive-cadence` consolidates scheduler runtime state, durable
+audit history, latest executive runs, Observer reviews, brief cooldown/idempotency, and
+low-risk remediation counts. The Owner Console Executive Cockpit renders those loops as
+an operating-cadence history panel. The remaining work in this milestone is broad quality
+gating, staging deployment, live cadence verification, and GitHub CI.

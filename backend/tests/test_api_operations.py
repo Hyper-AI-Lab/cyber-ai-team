@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from cyber_team.api.routes.operations import router as operations_router
 from cyber_team.api.security import Principal, get_current_principal
+from cyber_team.clock import utc_now
 
 
 def owner_principal():
@@ -212,6 +213,139 @@ def test_executive_brief_email_routes(monkeypatch):
         dry_run=True,
         force=True,
     )
+
+
+def test_executive_cadence_route_combines_runtime_and_durable_history(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    recent_sent = utc_now().isoformat()
+    app.state.audit_service = AsyncMock()
+
+    async def list_events(*, event_type=None, limit=20, **_kwargs):
+        if event_type == "executive_brief.email":
+            return [
+                {
+                    "id": "audit_brief_1",
+                    "event_type": "executive_brief.email",
+                    "outcome": "sent",
+                    "created_at": recent_sent,
+                    "metadata": {"idempotency_key": "executive-brief:2026-07-21"},
+                }
+            ]
+        if event_type == "orchestration_governor.scheduler_run":
+            return [
+                {
+                    "id": "audit_gov_1",
+                    "event_type": "orchestration_governor.scheduler_run",
+                    "outcome": "success",
+                    "created_at": recent_sent,
+                    "metadata": {"run_id": "exegov_1"},
+                }
+            ]
+        return []
+
+    app.state.audit_service.list_events.side_effect = list_events
+    app.state.executive_company_os_service = AsyncMock()
+    app.state.executive_company_os_service.list_runs.return_value = {
+        "items": [
+            {
+                "run_id": "exegov_1",
+                "status": "completed",
+                "snapshot_hash": "hash-1",
+                "counts": {
+                    "executions": 3,
+                    "completed": 2,
+                    "approval_required": 1,
+                    "blocked": 0,
+                    "outsourcing_required": 0,
+                    "benchmark_failed": 0,
+                },
+            }
+        ],
+        "count": 1,
+    }
+    app.state.executive_company_os_service.list_observer_reviews.return_value = {
+        "items": [{"id": "obs_1", "status": "agreed", "created_at": recent_sent}],
+        "count": 1,
+    }
+    app.state.owner_attention_notification_service = AsyncMock()
+    app.state.owner_attention_notification_service.status.return_value = {
+        "enabled": True,
+        "status": "ready",
+        "detail": "Owner attention notifications can send live email.",
+    }
+    app.state.executive_brief_email_service = AsyncMock()
+    app.state.executive_brief_email_service.status.return_value = {
+        "enabled": True,
+        "status": "ready",
+        "channel": "email",
+        "recipient": "owner@example.com",
+        "cooldown_hours": 20,
+        "last_event": {
+            "id": "audit_brief_1",
+            "outcome": "sent",
+            "created_at": recent_sent,
+        },
+    }
+    app.state.orchestration_governor_scheduler_status = {
+        "enabled": True,
+        "status": "completed",
+        "detail": "Chief Operating Agent governor run completed.",
+        "actor": "chief_operating_agent_scheduler",
+        "interval_seconds": 3600,
+        "last_started_at": "2026-07-21T00:00:00+00:00",
+        "last_completed_at": "2026-07-21T00:01:00+00:00",
+        "last_result": {"run_id": "exegov_1"},
+        "last_error": None,
+    }
+    app.state.operating_cadence_scheduler_status = {
+        "enabled": True,
+        "status": "completed",
+        "interval_seconds": 900,
+        "last_completed_at": "2026-07-21T00:02:00+00:00",
+    }
+    app.state.owner_attention_notification_status = {
+        "enabled": True,
+        "status": "skipped",
+        "interval_seconds": 900,
+        "last_completed_at": "2026-07-21T00:03:00+00:00",
+    }
+    app.state.executive_brief_email_status = {
+        "enabled": True,
+        "status": "skipped",
+        "interval_seconds": 86400,
+        "last_completed_at": "2026-07-21T00:04:00+00:00",
+    }
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+
+    response = TestClient(app).get("/api/operations/executive-cadence")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["counts"]["loops"] == 4
+    assert body["counts"]["enabled"] == 4
+    assert body["latest_executive_run"]["run_id"] == "exegov_1"
+    assert body["latest_observer_review"]["id"] == "obs_1"
+    assert body["idempotency"]["latest_snapshot_hash"] == "hash-1"
+    assert body["idempotency"]["brief_cooldown"]["cooldown_active"] is True
+    assert body["low_risk_remediation"]["completed"] == 2
+    assert body["low_risk_remediation"]["approval_required"] == 1
+    brief_loop = next(
+        item for item in body["loops"] if item["loop_id"] == "executive_brief_email"
+    )
+    assert brief_loop["durable_history"]["recent_counts"]["sent"] == 1
 
 
 def test_executive_company_os_routes_call_service(monkeypatch):

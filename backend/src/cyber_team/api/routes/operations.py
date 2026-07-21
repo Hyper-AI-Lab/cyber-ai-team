@@ -1,6 +1,7 @@
 """Autonomous operations routes."""
 
 import time
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -222,6 +223,337 @@ def _readiness_evidence_service(request: Request) -> ProductionReadinessEvidence
 
 def _clear_operations_readiness_cache(request: Request) -> None:
     request.app.state.operations_readiness_cache = None
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _scheduled_loop_view(
+    *,
+    loop_id: str,
+    title: str,
+    runtime: dict[str, Any],
+    now: datetime,
+    durable_events: list[dict[str, Any]] | None = None,
+    service_status: dict[str, Any] | None = None,
+    latest_result: dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    interval_seconds = runtime.get("interval_seconds")
+    try:
+        interval_seconds = int(interval_seconds) if interval_seconds is not None else None
+    except (TypeError, ValueError):
+        interval_seconds = None
+    enabled = bool(runtime.get("enabled"))
+    last_started = _parse_iso_datetime(runtime.get("last_started_at"))
+    last_completed = _parse_iso_datetime(runtime.get("last_completed_at"))
+    next_due_at = None
+    due = False
+    if enabled and interval_seconds:
+        anchor = last_completed or last_started
+        next_due_at = (
+            anchor + timedelta(seconds=max(1, interval_seconds))
+            if anchor
+            else now + timedelta(seconds=max(1, interval_seconds))
+        )
+        due = bool(anchor and next_due_at <= now)
+    status = runtime.get("status") or ("idle" if enabled else "disabled")
+    durable_events = durable_events or []
+    event_counts: dict[str, int] = {}
+    for event in durable_events:
+        outcome = str(event.get("outcome") or "unknown")
+        event_counts[outcome] = event_counts.get(outcome, 0) + 1
+    last_event = durable_events[0] if durable_events else None
+    return {
+        "loop_id": loop_id,
+        "title": title,
+        "enabled": enabled,
+        "status": status,
+        "detail": runtime.get("detail") or (service_status or {}).get("detail"),
+        "actor": runtime.get("actor"),
+        "interval_seconds": interval_seconds,
+        "last_started_at": runtime.get("last_started_at"),
+        "last_completed_at": runtime.get("last_completed_at"),
+        "next_due_at": next_due_at.isoformat() if next_due_at else None,
+        "due": due,
+        "runtime": runtime,
+        "service_status": service_status,
+        "last_result": latest_result if latest_result is not None else runtime.get("last_result"),
+        "last_error": runtime.get("last_error"),
+        "durable_history": {
+            "event_type": last_event.get("event_type") if last_event else None,
+            "last_event": last_event,
+            "recent_counts": event_counts,
+            "recent_events": durable_events[:5],
+        },
+        **(extra or {}),
+    }
+
+
+async def _audit_events(
+    request: Request,
+    *,
+    event_type: str,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    audit_service = getattr(request.app.state, "audit_service", None)
+    if not audit_service:
+        return []
+    try:
+        return await audit_service.list_events(event_type=event_type, limit=limit)
+    except Exception:
+        return []
+
+
+def _brief_cooldown_view(status: dict[str, Any]) -> dict[str, Any]:
+    cooldown_hours = int(status.get("cooldown_hours") or 0)
+    last_event = status.get("last_event") or {}
+    created_at = _parse_iso_datetime(last_event.get("created_at"))
+    sent_like = last_event.get("outcome") in {"sent", "simulated"}
+    cooldown_until = (
+        created_at + timedelta(hours=max(1, cooldown_hours))
+        if created_at and sent_like
+        else None
+    )
+    now = datetime.now(UTC)
+    return {
+        "cooldown_hours": cooldown_hours,
+        "last_delivery_at": created_at.isoformat() if created_at and sent_like else None,
+        "cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
+        "cooldown_active": bool(cooldown_until and cooldown_until > now),
+    }
+
+
+def _latest_low_risk_execution_counts(latest_run: dict[str, Any] | None) -> dict[str, int]:
+    counts = dict((latest_run or {}).get("counts") or {})
+    return {
+        "executions": int(counts.get("executions", 0) or 0),
+        "completed": int(counts.get("completed", 0) or 0),
+        "approval_required": int(counts.get("approval_required", 0) or 0),
+        "blocked": int(counts.get("blocked", 0) or 0),
+        "outsourcing_required": int(counts.get("outsourcing_required", 0) or 0),
+        "benchmark_failed": int(counts.get("benchmark_failed", 0) or 0),
+    }
+
+
+async def _build_executive_cadence_summary(request: Request) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    audit_by_type = {
+        "governor": await _audit_events(
+            request,
+            event_type="orchestration_governor.scheduler_run",
+            limit=20,
+        ),
+        "operating_cadence": await _audit_events(
+            request,
+            event_type="operating_cadence.scheduler_run",
+            limit=20,
+        ),
+        "owner_attention": await _audit_events(
+            request,
+            event_type="owner_attention.notification",
+            limit=20,
+        ),
+        "executive_brief": await _audit_events(
+            request,
+            event_type="executive_brief.email",
+            limit=20,
+        ),
+    }
+    executive_service = getattr(request.app.state, "executive_company_os_service", None)
+    executive_runs = {"items": [], "count": 0}
+    latest_executive_run = None
+    observer_reviews = {"items": [], "count": 0}
+    if executive_service:
+        try:
+            executive_runs = await executive_service.list_runs(limit=10)
+            latest_executive_run = (
+                executive_runs.get("items", [None])[0]
+                if executive_runs.get("items")
+                else await executive_service.latest_run()
+            )
+            observer_reviews = await executive_service.list_observer_reviews(limit=10)
+        except Exception as exc:
+            latest_executive_run = {
+                "status": "degraded",
+                "detail": str(exc),
+            }
+
+    owner_attention_service = getattr(
+        request.app.state,
+        "owner_attention_notification_service",
+        None,
+    )
+    owner_attention_service_status = None
+    if owner_attention_service:
+        try:
+            owner_attention_service_status = await owner_attention_service.status()
+        except Exception as exc:
+            owner_attention_service_status = {
+                "status": "degraded",
+                "detail": str(exc),
+            }
+
+    executive_brief_service = getattr(
+        request.app.state,
+        "executive_brief_email_service",
+        None,
+    )
+    executive_brief_service_status = None
+    if executive_brief_service:
+        try:
+            executive_brief_service_status = await executive_brief_service.status()
+        except Exception as exc:
+            executive_brief_service_status = {
+                "status": "degraded",
+                "detail": str(exc),
+            }
+
+    loops = [
+        _scheduled_loop_view(
+            loop_id="chief_operating_agent",
+            title="Chief Operating Agent executive cycle",
+            runtime=getattr(
+                request.app.state,
+                "orchestration_governor_scheduler_status",
+                {
+                    "enabled": False,
+                    "status": "unavailable",
+                    "detail": "Governor scheduler status is unavailable.",
+                },
+            ),
+            now=now,
+            durable_events=audit_by_type["governor"],
+            latest_result=latest_executive_run,
+            extra={
+                "observer_review_required": settings.observer_review_required,
+                "auto_apply_low_risk": settings.governor_auto_apply_low_risk,
+            },
+        ),
+        _scheduled_loop_view(
+            loop_id="operating_cadence_scan",
+            title="Operating cadence scan",
+            runtime=getattr(
+                request.app.state,
+                "operating_cadence_scheduler_status",
+                {
+                    "enabled": False,
+                    "status": "unavailable",
+                    "detail": "Operating cadence scheduler status is unavailable.",
+                },
+            ),
+            now=now,
+            durable_events=audit_by_type["operating_cadence"],
+        ),
+        _scheduled_loop_view(
+            loop_id="owner_attention_notification",
+            title="Owner attention notification",
+            runtime=getattr(
+                request.app.state,
+                "owner_attention_notification_status",
+                {
+                    "enabled": False,
+                    "status": "unavailable",
+                    "detail": "Owner attention notification runtime is unavailable.",
+                },
+            ),
+            now=now,
+            durable_events=audit_by_type["owner_attention"],
+            service_status=owner_attention_service_status,
+        ),
+        _scheduled_loop_view(
+            loop_id="executive_brief_email",
+            title="Daily executive brief email",
+            runtime=getattr(
+                request.app.state,
+                "executive_brief_email_status",
+                {
+                    "enabled": False,
+                    "status": "unavailable",
+                    "detail": "Executive brief email runtime is unavailable.",
+                },
+            ),
+            now=now,
+            durable_events=audit_by_type["executive_brief"],
+            service_status=executive_brief_service_status,
+            extra={
+                "cooldown": (
+                    _brief_cooldown_view(executive_brief_service_status)
+                    if executive_brief_service_status
+                    else None
+                ),
+            },
+        ),
+    ]
+    failure_statuses = {"failed", "degraded", "blocked", "unavailable"}
+    counts = {
+        "loops": len(loops),
+        "enabled": len([item for item in loops if item["enabled"]]),
+        "due": len([item for item in loops if item["due"]]),
+        "degraded": len([item for item in loops if item["status"] in failure_statuses]),
+        "recent_failures": sum(
+            item["durable_history"]["recent_counts"].get("failure", 0)
+            + item["durable_history"]["recent_counts"].get("failed", 0)
+            for item in loops
+        ),
+    }
+    if counts["degraded"] or counts["recent_failures"]:
+        status = "degraded"
+    elif counts["enabled"]:
+        status = "ready"
+    else:
+        status = "disabled"
+    return {
+        "status": status,
+        "detail": (
+            "Executive operating cadence is observable and scheduled."
+            if status == "ready"
+            else "Executive operating cadence has degraded loops or no enabled loops."
+        ),
+        "generated_at": now.isoformat(),
+        "policy": {
+            "governor_enabled": settings.governor_enabled,
+            "governor_interval_seconds": max(300, settings.governor_interval_seconds),
+            "governor_auto_apply_low_risk": settings.governor_auto_apply_low_risk,
+            "observer_review_required": settings.observer_review_required,
+            "executive_brief_email_enabled": settings.executive_brief_email_enabled,
+            "executive_brief_email_interval_seconds": max(
+                3600,
+                settings.executive_brief_email_interval_seconds,
+            ),
+        },
+        "counts": counts,
+        "loops": loops,
+        "latest_executive_run": latest_executive_run,
+        "recent_executive_runs": executive_runs.get("items", []),
+        "latest_observer_review": (
+            observer_reviews.get("items", [None])[0]
+            if observer_reviews.get("items")
+            else None
+        ),
+        "recent_observer_reviews": observer_reviews.get("items", []),
+        "low_risk_remediation": _latest_low_risk_execution_counts(latest_executive_run),
+        "idempotency": {
+            "brief_cooldown": (
+                _brief_cooldown_view(executive_brief_service_status)
+                if executive_brief_service_status
+                else None
+            ),
+            "latest_snapshot_hash": (
+                latest_executive_run or {}
+            ).get("snapshot_hash"),
+        },
+    }
 
 
 def _governor_service(request: Request):
@@ -487,6 +819,15 @@ async def get_executive_brief(
 ):
     await require_authorization(request, principal, "read", "executive_brief")
     return await _executive_service(request).executive_brief()
+
+
+@router.get("/executive-cadence")
+async def get_executive_cadence(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "executive_cadence")
+    return await _build_executive_cadence_summary(request)
 
 
 @router.get("/executive-brief/email/status")
@@ -1694,6 +2035,7 @@ async def operations_readiness(
             "reflection_freshness": {"status": "waiting", "stale": True},
             "outsourcing": {"status": "unavailable", "open_count": 0},
         }
+    executive_cadence_status = await _build_executive_cadence_summary(request)
 
     production_evidence = await _readiness_evidence_service(request).summary()
 
@@ -1802,6 +2144,7 @@ async def operations_readiness(
         "interop": interop_status,
         "governor": governor_status,
         "executive_autonomy": executive_status,
+        "executive_cadence": executive_cadence_status,
         "resource_policy": executive_status.get("resource_policy"),
         "observer": executive_status.get("observer"),
         "operation_graph": executive_status.get("operation_graph"),

@@ -191,6 +191,7 @@ describe('ApiClient', () => {
     await client.getCompanyObjectives()
     await client.updateCompanyObjectives([{ title: 'Operate autonomously' }])
     await client.getExecutiveBrief()
+    await client.getExecutiveCadence()
     await client.getExecutiveBriefEmailStatus()
     await client.sendExecutiveBriefEmail({ dryRun: true, force: true })
     await client.getOperationGraph({ nodeType: 'observer_review', limit: 7 })
@@ -229,75 +230,78 @@ describe('ApiClient', () => {
       'http://api.test/api/operations/executive-brief',
     )
     expect(fetchMock.mock.calls[3][0]).toBe(
-      'http://api.test/api/operations/executive-brief/email/status',
+      'http://api.test/api/operations/executive-cadence',
     )
     expect(fetchMock.mock.calls[4][0]).toBe(
+      'http://api.test/api/operations/executive-brief/email/status',
+    )
+    expect(fetchMock.mock.calls[5][0]).toBe(
       'http://api.test/api/operations/executive-brief/email',
     )
-    expect(fetchMock.mock.calls[4][1]?.method).toBe('POST')
-    expect(JSON.parse(fetchMock.mock.calls[4][1]?.body as string)).toEqual({
+    expect(fetchMock.mock.calls[5][1]?.method).toBe('POST')
+    expect(JSON.parse(fetchMock.mock.calls[5][1]?.body as string)).toEqual({
       dry_run: true,
       force: true,
     })
-    expect(fetchMock.mock.calls[5][0]).toBe(
+    expect(fetchMock.mock.calls[6][0]).toBe(
       'http://api.test/api/operations/operation-graph?limit=7&node_type=observer_review',
     )
-    expect(fetchMock.mock.calls[6][0]).toBe(
-      'http://api.test/api/operations/governor/reflections?limit=3',
-    )
     expect(fetchMock.mock.calls[7][0]).toBe(
-      'http://api.test/api/operations/governor/benchmarks',
+      'http://api.test/api/operations/governor/reflections?limit=3',
     )
     expect(fetchMock.mock.calls[8][0]).toBe(
       'http://api.test/api/operations/governor/benchmarks',
     )
-    expect(fetchMock.mock.calls[8][1]?.method).toBe('POST')
     expect(fetchMock.mock.calls[9][0]).toBe(
-      'http://api.test/api/operations/governor/benchmark-results?limit=4',
+      'http://api.test/api/operations/governor/benchmarks',
     )
+    expect(fetchMock.mock.calls[9][1]?.method).toBe('POST')
     expect(fetchMock.mock.calls[10][0]).toBe(
-      'http://api.test/api/operations/governor/autonomy-policy',
+      'http://api.test/api/operations/governor/benchmark-results?limit=4',
     )
     expect(fetchMock.mock.calls[11][0]).toBe(
       'http://api.test/api/operations/governor/autonomy-policy',
     )
-    expect(fetchMock.mock.calls[11][1]?.method).toBe('PUT')
     expect(fetchMock.mock.calls[12][0]).toBe(
+      'http://api.test/api/operations/governor/autonomy-policy',
+    )
+    expect(fetchMock.mock.calls[12][1]?.method).toBe('PUT')
+    expect(fetchMock.mock.calls[13][0]).toBe(
       'http://api.test/api/operations/governor/instruct',
     )
-    expect(JSON.parse(fetchMock.mock.calls[12][1]?.body as string)).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[13][1]?.body as string)).toEqual({
       instruction: 'Review KPI drift',
       dry_run: false,
       observer_review: true,
     })
-    expect(fetchMock.mock.calls[13][0]).toBe(
+    expect(fetchMock.mock.calls[14][0]).toBe(
       'http://api.test/api/operations/governor/pause',
     )
-    expect(fetchMock.mock.calls[14][0]).toBe(
+    expect(fetchMock.mock.calls[15][0]).toBe(
       'http://api.test/api/operations/governor/resume',
     )
-    expect(fetchMock.mock.calls[15][0]).toBe(
+    expect(fetchMock.mock.calls[16][0]).toBe(
       'http://api.test/api/operations/observer/reviews?limit=6',
     )
-    expect(fetchMock.mock.calls[16][0]).toBe(
+    expect(fetchMock.mock.calls[17][0]).toBe(
       'http://api.test/api/operations/observer/run',
     )
-    expect(fetchMock.mock.calls[17][0]).toBe(
+    expect(fetchMock.mock.calls[18][0]).toBe(
       'http://api.test/api/operations/outsourcing-requests?limit=5&status=open',
     )
-    expect(fetchMock.mock.calls[18][0]).toBe(
+    expect(fetchMock.mock.calls[19][0]).toBe(
       'http://api.test/api/operations/outsourcing-requests',
     )
-    expect(fetchMock.mock.calls[19][0]).toBe(
+    expect(fetchMock.mock.calls[20][0]).toBe(
       'http://api.test/api/operations/outsourcing-requests/out_1/resolve',
     )
-    expect(fetchMock.mock.calls[20][0]).toBe(
+    expect(fetchMock.mock.calls[21][0]).toBe(
       'http://api.test/api/operations/outsourcing-requests/deduplicate',
     )
-    expect(JSON.parse(fetchMock.mock.calls[20][1]?.body as string)).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[21][1]?.body as string)).toEqual({
       dry_run: false,
     })
-    expect(fetchMock.mock.calls[21][0]).toBe(
+    expect(fetchMock.mock.calls[22][0]).toBe(
       'http://api.test/api/operations/resource-policy',
     )
   })

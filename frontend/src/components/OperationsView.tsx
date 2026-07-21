@@ -162,6 +162,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   const [governorRunning, setGovernorRunning] = useState(false)
   const [governorResult, setGovernorResult] = useState<any | null>(null)
   const [executiveBrief, setExecutiveBrief] = useState<any | null>(null)
+  const [executiveCadence, setExecutiveCadence] = useState<any | null>(null)
   const [operationGraph, setOperationGraph] = useState<any | null>(null)
   const [observerReviews, setObserverReviews] = useState<any[]>([])
   const [outsourcingRequests, setOutsourcingRequests] = useState<any[]>([])
@@ -295,8 +296,9 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
     setExecutiveLoading(true)
     setError(null)
     try {
-      const [brief, graph, reviews, outsourcing, policy, resource] = await Promise.all([
+      const [brief, cadence, graph, reviews, outsourcing, policy, resource] = await Promise.all([
         api.getExecutiveBrief(),
+        api.getExecutiveCadence(),
         api.getOperationGraph({ limit: 50 }),
         api.listObserverReviews(25),
         api.listOutsourcingRequests({ status: 'open', limit: 25 }),
@@ -304,6 +306,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
         api.getResourcePolicy(),
       ])
       setExecutiveBrief(brief)
+      setExecutiveCadence(cadence)
       setOperationGraph(graph)
       setObserverReviews(reviews.items || [])
       setOutsourcingRequests(outsourcing.items || [])
@@ -1212,6 +1215,84 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                   || 'Observer review will appear after the next executive cycle.'
                 }
               />
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-sm font-medium text-slate-200">Executive Cadence</h4>
+                <span
+                  className={`rounded-full px-2 py-1 text-xs ${
+                    statusClass[executiveCadence?.status] || 'bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  {executiveCadence?.status || 'waiting'}
+                </span>
+              </div>
+              {executiveCadence ? (
+                <div className="grid grid-cols-1 gap-3 xl:grid-cols-4">
+                  {(executiveCadence.loops || []).map((loop: any) => (
+                    <div
+                      key={loop.loop_id}
+                      className="rounded-lg border border-slate-800 bg-slate-900/30 p-3"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-medium text-white">{loop.title}</div>
+                        <span
+                          className={`rounded-full px-2 py-1 text-xs ${
+                            loop.due
+                              ? 'bg-amber-600/20 text-amber-300'
+                              : statusClass[loop.status] || 'bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {loop.due ? 'due' : loop.status}
+                        </span>
+                      </div>
+                      <div className="mt-2 space-y-1 text-xs text-slate-400">
+                        <div>last {formatDate(loop.last_completed_at || loop.last_started_at)}</div>
+                        <div>next {formatDate(loop.next_due_at)}</div>
+                        <div>
+                          evidence{' '}
+                          {Object.values(loop.durable_history?.recent_counts || {})
+                            .reduce((sum: number, value: any) => sum + Number(value || 0), 0)}
+                        </div>
+                      </div>
+                      {loop.cooldown?.cooldown_active && (
+                        <div className="mt-2 rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300">
+                          brief cooldown until {formatDate(loop.cooldown.cooldown_until)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4 text-sm text-slate-500">
+                  Executive cadence status is unavailable.
+                </div>
+              )}
+              {executiveCadence?.low_risk_remediation && (
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+                  <Metric
+                    label="Auto actions"
+                    value={executiveCadence.low_risk_remediation.completed || 0}
+                  />
+                  <Metric
+                    label="Approvals"
+                    value={executiveCadence.low_risk_remediation.approval_required || 0}
+                  />
+                  <Metric
+                    label="Blocked"
+                    value={executiveCadence.low_risk_remediation.blocked || 0}
+                  />
+                  <Metric
+                    label="Outsourced"
+                    value={executiveCadence.low_risk_remediation.outsourcing_required || 0}
+                  />
+                  <Metric
+                    label="Failed checks"
+                    value={executiveCadence.low_risk_remediation.benchmark_failed || 0}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(280px,0.9fr)_1.1fr]">

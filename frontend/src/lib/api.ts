@@ -709,6 +709,10 @@ class ApiClient {
     return this.request('/api/operations/executive-brief');
   }
 
+  async getExecutiveCadence() {
+    return this.request('/api/operations/executive-cadence');
+  }
+
   async getExecutiveBriefEmailStatus() {
     return this.request('/api/operations/executive-brief/email/status');
   }
