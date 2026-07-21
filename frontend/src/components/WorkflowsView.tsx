@@ -2,7 +2,19 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/lib/api'
-import { GitBranch, Play, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp, RotateCw, Eye } from 'lucide-react'
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Eye,
+  GitBranch,
+  Play,
+  RotateCw,
+  Sparkles,
+  CheckCircle,
+  XCircle,
+} from 'lucide-react'
 
 export default function WorkflowsView() {
   const [workflows, setWorkflows] = useState<any[]>([])
@@ -13,15 +25,22 @@ export default function WorkflowsView() {
   const [refreshing, setRefreshing] = useState<string | null>(null)
   const [templates, setTemplates] = useState<any[]>([])
   const [instantiatingTemplate, setInstantiatingTemplate] = useState<string | null>(null)
+  const [intents, setIntents] = useState<any[]>([])
+  const [intentGroups, setIntentGroups] = useState<any[]>([])
+  const [generatingIntents, setGeneratingIntents] = useState(false)
+  const [intentAction, setIntentAction] = useState<string | null>(null)
 
   const loadWorkflows = useCallback(async () => {
     try {
-      const [res, templateList] = await Promise.all([
+      const [res, templateList, intentSummary] = await Promise.all([
         api.listWorkflows(),
         api.listWorkflowTemplates({ status: 'active', isCore: true }),
+        api.listWorkflowIntents({ status: 'proposed,instantiated,blocked', limit: 100 }),
       ])
       setWorkflows(res)
       setTemplates(templateList)
+      setIntents(intentSummary.items || [])
+      setIntentGroups(intentSummary.groups || [])
     } catch (e) {
       console.error('Failed to load workflows:', e)
     } finally {
@@ -90,6 +109,43 @@ export default function WorkflowsView() {
     }
   }
 
+  const handleGenerateIntents = async () => {
+    setGeneratingIntents(true)
+    try {
+      await api.generateWorkflowIntents({ instantiateLowRisk: false })
+      await loadWorkflows()
+    } catch (e: any) {
+      alert(`Error generating workflow intents: ${e.message}`)
+    } finally {
+      setGeneratingIntents(false)
+    }
+  }
+
+  const handleInstantiateIntent = async (intentId: string) => {
+    setIntentAction(intentId)
+    try {
+      const workflow = await api.instantiateWorkflowIntent(intentId)
+      await loadWorkflows()
+      setExpandedWorkflow(workflow.id)
+    } catch (e: any) {
+      alert(`Error creating workflow from intent: ${e.message}`)
+    } finally {
+      setIntentAction(null)
+    }
+  }
+
+  const handleDismissIntent = async (intentId: string) => {
+    setIntentAction(intentId)
+    try {
+      await api.resolveWorkflowIntent(intentId, 'dismissed', 'Dismissed from Workflows view')
+      await loadWorkflows()
+    } catch (e: any) {
+      alert(`Error dismissing workflow intent: ${e.message}`)
+    } finally {
+      setIntentAction(null)
+    }
+  }
+
   const statusIcon = (status: string) => {
     switch (status) {
       case 'completed':
@@ -104,6 +160,21 @@ export default function WorkflowsView() {
         return <Clock className="w-5 h-5 text-amber-500 animate-bounce" />
       default:
         return <GitBranch className="w-5 h-5 text-slate-400" />
+    }
+  }
+
+  const readinessBadge = (status: string) => {
+    switch (status) {
+      case 'ready':
+        return <span className="badge badge-success">Ready</span>
+      case 'owner_review':
+        return <span className="badge badge-warning">Owner Review</span>
+      case 'configuration_required':
+        return <span className="badge badge-warning border border-amber-700">Config Required</span>
+      case 'blocked':
+        return <span className="badge badge-danger">Blocked</span>
+      default:
+        return <span className="badge bg-slate-800 text-slate-400">{status || 'unknown'}</span>
     }
   }
 
@@ -129,6 +200,115 @@ export default function WorkflowsView() {
       <div>
         <h2 className="text-2xl font-bold">Workflows</h2>
         <p className="text-slate-400 mt-1">Design, execute, and monitor durable company automation workflows</p>
+      </div>
+
+      <div className="card border-slate-700 bg-slate-900/70">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-semibold text-white">Generated Workflow Intents</h3>
+            <p className="mt-1 text-sm text-slate-400">
+              Review workflow proposals derived from ERPNext context, role capabilities, and role gaps
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={loadWorkflows} className="btn-secondary text-sm">
+              Refresh
+            </button>
+            <button
+              onClick={handleGenerateIntents}
+              disabled={generatingIntents}
+              className="btn-primary text-sm flex items-center gap-2"
+            >
+              <Sparkles className={`h-4 w-4 ${generatingIntents ? 'animate-pulse' : ''}`} />
+              {generatingIntents ? 'Generating...' : 'Generate From Context'}
+            </button>
+          </div>
+        </div>
+
+        {intentGroups.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-2 text-xs">
+            {intentGroups.slice(0, 8).map((group: any) => (
+              <span key={group.business_function} className="rounded-full border border-slate-700 px-3 py-1 text-slate-300">
+                {group.business_function}: {group.count}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {intents.length > 0 ? (
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            {intents.slice(0, 12).map((intent: any) => {
+              const readiness = intent.readiness || {}
+              const readinessStatus = readiness.status || 'unknown'
+              const canInstantiate = ['ready', 'owner_review'].includes(readinessStatus) && !intent.workflow_id
+              const blockedReason = (readiness.blockers || readiness.warnings || []).slice(0, 2).join(' ')
+
+              return (
+                <div key={intent.id} className="rounded border border-slate-700 bg-slate-950/60 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h4 className="break-words text-sm font-medium text-white">{intent.title}</h4>
+                      <p className="mt-1 line-clamp-2 text-xs text-slate-500">
+                        {intent.description}
+                      </p>
+                    </div>
+                    {readinessBadge(readinessStatus)}
+                  </div>
+
+                  <div className="mt-3 grid gap-2 text-xs text-slate-400 sm:grid-cols-3">
+                    <span>Function: <span className="text-slate-200">{intent.business_function}</span></span>
+                    <span>Source: <span className="text-slate-200">{intent.source_type}</span></span>
+                    <span>Risk: <span className="text-slate-200">{intent.risk_level}</span></span>
+                  </div>
+
+                  {intent.requested_tools?.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {intent.requested_tools.slice(0, 6).map((tool: string) => (
+                        <span key={tool} className="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
+                          {tool}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {blockedReason && (
+                    <div className="mt-3 flex items-start gap-2 rounded border border-amber-900/70 bg-amber-950/20 p-2 text-xs text-amber-200">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-none" />
+                      <span className="line-clamp-2">{blockedReason}</span>
+                    </div>
+                  )}
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      onClick={() => handleInstantiateIntent(intent.id)}
+                      disabled={!canInstantiate || intentAction === intent.id}
+                      className="btn-secondary text-sm"
+                    >
+                      {intent.workflow_id
+                        ? 'Workflow Ready'
+                        : intentAction === intent.id
+                          ? 'Working...'
+                          : 'Create Workflow'}
+                    </button>
+                    {!intent.workflow_id && (
+                      <button
+                        onClick={() => handleDismissIntent(intent.id)}
+                        disabled={intentAction === intent.id}
+                        className="btn-secondary text-sm text-slate-400"
+                      >
+                        Dismiss
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="mt-4 rounded border border-dashed border-slate-700 p-6 text-center text-sm text-slate-500">
+            No generated workflow intents yet. Generate them after an ERPNext company-context sync.
+          </div>
+        )}
       </div>
 
       {templates.length > 0 && (

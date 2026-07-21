@@ -3584,3 +3584,75 @@
   - GitHub Actions run: `29807579787`
 - Next step:
   - Owner can review the 18 stale canonical-memory conflicts in the Memory tab. The next development milestone is Phase 4: generated workflow intents from role capabilities and company context.
+
+### 2026-07-21T10:09:29Z — STEP-112 — Started generated workflow intent implementation
+- Files/services changed:
+  - No repository files changed yet in this step.
+- Commands run:
+  - `git status --short && git log --oneline -5`
+  - `rg -n "class WorkflowTemplate|WorkflowTemplateService|ensure_core|instantiate_template|graph_definition|WorkflowRun|class Workflow|workflow" backend/src/cyber_team/workflows backend/src/cyber_team/agents backend/src/cyber_team/api/routes frontend/src -g '*.py' -g '*.ts' -g '*.tsx'`
+  - `sed -n '1,320p' backend/src/cyber_team/workflows/templates.py`
+  - `sed -n '1,360p' backend/src/cyber_team/agents/orchestrator.py`
+  - Additional targeted reads of workflow routes, worker node semantics, database models, company operating-model output, readiness, frontend API client, and Workflows UI.
+- Result:
+  - Confirmed the current workflow path is template/workflow based, persisted in `workflow_templates`, `workflows`, and `workflow_runs`, then executed by Temporal dynamic graph nodes.
+  - Confirmed graph nodes support `tool`, `agent`, `decision`, and `approval`, and generated workflows should reuse this existing execution model.
+  - Identified the missing layer as durable generated workflow intents derived from ERPNext/company context, role specs, adaptive loops, and role gaps, with readiness and owner review before instantiation.
+- Evidence:
+  - Terminal inspection output from 2026-07-21T10:09Z.
+- Next step:
+  - Add `workflow_intents` persistence, a generation/instantiation service, owner APIs, readiness hooks, UI review controls, and focused tests.
+
+### 2026-07-21T10:25:30Z — STEP-113 — Implemented generated workflow intent layer
+- Files/services changed:
+  - `backend/src/cyber_team/db/models.py`
+  - `backend/alembic/versions/0014_workflow_intents.py`
+  - `backend/src/cyber_team/workflows/intents.py`
+  - `backend/src/cyber_team/api/__init__.py`
+  - `backend/src/cyber_team/api/routes/workflows.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/src/cyber_team/operations/governor.py`
+  - `backend/tests/test_workflow_intents.py`
+  - `backend/tests/test_api_workflows.py`
+  - `backend/tests/test_migrations.py`
+  - `frontend/src/lib/api.ts`
+  - `frontend/src/lib/api.test.ts`
+  - `frontend/src/components/WorkflowsView.tsx`
+  - `frontend/src/components/OperationsView.tsx`
+- Commands run:
+  - `python3 -m py_compile backend/src/cyber_team/workflows/intents.py backend/src/cyber_team/db/models.py backend/alembic/versions/0014_workflow_intents.py`
+  - `python3 -m py_compile backend/src/cyber_team/workflows/intents.py backend/src/cyber_team/api/routes/workflows.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/api/__init__.py backend/src/cyber_team/operations/governor.py backend/src/cyber_team/db/models.py backend/tests/test_workflow_intents.py backend/tests/test_api_workflows.py backend/tests/test_migrations.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest backend/tests/test_workflow_intents.py backend/tests/test_api_workflows.py backend/tests/test_migrations.py -q`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/workflows/intents.py backend/src/cyber_team/api/routes/workflows.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/api/__init__.py backend/src/cyber_team/operations/governor.py backend/src/cyber_team/db/models.py backend/alembic/versions/0014_workflow_intents.py backend/tests/test_workflow_intents.py backend/tests/test_api_workflows.py backend/tests/test_migrations.py`
+  - `cd frontend && npm test -- --run src/lib/api.test.ts`
+  - `docker run --rm -v /home/projects/cyber-team/frontend:/app -w /app node:20-bookworm-slim npm test -- --run src/lib/api.test.ts`
+- Result:
+  - Added durable `workflow_intents` persistence with source snapshot/hash, business function, role/capability metadata, graph definition, requested tools, required agents, readiness, workflow linkage, resolution metadata, and dedupe key.
+  - Added `WorkflowIntentService` to generate idempotent workflow proposals from ERPNext/company-context role specs, adaptive loops, and active role gaps; instantiate ready/owner-reviewed intents into existing Temporal-compatible workflow graphs; resolve/dismiss unneeded intents; and summarize readiness.
+  - Added owner APIs for listing, generating, inspecting, instantiating, and resolving workflow intents.
+  - Added workflow-intent readiness to Operations readiness and Chief Operating Agent operating snapshots/decisions.
+  - Added Workflows UI controls for generated intents and an Operations readiness card.
+  - Focused backend tests passed (`10 passed`), Ruff passed on touched backend files, and Docker Node 20 frontend API tests passed (`23 passed`).
+  - Host Node frontend test still fails before test execution because local Node v18.19.1 lacks `node:util.styleText`; Docker Node 20 path matches CI and passes.
+- Evidence:
+  - Focused backend pytest output from 2026-07-21T10:20Z.
+  - Ruff output from 2026-07-21T10:20Z.
+  - Docker Node 20 frontend API test output from 2026-07-21T10:25Z.
+- Next step:
+  - Run broader quality/release checks, exercise the new workflow-intent APIs locally or in staging, commit, push, deploy, and watch GitHub CI.
+
+### 2026-07-21T10:31:51Z — STEP-114 — Passed full quality gate for workflow intents
+- Files/services changed:
+  - No additional source files changed beyond the workflow-intent implementation slice.
+- Commands run:
+  - `git status --short`
+  - `git diff --stat`
+  - `git diff --check`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 ./scripts/quality-gate.sh`
+- Result:
+  - Whitespace diff hygiene passed.
+  - Full quality gate passed: backend Ruff, backend tests (`215 passed`), backend compile, Alembic offline SQL through `0014_workflow_intents`, backend dependency audit, frontend production build, TypeScript check, frontend tests (`23 passed`), frontend dependency audit, Docker Compose config, script/dashboard syntax checks, secret scan, FOSS/resource policy scan, and `git diff --check`.
+- Evidence:
+  - Quality gate terminal output from 2026-07-21T10:26Z through 2026-07-21T10:31Z.
+- Next step:
+  - Run release candidate checks with real migration rehearsal, isolated Docker Compose smoke, image build/scan, then commit, push, deploy to staging, run live workflow-intent checks, and watch GitHub CI.

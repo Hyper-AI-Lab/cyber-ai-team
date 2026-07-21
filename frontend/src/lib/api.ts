@@ -559,6 +559,65 @@ class ApiClient {
     });
   }
 
+  async listWorkflowIntents(filters: {
+    status?: string;
+    category?: string;
+    sourceType?: string;
+    companyNamespace?: string;
+    readinessStatus?: string;
+    limit?: number;
+  } = {}) {
+    const params = new URLSearchParams({
+      status: filters.status ?? 'proposed,instantiated,blocked',
+      limit: String(filters.limit ?? 100),
+    });
+    if (filters.category) {
+      params.set('category', filters.category);
+    }
+    if (filters.sourceType) {
+      params.set('source_type', filters.sourceType);
+    }
+    if (filters.companyNamespace) {
+      params.set('company_namespace', filters.companyNamespace);
+    }
+    if (filters.readinessStatus) {
+      params.set('readiness_status', filters.readinessStatus);
+    }
+    return this.request(`/api/workflows/intents?${params.toString()}`);
+  }
+
+  async generateWorkflowIntents(options: {
+    snapshotId?: string;
+    limit?: number;
+    instantiateLowRisk?: boolean;
+  } = {}) {
+    return this.request('/api/workflows/intents/generate', {
+      method: 'POST',
+      body: JSON.stringify({
+        snapshot_id: options.snapshotId ?? null,
+        limit: options.limit ?? 75,
+        instantiate_low_risk: options.instantiateLowRisk ?? false,
+      }),
+    });
+  }
+
+  async instantiateWorkflowIntent(intentId: string) {
+    return this.request(`/api/workflows/intents/${intentId}/instantiate`, {
+      method: 'POST',
+    });
+  }
+
+  async resolveWorkflowIntent(
+    intentId: string,
+    status: 'dismissed' | 'resolved' = 'dismissed',
+    note: string = ''
+  ) {
+    return this.request(`/api/workflows/intents/${intentId}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ status, note }),
+    });
+  }
+
   async getWorkflow(id: string) {
     return this.request(`/api/workflows/${id}`);
   }

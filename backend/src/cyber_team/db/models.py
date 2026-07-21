@@ -116,6 +116,75 @@ class WorkflowTemplate(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
 
+class WorkflowIntent(Base):
+    __tablename__ = "workflow_intents"
+    __table_args__ = (
+        UniqueConstraint(
+            "dedupe_key",
+            name="uq_workflow_intents_dedupe_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(String(240))
+    description: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="proposed", index=True)
+    category: Mapped[str] = mapped_column(String(100), default="operations", index=True)
+    business_function: Mapped[str] = mapped_column(
+        String(100),
+        default="Unclassified",
+        index=True,
+    )
+    source_type: Mapped[str] = mapped_column(String(80), index=True)
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    company_namespace: Mapped[str] = mapped_column(
+        String(200),
+        default="company:default",
+        index=True,
+    )
+    role_family: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    role_name: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    capability: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    risk_level: Mapped[str] = mapped_column(String(20), default="low", index=True)
+    trigger_type: Mapped[str] = mapped_column(String(30), default="manual")
+    trigger_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    graph_definition: Mapped[dict] = mapped_column(JSON, default=dict)
+    requested_tools: Mapped[list] = mapped_column(JSON, default=list)
+    required_agents: Mapped[list] = mapped_column(JSON, default=list)
+    tool_readiness: Mapped[list] = mapped_column(JSON, default=list)
+    readiness: Mapped[dict] = mapped_column(JSON, default=dict)
+    approval_required: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    approval_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("approval_requests.id"),
+        nullable=True,
+        index=True,
+    )
+    workflow_template_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("workflow_templates.id"),
+        nullable=True,
+        index=True,
+    )
+    workflow_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("workflows.id"),
+        nullable=True,
+        index=True,
+    )
+    proposed_by: Mapped[str] = mapped_column(
+        String(200),
+        default="workflow_intent_service",
+    )
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    resolution: Mapped[dict] = mapped_column(JSON, default=dict)
+    dedupe_key: Mapped[str] = mapped_column(String(240), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class WorkflowRun(Base):
     __tablename__ = "workflow_runs"
 

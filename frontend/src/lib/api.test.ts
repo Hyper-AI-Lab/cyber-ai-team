@@ -931,6 +931,10 @@ describe('ApiClient', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'wft-1' }]))
       .mockResolvedValueOnce(jsonResponse({ id: 'workflow-1' }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'intent-1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'completed' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'workflow-2' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'intent-1', status: 'dismissed' }))
       .mockResolvedValueOnce(jsonResponse({ status: 'available' }))
       .mockResolvedValueOnce(jsonResponse({ tools: [] }))
       .mockResolvedValueOnce(jsonResponse({ agents: [] }))
@@ -940,6 +944,10 @@ describe('ApiClient', () => {
     client.setTokens('access-1')
     await client.listWorkflowTemplates({ status: 'active', isCore: true })
     await client.instantiateWorkflowTemplate('wft-1')
+    await client.listWorkflowIntents({ readinessStatus: 'ready', limit: 10 })
+    await client.generateWorkflowIntents({ snapshotId: 'ctx-1', instantiateLowRisk: true })
+    await client.instantiateWorkflowIntent('intent-1')
+    await client.resolveWorkflowIntent('intent-1', 'dismissed', 'Not needed')
     await client.getInteropSummary()
     await client.getMcpToolCatalog()
     await client.getA2aAgentCards()
@@ -951,9 +959,29 @@ describe('ApiClient', () => {
       'http://api.test/api/workflows/templates/wft-1/instantiate',
     )
     expect(fetchMock.mock.calls[1][1]?.method).toBe('POST')
-    expect(fetchMock.mock.calls[2][0]).toBe('http://api.test/api/interop/summary')
-    expect(fetchMock.mock.calls[3][0]).toBe('http://api.test/api/interop/mcp/tools')
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/workflows/intents?status=proposed%2Cinstantiated%2Cblocked&limit=10&readiness_status=ready',
+    )
+    expect(fetchMock.mock.calls[3][0]).toBe('http://api.test/api/workflows/intents/generate')
+    expect(JSON.parse(fetchMock.mock.calls[3][1]?.body as string)).toEqual({
+      snapshot_id: 'ctx-1',
+      limit: 75,
+      instantiate_low_risk: true,
+    })
     expect(fetchMock.mock.calls[4][0]).toBe(
+      'http://api.test/api/workflows/intents/intent-1/instantiate',
+    )
+    expect(fetchMock.mock.calls[4][1]?.method).toBe('POST')
+    expect(fetchMock.mock.calls[5][0]).toBe(
+      'http://api.test/api/workflows/intents/intent-1/resolve',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[5][1]?.body as string)).toEqual({
+      status: 'dismissed',
+      note: 'Not needed',
+    })
+    expect(fetchMock.mock.calls[6][0]).toBe('http://api.test/api/interop/summary')
+    expect(fetchMock.mock.calls[7][0]).toBe('http://api.test/api/interop/mcp/tools')
+    expect(fetchMock.mock.calls[8][0]).toBe(
       'http://api.test/api/interop/a2a/agent-cards',
     )
   })

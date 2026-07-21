@@ -61,6 +61,7 @@ from cyber_team.operations.supervisor_review import SupervisorReviewService
 from cyber_team.roles.loader import load_default_roles
 from cyber_team.roles.team_activation import TeamActivationService
 from cyber_team.tools.registry import ToolRegistry
+from cyber_team.workflows.intents import WorkflowIntentService
 from cyber_team.workflows.templates import WorkflowTemplateService
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,11 @@ async def lifespan(app: FastAPI):
     )
     app.state.workflow_template_service = WorkflowTemplateService(
         orchestrator=app.state.orchestrator,
+    )
+    app.state.workflow_intent_service = WorkflowIntentService(
+        orchestrator=app.state.orchestrator,
+        tool_registry=app.state.tool_registry,
+        audit_service=app.state.audit_service,
     )
     app.state.supervisor_review_service = SupervisorReviewService(
         agent_manager=app.state.agent_manager,

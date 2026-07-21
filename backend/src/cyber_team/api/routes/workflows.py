@@ -42,6 +42,17 @@ class WorkflowTemplateInstantiateRequest(BaseModel):
     pass
 
 
+class WorkflowIntentGenerateRequest(BaseModel):
+    snapshot_id: str | None = None
+    limit: int = Field(default=75, ge=1, le=200)
+    instantiate_low_risk: bool = False
+
+
+class WorkflowIntentResolveRequest(BaseModel):
+    status: str = Field(default="dismissed", pattern="^(dismissed|resolved)$")
+    note: str = ""
+
+
 @router.get("/", response_model=list[WorkflowResponse])
 async def list_workflows(request: Request, principal: Principal = Depends(get_current_principal)):
     await require_authorization(request, principal, "read", "workflow")
@@ -101,6 +112,126 @@ async def instantiate_workflow_template(
         return await service.instantiate_template(template_id, actor=principal.email)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+@router.get("/intents")
+async def list_workflow_intents(
+    request: Request,
+    status: str | None = "proposed,instantiated,blocked",
+    category: str | None = None,
+    source_type: str | None = None,
+    company_namespace: str | None = None,
+    readiness_status: str | None = None,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "workflow_intent",
+        context={
+            "status": status,
+            "category": category,
+            "source_type": source_type,
+            "company_namespace": company_namespace,
+            "readiness_status": readiness_status,
+        },
+    )
+    service = request.app.state.workflow_intent_service
+    return await service.list_intents(
+        status=status,
+        category=category,
+        source_type=source_type,
+        company_namespace=company_namespace,
+        readiness_status=readiness_status,
+        limit=limit,
+    )
+
+
+@router.post("/intents/generate")
+async def generate_workflow_intents(
+    data: WorkflowIntentGenerateRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "generate",
+        "workflow_intent",
+        context={
+            "snapshot_id": data.snapshot_id,
+            "instantiate_low_risk": data.instantiate_low_risk,
+        },
+    )
+    service = request.app.state.workflow_intent_service
+    return await service.generate_from_company_context(
+        snapshot_id=data.snapshot_id,
+        actor=principal.email,
+        limit=data.limit,
+        instantiate_low_risk=data.instantiate_low_risk,
+    )
+
+
+@router.get("/intents/{intent_id}")
+async def get_workflow_intent(
+    intent_id: str,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "workflow_intent", intent_id)
+    service = request.app.state.workflow_intent_service
+    intent = await service.get_intent(intent_id)
+    if not intent:
+        raise HTTPException(404, "Workflow intent not found")
+    return intent
+
+
+@router.post("/intents/{intent_id}/instantiate", response_model=WorkflowResponse)
+async def instantiate_workflow_intent(
+    intent_id: str,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "instantiate",
+        "workflow_intent",
+        intent_id,
+    )
+    service = request.app.state.workflow_intent_service
+    try:
+        return await service.instantiate_intent(intent_id, actor=principal.email)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/intents/{intent_id}/resolve")
+async def resolve_workflow_intent(
+    intent_id: str,
+    data: WorkflowIntentResolveRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "resolve",
+        "workflow_intent",
+        intent_id,
+    )
+    service = request.app.state.workflow_intent_service
+    try:
+        return await service.resolve_intent(
+            intent_id,
+            status=data.status,
+            note=data.note,
+            actor=principal.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/{workflow_id}", response_model=WorkflowResponse)

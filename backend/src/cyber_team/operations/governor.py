@@ -28,6 +28,7 @@ from cyber_team.db.models import (
     OrchestrationToolProposal,
     RoleGap,
     RoleManifest,
+    WorkflowIntent,
     WorkflowRun,
 )
 from cyber_team.operations.tool_readiness_policy import tool_is_required_for_readiness
@@ -258,6 +259,7 @@ class OrchestrationGovernorService:
             role_gap_counts = await self._role_gap_counts(session)
             plan_counts = await self._plan_counts(session)
             workflow_counts = await self._workflow_counts(session)
+            workflow_intent_counts = await self._workflow_intent_counts(session)
             memory_counts = await self._memory_finding_counts(session)
             latest_context = await self._latest_company_context(session)
             recent_audit = await self._recent_audit(session)
@@ -278,6 +280,7 @@ class OrchestrationGovernorService:
             "role_gap_samples": open_role_gaps,
             "plans": plan_counts,
             "workflows": workflow_counts,
+            "workflow_intents": workflow_intent_counts,
             "memory": memory_counts,
             "company_context": latest_context,
             "tools": tool_status,
@@ -597,6 +600,29 @@ class OrchestrationGovernorService:
                     payload={
                         "recommended_action": "review_failed_workflows",
                         "target_view": "workflows",
+                    },
+                )
+            )
+
+        workflow_intents = snapshot.get("workflow_intents") or {}
+        needs_intent_review = int(workflow_intents.get("needs_review") or 0)
+        if needs_intent_review > 0:
+            decisions.append(
+                self._decision_spec(
+                    "create_plan",
+                    "Review generated workflow intents",
+                    "Company context and role capabilities produced workflow intents "
+                    "that should be instantiated, reviewed, or resolved in the Workflows tab.",
+                    risk_level="low",
+                    source_type="workflow_intent",
+                    source_id="active",
+                    target_type="workflow_intent",
+                    target_id="summary",
+                    payload={
+                        "recommended_action": "review_workflow_intents",
+                        "target_view": "workflows",
+                        "counts": workflow_intents.get("by_readiness", {}),
+                        "sample_intent_ids": workflow_intents.get("sample_intent_ids", []),
                     },
                 )
             )
@@ -1007,6 +1033,37 @@ class OrchestrationGovernorService:
             "recent_failed": len(recent_failed),
             "recent_failed_ids": recent_failed[:10],
             "by_status": by_status,
+        }
+
+    async def _workflow_intent_counts(self, session) -> dict[str, Any]:
+        result = await session.execute(
+            select(WorkflowIntent)
+            .where(WorkflowIntent.status.in_(("proposed", "instantiated", "blocked")))
+            .order_by(desc(WorkflowIntent.updated_at))
+            .limit(200)
+        )
+        intents = result.scalars().all()
+        by_status: dict[str, int] = {}
+        by_readiness: dict[str, int] = {}
+        sample_ids: list[str] = []
+        for intent in intents:
+            by_status[intent.status] = by_status.get(intent.status, 0) + 1
+            readiness_status = (intent.readiness or {}).get("status") or "unknown"
+            by_readiness[readiness_status] = by_readiness.get(readiness_status, 0) + 1
+            if (
+                readiness_status in {"ready", "owner_review", "configuration_required", "blocked"}
+                and len(sample_ids) < 10
+            ):
+                sample_ids.append(intent.id)
+        return {
+            "total": len(intents),
+            "needs_review": sum(
+                by_readiness.get(status, 0)
+                for status in ("ready", "owner_review", "configuration_required", "blocked")
+            ),
+            "by_status": by_status,
+            "by_readiness": by_readiness,
+            "sample_intent_ids": sample_ids,
         }
 
     async def _memory_finding_counts(self, session) -> dict[str, Any]:

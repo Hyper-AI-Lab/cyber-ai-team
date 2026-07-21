@@ -915,6 +915,17 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                 } workflows`}
               />
               <ReadinessPanel
+                title="Workflow Intents"
+                value={readiness.workflow_intents?.status || 'waiting'}
+                detail={
+                  readiness.workflow_intents?.active_count
+                    ? `${readiness.workflow_intents.ready_count || 0} ready · ${
+                        readiness.workflow_intents.owner_review_count || 0
+                      } review`
+                    : readiness.workflow_intents?.detail || 'no generated intents yet'
+                }
+              />
+              <ReadinessPanel
                 title="MCP / A2A"
                 value={readiness.interop?.status || 'unavailable'}
                 detail={

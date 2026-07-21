@@ -209,10 +209,11 @@ Exit criteria:
 
 ### Phase 4: Adaptive Workflow Engine
 
-Status: partial production foundation. Autonomous plans, durable plan tasks, Temporal
-workers, owner approvals, and ERPNext/company-context workflows exist. The remaining work
-is converting more business objectives into adaptive generated workflow intents rather
-than static routes or manually triggered APIs.
+Status: production v1 foundation. Autonomous plans, durable plan tasks, Temporal workers,
+owner approvals, ERPNext/company-context workflows, and generated workflow intents from
+role capabilities/business context now exist. Remaining work is making those intents more
+predictive and richer across calendar/docs/analytics signals when those integrations are
+configured.
 
 Deliverables:
 
@@ -220,7 +221,7 @@ Deliverables:
 - [x] Supervisor/governor-driven routing from signals to plan tasks.
 - [x] Durable execution through Temporal where long-running work is needed.
 - [x] Human interruption and resume for sensitive steps.
-- [ ] Workflow templates generated broadly from role capabilities and business context.
+- [x] Workflow templates generated broadly from role capabilities and business context.
 
 Exit criteria:
 
@@ -284,7 +285,7 @@ Deliverables:
 - [x] Agent trace and decision timeline foundation.
 - [x] Memory graph/timeline foundation.
 - [x] Integration readiness board.
-- [ ] Workflow intent builder and live execution view.
+- [x] Workflow intent builder and live execution view.
 
 Exit criteria:
 

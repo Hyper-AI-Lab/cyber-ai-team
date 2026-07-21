@@ -1990,6 +1990,23 @@ async def operations_readiness(
             "detail": "Workflow template service is not available.",
         }
 
+    workflow_intent_service = getattr(request.app.state, "workflow_intent_service", None)
+    if workflow_intent_service:
+        workflow_intents_status = await workflow_intent_service.readiness()
+    else:
+        workflow_intents_status = {
+            "status": "unavailable",
+            "blocking": False,
+            "active_count": 0,
+            "instantiated_count": 0,
+            "blocked_count": 0,
+            "configuration_required_count": 0,
+            "owner_review_count": 0,
+            "ready_count": 0,
+            "groups": [],
+            "detail": "Generated workflow intent service is not available.",
+        }
+
     interop_service = getattr(request.app.state, "interop_service", None)
     if interop_service:
         interop_status = await interop_service.summary()
@@ -2168,6 +2185,7 @@ async def operations_readiness(
         "executive_brief_email": executive_brief_email_status,
         "team_activation": team_activation_status,
         "workflow_templates": workflow_templates_status,
+        "workflow_intents": workflow_intents_status,
         "interop": interop_status,
         "governor": governor_status,
         "executive_autonomy": executive_status,
