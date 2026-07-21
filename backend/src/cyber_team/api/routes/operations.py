@@ -1691,6 +1691,27 @@ async def operations_readiness(
     provider_items = [*comms]
     if erpnext_status:
         provider_items.append(erpnext_status)
+    llm_gateway = getattr(request.app.state, "llm_gateway", None)
+    if llm_gateway and hasattr(llm_gateway, "validate_provider"):
+        llm_status = await llm_gateway.validate_provider()
+        llm_status = {
+            **llm_status,
+            "required": True,
+            "optional_disabled": False,
+            "blocking": llm_status.get("mode") != "live",
+        }
+    else:
+        llm_status = {
+            "provider": "mistral",
+            "configured": False,
+            "mode": "configuration_required",
+            "status": "configuration_required",
+            "detail": "LLM gateway is not available.",
+            "required": True,
+            "optional_disabled": False,
+            "blocking": False,
+        }
+    provider_items.append(llm_status)
     integration_blockers = [
         {
             "channel": item.get("channel"),
@@ -2170,6 +2191,7 @@ async def operations_readiness(
         "integrations": {
             "communications": comms,
             "erpnext": erpnext_status,
+            "llm": llm_status,
             "required_providers": sorted(settings.required_provider_names),
             "required_blockers": integration_blockers,
             "optional_disabled": optional_disabled,

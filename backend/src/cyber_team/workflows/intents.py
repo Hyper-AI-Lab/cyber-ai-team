@@ -45,11 +45,13 @@ class WorkflowIntentService:
         *,
         orchestrator: Orchestrator,
         tool_registry,
+        llm_gateway=None,
         audit_service=None,
         session_factory=async_session,
     ) -> None:
         self._orchestrator = orchestrator
         self._tool_registry = tool_registry
+        self._llm_gateway = llm_gateway
         self._audit = audit_service
         self._session_factory = session_factory
 
@@ -77,7 +79,8 @@ class WorkflowIntentService:
 
         agents = await self._load_active_agents()
         role_gaps = await self._load_role_gaps(snapshot)
-        proposals = self._build_proposals(snapshot, agents, role_gaps)
+        llm_readiness = await self._llm_readiness()
+        proposals = self._build_proposals(snapshot, agents, role_gaps, llm_readiness)
         proposals = proposals[: max(1, min(limit, 200))]
         upserted = await self._upsert_proposals(proposals, actor=actor)
 
@@ -334,19 +337,25 @@ class WorkflowIntentService:
         snapshot: CompanyContextSnapshot,
         agents: dict[str, dict[str, Agent]],
         role_gaps: list[RoleGap],
+        llm_readiness: dict[str, Any],
     ) -> list[dict[str, Any]]:
         operating_model = snapshot.operating_model or {}
         proposals = []
         for role_spec in operating_model.get("planned_role_specs") or []:
-            proposal = self._proposal_from_role_spec(snapshot, role_spec, agents)
+            proposal = self._proposal_from_role_spec(
+                snapshot,
+                role_spec,
+                agents,
+                llm_readiness,
+            )
             if proposal:
                 proposals.append(proposal)
         for loop in operating_model.get("adaptive_loops") or []:
-            proposal = self._proposal_from_loop(snapshot, loop, agents)
+            proposal = self._proposal_from_loop(snapshot, loop, agents, llm_readiness)
             if proposal:
                 proposals.append(proposal)
         for gap in role_gaps:
-            proposal = self._proposal_from_role_gap(snapshot, gap, agents)
+            proposal = self._proposal_from_role_gap(snapshot, gap, agents, llm_readiness)
             if proposal:
                 proposals.append(proposal)
         return self._dedupe_proposals(proposals)
@@ -356,6 +365,7 @@ class WorkflowIntentService:
         snapshot: CompanyContextSnapshot,
         role_spec: dict[str, Any],
         agents: dict[str, dict[str, Agent]],
+        llm_readiness: dict[str, Any],
     ) -> dict[str, Any] | None:
         role_name = str(role_spec.get("name") or "").strip()
         role_family = str(role_spec.get("family") or "").strip()
@@ -384,6 +394,7 @@ class WorkflowIntentService:
             agent=agent,
             role_family=role_family,
             approval_policy=str(role_spec.get("approval_policy") or "auto"),
+            llm_readiness=llm_readiness,
         )
         risk_level = self._risk_level(requested_tools, role_spec.get("approval_policy"))
         return {
@@ -431,6 +442,7 @@ class WorkflowIntentService:
         snapshot: CompanyContextSnapshot,
         loop: dict[str, Any],
         agents: dict[str, dict[str, Agent]],
+        llm_readiness: dict[str, Any],
     ) -> dict[str, Any] | None:
         loop_id = str(loop.get("id") or "").strip()
         owner_family = str(loop.get("owner_family") or "supervisor").strip()
@@ -477,6 +489,7 @@ class WorkflowIntentService:
                 agent=agent,
                 role_family=owner_family,
                 approval_policy="auto",
+                llm_readiness=llm_readiness,
             ),
             "approval_required": False,
             "evidence": {
@@ -491,6 +504,7 @@ class WorkflowIntentService:
         snapshot: CompanyContextSnapshot,
         gap: RoleGap,
         agents: dict[str, dict[str, Agent]],
+        llm_readiness: dict[str, Any],
     ) -> dict[str, Any] | None:
         agent = (
             agents["by_family"].get("company_builder")
@@ -541,6 +555,7 @@ class WorkflowIntentService:
                 agent=agent,
                 role_family="company_builder",
                 approval_policy="auto",
+                llm_readiness=llm_readiness,
             ),
             "approval_required": risk_level in {"medium", "high", "critical"},
             "evidence": {
@@ -705,6 +720,7 @@ class WorkflowIntentService:
         agent: Agent | None,
         role_family: str,
         approval_policy: str,
+        llm_readiness: dict[str, Any],
     ) -> dict[str, Any]:
         graph_readiness = self._tool_readiness(list(GRAPH_TOOL_NAMES))
         requested_readiness = self._tool_readiness(requested_tools)
@@ -718,6 +734,11 @@ class WorkflowIntentService:
                     f"Required graph tool {item['tool_name']} is {item['state']}: "
                     f"{item.get('readiness_reason')}"
                 )
+        if agent and llm_readiness.get("mode") != "live":
+            blockers.append(
+                "Agent delegation requires a live LLM provider: "
+                f"{llm_readiness.get('detail') or llm_readiness.get('mode')}"
+            )
         for item in requested_readiness:
             if item.get("state") not in {"live", "advisory"} or not item.get("executable"):
                 warnings.append(
@@ -730,8 +751,15 @@ class WorkflowIntentService:
                     "and remains approval-gated."
                 )
         if blockers:
-            status = "blocked"
-            recommended_action = "create_or_activate_agent"
+            if agent and llm_readiness.get("mode") in {
+                "configuration_required",
+                "unavailable",
+            }:
+                status = "configuration_required"
+                recommended_action = "validate_llm_provider"
+            else:
+                status = "blocked"
+                recommended_action = "create_or_activate_agent"
         elif any("configuration_required" in warning for warning in warnings):
             status = "configuration_required"
             recommended_action = "configure_tools"
@@ -746,6 +774,7 @@ class WorkflowIntentService:
             "blockers": blockers,
             "warnings": warnings,
             "recommended_action": recommended_action,
+            "llm_provider": llm_readiness,
             "graph_tool_readiness": graph_readiness,
             "requested_tool_readiness": requested_readiness,
             "agent": (
@@ -759,6 +788,28 @@ class WorkflowIntentService:
                 else None
             ),
         }
+
+    async def _llm_readiness(self) -> dict[str, Any]:
+        if not self._llm_gateway:
+            return {
+                "provider": "unknown",
+                "configured": False,
+                "mode": "configuration_required",
+                "status": "configuration_required",
+                "blocking": True,
+                "detail": "LLM gateway is not available for agent delegation.",
+            }
+        validate = getattr(self._llm_gateway, "validate_provider", None)
+        if not validate:
+            return {
+                "provider": "unknown",
+                "configured": False,
+                "mode": "configuration_required",
+                "status": "configuration_required",
+                "blocking": True,
+                "detail": "LLM gateway does not expose provider validation.",
+            }
+        return await validate()
 
     def _tool_readiness(self, tools: list[str]) -> list[dict[str, Any]]:
         rows = []

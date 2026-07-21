@@ -116,6 +116,7 @@ async def lifespan(app: FastAPI):
     app.state.workflow_intent_service = WorkflowIntentService(
         orchestrator=app.state.orchestrator,
         tool_registry=app.state.tool_registry,
+        llm_gateway=app.state.llm_gateway,
         audit_service=app.state.audit_service,
     )
     app.state.supervisor_review_service = SupervisorReviewService(

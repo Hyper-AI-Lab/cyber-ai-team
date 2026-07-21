@@ -3656,3 +3656,43 @@
   - Quality gate terminal output from 2026-07-21T10:26Z through 2026-07-21T10:31Z.
 - Next step:
   - Run release candidate checks with real migration rehearsal, isolated Docker Compose smoke, image build/scan, then commit, push, deploy to staging, run live workflow-intent checks, and watch GitHub CI.
+
+### 2026-07-21T10:58:37Z — STEP-115 — Hardened workflow intents against LLM provider failures
+- Files/services changed:
+  - `backend/src/cyber_team/api/__init__.py`
+  - `backend/src/cyber_team/api/routes/integrations.py`
+  - `backend/src/cyber_team/api/routes/operations.py`
+  - `backend/src/cyber_team/llm/gateway.py`
+  - `backend/src/cyber_team/workflows/intents.py`
+  - `backend/tests/test_integration_routes.py`
+  - `backend/tests/test_llm_gateway.py`
+  - `backend/tests/test_workflow_intents.py`
+  - `frontend/src/components/IntegrationsView.tsx`
+  - `frontend/src/components/OperationsView.tsx`
+  - Live staging workflow run `ea2f69ec-ed9b-4a01-a0ba-366c6aa988c9` was terminated and marked failed after proving the provider credential issue.
+- Commands run:
+  - Live staging workflow-intent endpoint smoke against `https://cyberteam.hyperailab.com`: owner login, `/health`, `/api/operations/readiness?refresh=true`, `POST /api/workflows/intents/generate`, `GET /api/workflows/intents`, `POST /api/workflows/intents/{id}/instantiate`, `POST /api/workflows/{id}/run`, and workflow-run polling.
+  - `docker compose --env-file deploy/environments/staging.env -p cyberteam-staging ps`
+  - `docker logs --tail 180 cyberteam-staging-worker ...`
+  - `docker logs --tail 120 cyberteam-staging-core ...`
+  - `docker compose --env-file deploy/environments/staging.env -p cyberteam-staging exec -T postgres psql -U cyberteam -d cyberteam -c "UPDATE workflow_runs ..."`
+  - `.venv-quality/bin/python` Temporal client termination for run `ea2f69ec-ed9b-4a01-a0ba-366c6aa988c9`
+  - `python3 -m py_compile backend/src/cyber_team/llm/gateway.py backend/src/cyber_team/workflows/intents.py backend/src/cyber_team/api/routes/integrations.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/api/__init__.py backend/tests/test_llm_gateway.py backend/tests/test_workflow_intents.py backend/tests/test_integration_routes.py`
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/llm/gateway.py backend/src/cyber_team/workflows/intents.py backend/src/cyber_team/api/routes/integrations.py backend/src/cyber_team/api/routes/operations.py backend/src/cyber_team/api/__init__.py backend/tests/test_llm_gateway.py backend/tests/test_workflow_intents.py backend/tests/test_integration_routes.py`
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest backend/tests/test_llm_gateway.py backend/tests/test_workflow_intents.py backend/tests/test_integration_routes.py backend/tests/test_api_operations.py::test_operations_readiness_reports_tool_and_integration_blockers -q`
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=0 ./scripts/quality-gate.sh`
+  - `git diff --check`
+- Result:
+  - Live staging generated `32` workflow intents and successfully instantiated one ready intent into workflow `7a8725b3-ff32-47ac-9460-69b33d60e635`.
+  - Executing that generated workflow exposed a real runtime readiness gap: Mistral returned HTTP `401 Unauthorized`, so the agent node retried and stayed running.
+  - Added LLM provider validation through `LLMGateway.validate_provider`, using Mistral `/v1/models` as a non-secret credential proof.
+  - Workflow intents that require agent delegation now include `llm_provider` readiness and become `configuration_required` when the provider is missing, unavailable, or rejected.
+  - Integrations and Operations readiness now expose the LLM provider as a required runtime dependency.
+  - Integrations UI and Operations readiness board now show LLM provider status.
+  - Focused hardening tests passed (`14 passed`), and the full quality gate passed with backend tests (`219 passed`) and frontend tests (`23 passed`).
+- Evidence:
+  - Live worker logs from 2026-07-21T10:50Z showing Mistral `401 Unauthorized` for the generated workflow run.
+  - Temporal termination output for run `ea2f69ec-ed9b-4a01-a0ba-366c6aa988c9`.
+  - Full quality gate output from 2026-07-21T10:53Z through 2026-07-21T10:58Z.
+- Next step:
+  - Commit and push the LLM-readiness hardening, run release checks for the new SHA, promote staging again, regenerate workflow intents, and verify they no longer report false `ready` while Mistral credentials are rejected.

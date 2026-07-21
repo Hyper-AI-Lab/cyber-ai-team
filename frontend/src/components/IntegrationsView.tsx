@@ -34,6 +34,7 @@ type IntegrationStatus = {
   environment: string
   communications: IntegrationItem[]
   erpnext?: IntegrationItem | null
+  llm?: IntegrationItem | null
   required_providers?: string[]
   optional_disabled?: IntegrationItem[]
   simulation_enabled: boolean
@@ -112,6 +113,7 @@ export default function IntegrationsView() {
   const integrationItems = [
     ...(status?.communications || []),
     ...(status?.erpnext ? [status.erpnext] : []),
+    ...(status?.llm ? [status.llm] : []),
   ]
   const liveCount = integrationItems.filter((item) => item.mode === 'live').length
   const blockerCount = integrationItems.filter((item) => item.blocking).length

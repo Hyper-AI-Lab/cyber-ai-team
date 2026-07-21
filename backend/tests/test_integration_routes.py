@@ -236,6 +236,65 @@ def test_validate_erpnext_integration_uses_erpnext_client(monkeypatch):
     app.state.audit_service.record_control_evidence.assert_awaited_once()
 
 
+def test_validate_llm_integration_uses_llm_gateway(monkeypatch):
+    app = FastAPI()
+    app.include_router(integrations_router, prefix="/api/integrations")
+
+    class FakeLLMGateway:
+        async def validate_provider(self, *, force=False):
+            return {
+                "provider": "mistral",
+                "configured": True,
+                "mode": "configuration_required",
+                "status": "configuration_required",
+                "detail": "Mistral API credentials were rejected.",
+            }
+
+    app.state.comms_gateway = type(
+        "FakeCommsGateway",
+        (),
+        {
+            "integration_status": lambda _self: [],
+            "last_validation_result": lambda _self: None,
+        },
+    )()
+    app.state.llm_gateway = FakeLLMGateway()
+    app.state.audit_service = type(
+        "FakeAudit",
+        (),
+        {"record_control_evidence": AsyncMock()},
+    )()
+
+    async def mock_get_current_principal():
+        return Principal(
+            subject="owner",
+            email="owner@example.com",
+            role="owner",
+            token_type="access",
+        )
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.integrations.require_authorization",
+        mock_require_authorization,
+    )
+
+    response = TestClient(app).post(
+        "/api/integrations/validate",
+        json={"provider": "mistral"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["provider"] == "mistral"
+    assert body["results"][0]["mode"] == "configuration_required"
+    app.state.audit_service.record_control_evidence.assert_awaited_once()
+
+
 def test_integration_status_includes_erpnext_company_context(monkeypatch):
     app = FastAPI()
     app.include_router(integrations_router, prefix="/api/integrations")

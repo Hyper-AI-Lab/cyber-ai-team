@@ -878,6 +878,14 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                 }
               />
               <ReadinessPanel
+                title="LLM Provider"
+                value={readiness.integrations?.llm?.mode || 'unavailable'}
+                detail={
+                  readiness.integrations?.llm?.detail
+                  || 'agent LLM provider status not reported'
+                }
+              />
+              <ReadinessPanel
                 title="Optional Disabled"
                 value={String(readiness.integrations?.optional_disabled?.length || 0)}
                 detail={

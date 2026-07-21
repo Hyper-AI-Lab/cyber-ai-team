@@ -36,6 +36,21 @@ class FakeToolRegistry:
         }
 
 
+class FakeLLMGateway:
+    def __init__(self, mode: str = "live"):
+        self.mode = mode
+
+    async def validate_provider(self, *, force: bool = False):
+        return {
+            "provider": "mistral",
+            "configured": self.mode != "configuration_required",
+            "mode": self.mode,
+            "status": self.mode,
+            "blocking": self.mode != "live",
+            "detail": "LLM validation result for test.",
+        }
+
+
 @pytest.fixture
 async def session_factory(monkeypatch):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -133,6 +148,7 @@ async def test_generate_workflow_intents_from_context_is_idempotent(session_fact
         tool_registry=FakeToolRegistry(
             live_tools={"memory_recall", "memory_remember", "send_email"},
         ),
+        llm_gateway=FakeLLMGateway(),
         session_factory=session_factory,
     )
 
@@ -171,6 +187,7 @@ async def test_ready_low_risk_intent_instantiates_workflow(session_factory):
     service = WorkflowIntentService(
         orchestrator=orchestrator,
         tool_registry=FakeToolRegistry(),
+        llm_gateway=FakeLLMGateway(),
         session_factory=session_factory,
     )
 
@@ -202,6 +219,7 @@ async def test_intent_blocks_when_required_agent_is_missing(session_factory):
         tool_registry=FakeToolRegistry(
             live_tools={"memory_recall", "memory_remember", "send_email"},
         ),
+        llm_gateway=FakeLLMGateway(),
         session_factory=session_factory,
     )
 
@@ -212,3 +230,29 @@ async def test_intent_blocks_when_required_agent_is_missing(session_factory):
     assert "No active agent" in blocked["readiness"]["blockers"][0]
     with pytest.raises(ValueError, match="not ready"):
         await service.instantiate_intent(blocked["id"], actor="owner@example.com")
+
+
+@pytest.mark.asyncio
+async def test_intent_requires_live_llm_provider_for_agent_delegation(session_factory):
+    async with session_factory() as session:
+        session.add(snapshot())
+        session.add(sales_agent())
+        await session.commit()
+
+    service = WorkflowIntentService(
+        orchestrator=Orchestrator(agent_manager=AgentManager(), memory_service=None),
+        tool_registry=FakeToolRegistry(
+            live_tools={"memory_recall", "memory_remember", "send_email"},
+        ),
+        llm_gateway=FakeLLMGateway(mode="configuration_required"),
+        session_factory=session_factory,
+    )
+
+    generated = await service.generate_from_company_context(actor="test")
+    intent = next(item for item in generated["intents"] if item["category"] == "role_capability")
+
+    assert intent["readiness"]["status"] == "configuration_required"
+    assert intent["readiness"]["recommended_action"] == "validate_llm_provider"
+    assert intent["readiness"]["llm_provider"]["mode"] == "configuration_required"
+    with pytest.raises(ValueError, match="not ready"):
+        await service.instantiate_intent(intent["id"], actor="owner@example.com")

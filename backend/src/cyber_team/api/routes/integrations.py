@@ -106,6 +106,29 @@ async def integration_status(
     provider_items = [*communications]
     if erpnext_status:
         provider_items.append(erpnext_status)
+    llm_gateway = getattr(request.app.state, "llm_gateway", None)
+    if llm_gateway and hasattr(llm_gateway, "validate_provider"):
+        llm_status = await llm_gateway.validate_provider()
+        provider_items.append(
+            {
+                **llm_status,
+                "required": True,
+                "optional_disabled": False,
+                "blocking": llm_status.get("mode") != "live",
+            }
+        )
+    else:
+        llm_status = {
+            "provider": "mistral",
+            "configured": False,
+            "mode": "configuration_required",
+            "status": "configuration_required",
+            "detail": "LLM gateway is not available.",
+            "required": True,
+            "optional_disabled": False,
+            "blocking": True,
+        }
+        provider_items.append(llm_status)
     blocking_reasons = _blocking_reasons(provider_items)
     last_validation = comms.last_validation_result()
     if inbound_email and inbound_email.last_validation_result():
@@ -116,6 +139,7 @@ async def integration_status(
         "environment": settings.environment,
         "communications": communications,
         "erpnext": erpnext_status,
+        "llm": llm_status,
         "required_providers": sorted(_required_provider_names()),
         "optional_disabled": [
             item for item in provider_items if item.get("optional_disabled")
@@ -177,6 +201,31 @@ async def validate_integration(
                 "results": [result_item],
             }
         request.app.state.erpnext_last_validation_result = result
+    elif provider in {"mistral", "llm", "mistral_llm"}:
+        llm_gateway = getattr(request.app.state, "llm_gateway", None)
+        if llm_gateway and hasattr(llm_gateway, "validate_provider"):
+            validation = await llm_gateway.validate_provider(force=True)
+        else:
+            validation = {
+                "provider": "mistral",
+                "configured": False,
+                "mode": "configuration_required",
+                "status": "configuration_required",
+                "detail": "LLM gateway is not available.",
+            }
+        checked_at = utc_now().isoformat() + "+00:00"
+        result = {
+            "status": "ready" if validation.get("mode") == "live" else "failed",
+            "checked_at": checked_at,
+            "provider": "mistral",
+            "results": [
+                {
+                    **validation,
+                    "provider": "mistral",
+                    "status": validation.get("status") or validation.get("mode"),
+                }
+            ],
+        }
     elif inbound_email and provider in {"imap", "inbound_email"}:
         result = await inbound_email.validate()
     else:
