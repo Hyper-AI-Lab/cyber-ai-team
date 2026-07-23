@@ -3875,3 +3875,38 @@
   - Local Ruff, compileall, and `git diff --check` output from 2026-07-23T09:18Z.
 - Next step:
   - Commit and push the inference hardening, watch GitHub CI, then regenerate staging workflow intents so the live backlog can pick up the safer role-family/tool behavior.
+
+### 2026-07-23T14:05:41Z — STEP-123 — Rolled out Memory / Knowledge inference hardening to staging
+- Files/services changed:
+  - Promoted `/home/projects/cyber-team` commit `f9993825cb9d8439d098d0e3796ee5fe66cf5e07` to staging.
+  - Recreated staging `core`, `worker`, and `ui` containers with images `cyber-team-core:f999382` and `cyber-team-ui:f999382`.
+  - Updated live staging workflow-intent and role-gap state through owner-authenticated API calls.
+- Commands run:
+  - `RELEASE_VERSION=f999382 APP_VERSION=f999382 NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=f999382 ./scripts/promote-staging.sh`
+  - `curl -fsS https://cyberteam.hyperailab.com/health`
+  - Owner-authenticated `POST /api/workflows/intents/generate` with `{"limit":75,"instantiate_low_risk":false}`.
+  - Owner-authenticated `POST /api/roles/role-gaps/gap_a7e85d820723/proposal`.
+  - Owner-authenticated `POST /api/roles/role-gaps/gap_a7e85d820723/resolve`.
+  - Owner-authenticated `GET /api/operations/readiness`.
+- Result:
+  - Release gate passed: backend tests reported `221 passed`; Ruff, compileall, Alembic offline SQL, dependency audit, frontend audit/build/typecheck/tests, compose config, operations syntax checks, secret scan, FOSS/resource scan, diff hygiene, migration rehearsal, isolated compose smoke, Docker image builds, and Trivy image scans all passed.
+  - Release manifest created at `/home/projects/cyber-team/dist/releases/f999382.json`.
+  - Staging backup created at `/home/projects/cyber-team/backups/staging/cyberteam-staging-f999382-20260723-140113.dump`.
+  - Promotion record created at `/home/projects/cyber-team/dist/promotions/staging/f999382-20260723-140214.json`.
+  - Live staging health reports `version=f999382` and build SHA `f9993825cb9d8439d098d0e3796ee5fe66cf5e07`.
+  - First live intent generation after deployment completed with `8` created, `17` updated, `6` unchanged, and `0` instantiated.
+  - Safe re-proposal for `gap_a7e85d820723` removed unsafe communication send/call tools, mapped the gap to `Knowledge`, produced live-ready tools only, lowered risk to `medium`, and recommended `create_role`.
+  - Existing active `company_memory_steward` Knowledge agent already covered the gap, so the gap was resolved instead of creating a duplicate agent.
+  - Follow-up intent generation completed with `0` created, `0` updated, `31` unchanged, and `0` instantiated.
+  - Role backlog summary no longer shows deferred or active Memory Steward / Knowledge items; the remaining proposed role gaps are high-risk sales, communications, marketing, operations, support, and finance items that require configuration or owner approval.
+  - Readiness remains `degraded` only for known operational evidence items: stale alert email proof, restore drill evidence, load-test evidence, and business-workflow smoke evidence.
+- Evidence:
+  - Release manifest `/home/projects/cyber-team/dist/releases/f999382.json`.
+  - Staging backup `/home/projects/cyber-team/backups/staging/cyberteam-staging-f999382-20260723-140113.dump`.
+  - Promotion record `/home/projects/cyber-team/dist/promotions/staging/f999382-20260723-140214.json`.
+  - Live staging `/health` response from 2026-07-23T14:05Z.
+  - Live role gap `gap_a7e85d820723` resolved after safe re-proposal.
+  - Live readiness response from 2026-07-23T14:05Z.
+- Next step:
+  - Continue blocked-intent triage by separating optional-disabled/provider-required work from owner-review work, then run or dismiss the remaining safe generated workflow intents without executing Product / Legal / Ops side effects.
