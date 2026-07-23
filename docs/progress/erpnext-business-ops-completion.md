@@ -3773,3 +3773,31 @@
   - Clean Docker Node 20 validation output from 2026-07-23T04:33Z through 2026-07-23T04:40Z.
 - Next step:
   - Commit and push the frontend dependency fix, watch GitHub CI return green, then continue with the ready generated workflow staging execution.
+
+### 2026-07-23T05:07:37Z — STEP-119 — Released patched frontend audit fix to staging
+- Files/services changed:
+  - Released commit `fdc1f3b` to staging.
+  - Recreated staging `core`, `worker`, and `ui` containers with `cyber-team-core:fdc1f3b` and `cyber-team-ui:fdc1f3b`.
+- Commands run:
+  - `gh run watch 29980189516 --repo Hyper-AI-Lab/cyber-ai-team --exit-status`
+  - `RELEASE_VERSION=fdc1f3b ... RUN_QUALITY_GATE=0 RUN_MIGRATION_REHEARSAL=0 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `RELEASE_VERSION=fdc1f3b ... RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=fdc1f3b ./scripts/promote-staging.sh`
+  - Live staging `/health` and owner-authenticated `/api/operations/readiness?refresh=true`.
+- Result:
+  - GitHub CI for `fdc1f3b` completed successfully, including frontend dependency audit.
+  - Strict release candidate check passed: full quality gate, migration rehearsal, isolated compose smoke, image build, and Trivy image scans with zero detected vulnerabilities.
+  - Release manifest created at `/home/projects/cyber-team/dist/releases/fdc1f3b.json`.
+  - Staging backup created at `/home/projects/cyber-team/backups/staging/cyberteam-staging-fdc1f3b-20260723-050612.dump`.
+  - Staging promotion completed and live smoke passed.
+  - Promotion record created at `/home/projects/cyber-team/dist/promotions/staging/fdc1f3b-20260723-050719.json`.
+  - Live staging `/health` reports version `fdc1f3b` and build SHA `fdc1f3b05470c4ae12bb339694d40991da76a67e`.
+  - Live operations readiness has no required integration blockers; Mistral remains `live`.
+- Evidence:
+  - GitHub Actions run `29980189516`.
+  - Release manifest `/home/projects/cyber-team/dist/releases/fdc1f3b.json`.
+  - Staging backup `/home/projects/cyber-team/backups/staging/cyberteam-staging-fdc1f3b-20260723-050612.dump`.
+  - Promotion record `/home/projects/cyber-team/dist/promotions/staging/fdc1f3b-20260723-050719.json`.
+  - Live staging health/readiness output from 2026-07-23T05:07Z.
+- Next step:
+  - Execute one ready generated workflow on staging to prove end-to-end LLM-backed agent delegation now succeeds, then continue reducing blocked workflow intents by activating or dismissing missing agents/tools.
