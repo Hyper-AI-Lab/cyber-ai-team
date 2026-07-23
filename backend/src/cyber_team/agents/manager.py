@@ -47,6 +47,69 @@ class AgentManager:
         "payment_charge",
         "payment_refund",
     }
+    KNOWLEDGE_ROLE_GAP_CAPABILITIES = {
+        "company_knowledge_management",
+        "document_indexing",
+        "knowledge",
+        "knowledge_management",
+        "memory_consolidation",
+        "memory_curation",
+        "memory_governance",
+        "memory_operations",
+        "memory_reliability",
+        "research",
+        "retrieval_policy",
+    }
+    KNOWLEDGE_ROLE_GAP_HINTS = {
+        "company memory steward",
+        "document index",
+        "empty recall",
+        "knowledge",
+        "memory",
+        "namespace",
+        "recall",
+        "remember",
+        "research",
+        "retrieval",
+        "stale memory",
+        "steward",
+    }
+    KNOWLEDGE_SAFE_ROLE_TOOLS = {
+        "approval_request",
+        "company_profile_read",
+        "document_index",
+        "knowledge_query",
+        "memory_recall",
+        "memory_remember",
+        "owner_notify",
+        "process_audit",
+        "research_report",
+        "role_gap_report",
+        "web_search",
+    }
+    CAPABILITY_FAMILY_MAP = {
+        "accounting": "finance",
+        "analytics": "marketing",
+        "company_knowledge_management": "knowledge",
+        "crm": "sales",
+        "document_indexing": "knowledge",
+        "email": "communications",
+        "knowledge": "knowledge",
+        "knowledge_management": "knowledge",
+        "memory_consolidation": "knowledge",
+        "memory_curation": "knowledge",
+        "memory_governance": "knowledge",
+        "memory_operations": "knowledge",
+        "memory_reliability": "knowledge",
+        "messaging": "communications",
+        "outbound_voice": "communications",
+        "payments": "finance",
+        "research": "knowledge",
+        "retrieval_policy": "knowledge",
+        "scheduling": "operations",
+        "sms_messaging": "communications",
+        "workflow_reliability": "operations",
+    }
     AUTONOMOUS_GAP_BLOCKERS = (
         "blocked because",
         "blocked by",
@@ -1991,10 +2054,13 @@ Propose a new role to fill this gap. Return JSON with:
 
     @staticmethod
     def _role_gap_business_function(gap: dict, proposed_manifest: dict) -> str:
+        context = gap.get("context") or {}
         raw = (
-            gap.get("capability")
+            context.get("business_function")
+            or context.get("role_family")
+            or AgentManager._family_for_role_gap_capability(gap.get("capability"))
             or proposed_manifest.get("family")
-            or (gap.get("context") or {}).get("role_family")
+            or gap.get("capability")
             or "Unclassified"
         )
         return str(raw).replace("_", " ").replace("-", " ").strip().title() or "Unclassified"
@@ -2157,7 +2223,16 @@ Propose a new role to fill this gap. Return JSON with:
             OperatingModelBuilder.ROLE_DEFINITIONS["operations"],
         )
         requested_tools = list(gap.get("requested_tools") or [])
-        default_tools = self._unique([*definition.default_tools, *requested_tools])
+        if family == "knowledge":
+            default_tools = self._knowledge_role_gap_tools(gap, definition.default_tools)
+            excluded_tools = [
+                self.TOOL_ALIASES.get(tool_name, tool_name)
+                for tool_name in requested_tools
+                if self.TOOL_ALIASES.get(tool_name, tool_name) not in default_tools
+            ]
+        else:
+            default_tools = self._unique([*definition.default_tools, *requested_tools])
+            excluded_tools = []
         role_name = self._role_gap_role_name(gap, definition.name)
         company_name = (
             company_profile.get("name")
@@ -2183,7 +2258,11 @@ Propose a new role to fill this gap. Return JSON with:
             "instructions_template": instructions,
             "default_tools": default_tools,
             "memory_namespace": f"{company_namespace}:gap:{slug_id(role_name)}",
-            "approval_policy": self._role_gap_approval_policy(gap, definition.approval_policy),
+            "approval_policy": self._role_gap_approval_policy(
+                gap,
+                definition.approval_policy,
+                default_tools,
+            ),
             "success_metrics": self._unique(
                 [
                     "gap_resolution_time",
@@ -2201,6 +2280,7 @@ Propose a new role to fill this gap. Return JSON with:
                     "Generated from a persistent role gap event.",
                     *self._role_gap_rationale(gap, family),
                 ],
+                "excluded_unsafe_requested_tools": excluded_tools,
                 "capabilities": self._unique(
                     [
                         *(definition.capabilities or []),
@@ -2225,15 +2305,30 @@ Propose a new role to fill this gap. Return JSON with:
         }
 
     def _role_gap_family(self, gap: dict) -> str:
+        context = gap.get("context") or {}
+        for candidate in (
+            context.get("role_family"),
+            context.get("business_function"),
+        ):
+            normalized_candidate = str(candidate or "").replace(" ", "_").lower()
+            if normalized_candidate in OperatingModelBuilder.ROLE_DEFINITIONS:
+                return normalized_candidate
+
+        capability_family = self._family_for_role_gap_capability(gap.get("capability"))
+        if capability_family:
+            return capability_family
+
         text = " ".join(
             str(value).lower()
             for value in [
                 gap.get("title"),
                 gap.get("description"),
                 gap.get("capability"),
-                " ".join(gap.get("requested_tools") or []),
             ]
         )
+        if self._looks_like_knowledge_role_gap(text):
+            return "knowledge"
+
         family_signals = OperatingModelBuilder.FAMILY_SIGNALS
         best_family = "operations"
         best_score = 0
@@ -2246,6 +2341,52 @@ Propose a new role to fill this gap. Return JSON with:
             return "communications"
         return best_family
 
+    @classmethod
+    def _family_for_role_gap_capability(cls, capability: Any) -> str | None:
+        normalized = str(capability or "").replace(" ", "_").replace("-", "_").lower()
+        if normalized in OperatingModelBuilder.ROLE_DEFINITIONS:
+            return normalized
+        return cls.CAPABILITY_FAMILY_MAP.get(normalized)
+
+    @classmethod
+    def _looks_like_knowledge_role_gap(cls, text: str) -> bool:
+        normalized = " ".join(str(text or "").lower().split())
+        if not normalized:
+            return False
+        return any(hint in normalized for hint in cls.KNOWLEDGE_ROLE_GAP_HINTS)
+
+    def _knowledge_role_gap_tools(self, gap: dict, default_tools: list[str]) -> list[str]:
+        requested_tools = [
+            self.TOOL_ALIASES.get(tool_name, tool_name)
+            for tool_name in gap.get("requested_tools") or []
+        ]
+        safe_requested_tools = [
+            tool_name
+            for tool_name in requested_tools
+            if tool_name in self.KNOWLEDGE_SAFE_ROLE_TOOLS
+        ]
+        base_tools = [
+            "company_profile_read",
+            "memory_recall",
+            "memory_remember",
+            "knowledge_query",
+            "process_audit",
+            "approval_request",
+            "owner_notify",
+        ]
+        return self._unique(
+            [
+                *base_tools,
+                *[
+                    self.TOOL_ALIASES.get(tool_name, tool_name)
+                    for tool_name in default_tools
+                    if self.TOOL_ALIASES.get(tool_name, tool_name)
+                    in self.KNOWLEDGE_SAFE_ROLE_TOOLS
+                ],
+                *safe_requested_tools,
+            ]
+        )
+
     @staticmethod
     def _role_gap_role_name(gap: dict, fallback_name: str) -> str:
         title = " ".join(str(gap.get("title") or "").strip().split())
@@ -2257,13 +2398,21 @@ Propose a new role to fill this gap. Return JSON with:
             return title
         return f"{title} Specialist"
 
-    @staticmethod
-    def _role_gap_approval_policy(gap: dict, default_policy: str) -> str:
-        requested_tools = set(gap.get("requested_tools") or [])
-        if (
-            gap.get("severity") in {"high", "critical"}
-            or requested_tools & AgentManager.HIGH_RISK_ROLE_TOOLS
-        ):
+    def _role_gap_approval_policy(
+        self,
+        gap: dict,
+        default_policy: str,
+        effective_tools: list[str] | None = None,
+    ) -> str:
+        requested_tools = {
+            self.TOOL_ALIASES.get(tool_name, tool_name)
+            for tool_name in effective_tools or gap.get("requested_tools") or []
+        }
+        if requested_tools & self.HIGH_RISK_ROLE_TOOLS:
+            return "sensitive"
+        if gap.get("severity") == "critical":
+            return "sensitive"
+        if gap.get("severity") == "high" and self._role_gap_family(gap) != "knowledge":
             return "sensitive"
         return default_policy
 

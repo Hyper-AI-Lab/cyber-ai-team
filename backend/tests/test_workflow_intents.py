@@ -118,6 +118,22 @@ def sales_agent() -> Agent:
     )
 
 
+def company_builder_agent() -> Agent:
+    return Agent(
+        id="company_builder",
+        role_family="company_builder",
+        role_name="Company Builder",
+        instructions="Design safe company roles.",
+        tools=["memory_recall", "memory_remember"],
+        memory_namespace="company:acme:company_builder",
+        approval_policy="auto",
+        status="active",
+        config={},
+        created_at=datetime(2026, 7, 21, 10, 0, 0),
+        updated_at=datetime(2026, 7, 21, 10, 0, 0),
+    )
+
+
 @pytest.mark.asyncio
 async def test_generate_workflow_intents_from_context_is_idempotent(session_factory):
     async with session_factory() as session:
@@ -171,6 +187,84 @@ async def test_generate_workflow_intents_from_context_is_idempotent(session_fact
     async with session_factory() as session:
         rows = (await session.execute(select(WorkflowIntent))).scalars().all()
         assert len(rows) == 3
+
+
+@pytest.mark.asyncio
+async def test_role_gap_intent_keeps_memory_steward_in_knowledge_family(session_factory):
+    ctx = snapshot()
+    ctx.operating_model = {"planned_role_specs": [], "adaptive_loops": []}
+    async with session_factory() as session:
+        session.add(ctx)
+        session.add(company_builder_agent())
+        session.add(
+            RoleGap(
+                id="gap_memory",
+                title="Memory remediation: Company Memory Steward",
+                description=(
+                    "Repeated empty recall and stale namespace coverage require a "
+                    "knowledge stewardship follow-up, not customer communications."
+                ),
+                status="proposed",
+                severity="medium",
+                source_type="memory_steward",
+                company_namespace="company:acme",
+                capability="memory_operations",
+                requested_tools=[
+                    "send_email",
+                    "send_sms",
+                    "make_call",
+                    "send_message",
+                    "memory_remember",
+                    "knowledge_query",
+                ],
+                context={
+                    "role_family": "knowledge",
+                    "source_hash": "hash-1",
+                },
+                proposed_role={
+                    "manifest_payload": {
+                        "family": "communications",
+                        "name": "Unsafe Communications Steward",
+                        "default_tools": [
+                            "send_email",
+                            "send_sms",
+                            "make_call",
+                            "send_message",
+                        ],
+                    }
+                },
+                resolution={},
+                created_at=datetime(2026, 7, 21, 10, 1, 0),
+                updated_at=datetime(2026, 7, 21, 10, 1, 0),
+            )
+        )
+        await session.commit()
+
+    service = WorkflowIntentService(
+        orchestrator=Orchestrator(agent_manager=AgentManager(), memory_service=None),
+        tool_registry=FakeToolRegistry(
+            live_tools={"memory_recall", "memory_remember", "knowledge_query"},
+        ),
+        llm_gateway=FakeLLMGateway(),
+        session_factory=session_factory,
+    )
+
+    generated = await service.generate_from_company_context(actor="test")
+
+    intent = generated["intents"][0]
+    assert intent["category"] == "role_gap"
+    assert intent["business_function"] == "Knowledge"
+    assert intent["role_family"] == "knowledge"
+    assert intent["role_name"] == "Memory remediation: Company Memory Steward"
+    assert intent["requested_tools"] == ["memory_remember", "knowledge_query"]
+    assert intent["approval_required"] is False
+    assert intent["risk_level"] == "low"
+    assert intent["evidence"]["role_gap"]["excluded_unsafe_requested_tools"] == [
+        "send_email",
+        "send_sms",
+        "make_call",
+        "send_message",
+    ]
 
 
 @pytest.mark.asyncio

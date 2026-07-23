@@ -329,6 +329,60 @@ def test_role_gap_proposal_maps_gap_to_dynamic_manifest_payload():
     assert manifest["config"]["role_gap_id"] == "gap_123"
 
 
+def test_role_gap_proposal_keeps_memory_steward_knowledge_safe():
+    manager = AgentManager()
+    proposal = manager._role_gap_proposal(
+        {
+            "id": "gap_memory",
+            "title": "Memory remediation: Company Memory Steward",
+            "description": (
+                "Memory Steward observed repeated empty recall and stale namespace "
+                "coverage. The fix should improve knowledge recall, not send messages."
+            ),
+            "status": "open",
+            "severity": "high",
+            "source_agent_id": "company_memory_steward",
+            "source_type": "memory_steward",
+            "company_namespace": "company:acme",
+            "capability": "memory_operations",
+            "requested_tools": [
+                "send_email",
+                "send_sms",
+                "make_call",
+                "send_message",
+                "memory_remember",
+                "knowledge_query",
+            ],
+            "context": {},
+            "proposed_role": {},
+            "resolution": {},
+        },
+        {"name": "Acme"},
+    )
+
+    manifest = proposal["manifest_payload"]
+
+    assert proposal["family"] == "knowledge"
+    assert manifest["family"] == "knowledge"
+    assert manifest["approval_policy"] == "auto"
+    assert {
+        "company_profile_read",
+        "memory_recall",
+        "memory_remember",
+        "knowledge_query",
+        "process_audit",
+        "approval_request",
+        "owner_notify",
+    }.issubset(set(manifest["default_tools"]))
+    assert not set(manifest["default_tools"]) & AgentManager.HIGH_RISK_ROLE_TOOLS
+    assert manifest["config"]["excluded_unsafe_requested_tools"] == [
+        "send_email",
+        "send_sms",
+        "make_call",
+        "send_message",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_missing_agent_invocation_reports_autonomous_role_gap():
     manager = AgentManager()

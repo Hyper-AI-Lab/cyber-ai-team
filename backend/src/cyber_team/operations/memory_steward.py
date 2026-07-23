@@ -737,6 +737,8 @@ class MemoryStewardService:
                     "trigger": "memory_steward_action",
                     "finding_id": finding["id"],
                     "finding_type": finding["finding_type"],
+                    "role_family": "knowledge",
+                    "business_function": "knowledge",
                     "dedupe_key": f"memory_steward_action:{finding['id']}:role_gap",
                     "evidence": finding.get("evidence", {}),
                 },

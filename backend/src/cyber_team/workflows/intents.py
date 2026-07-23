@@ -35,6 +35,72 @@ SIDE_EFFECT_APPROVAL_TOOLS = {
     "payment_charge",
     "payment_refund",
 }
+KNOWN_ROLE_FAMILIES = {
+    "communications",
+    "company_builder",
+    "engineering",
+    "finance",
+    "hr",
+    "knowledge",
+    "legal",
+    "marketing",
+    "operations",
+    "product",
+    "sales",
+    "security",
+    "supervisor",
+    "support",
+}
+CAPABILITY_FAMILY_MAP = {
+    "accounting": "finance",
+    "analytics": "marketing",
+    "company_knowledge_management": "knowledge",
+    "crm": "sales",
+    "document_indexing": "knowledge",
+    "email": "communications",
+    "knowledge": "knowledge",
+    "knowledge_management": "knowledge",
+    "memory_consolidation": "knowledge",
+    "memory_curation": "knowledge",
+    "memory_governance": "knowledge",
+    "memory_operations": "knowledge",
+    "memory_reliability": "knowledge",
+    "messaging": "communications",
+    "outbound_voice": "communications",
+    "payments": "finance",
+    "research": "knowledge",
+    "retrieval_policy": "knowledge",
+    "scheduling": "operations",
+    "sms_messaging": "communications",
+    "workflow_reliability": "operations",
+}
+KNOWLEDGE_ROLE_GAP_HINTS = {
+    "company memory steward",
+    "document index",
+    "empty recall",
+    "knowledge",
+    "memory",
+    "namespace",
+    "recall",
+    "remember",
+    "research",
+    "retrieval",
+    "stale memory",
+    "steward",
+}
+KNOWLEDGE_SAFE_ROLE_TOOLS = {
+    "approval_request",
+    "company_profile_read",
+    "document_index",
+    "knowledge_query",
+    "memory_recall",
+    "memory_remember",
+    "owner_notify",
+    "process_audit",
+    "research_report",
+    "role_gap_report",
+    "web_search",
+}
 
 
 class WorkflowIntentService:
@@ -511,11 +577,21 @@ class WorkflowIntentService:
             or agents["by_family"].get("supervisor")
             or agents["by_name"].get("company_builder")
         )
-        requested_tools = self._unique_strings(gap.requested_tools or [])
         proposed_role = gap.proposed_role or {}
         manifest = proposed_role.get("manifest_payload") or proposed_role
-        role_family = manifest.get("family") or self._family_from_gap(gap)
-        role_name = manifest.get("name") or gap.title
+        role_family = self._family_from_gap(gap, manifest)
+        manifest_family = str(manifest.get("family") or "").strip()
+        role_name = (
+            manifest.get("name")
+            if manifest_family == role_family
+            else (gap.context or {}).get("role_name")
+        ) or gap.title
+        requested_tools = self._requested_tools_for_role_gap(gap, role_family)
+        excluded_tools = [
+            tool_name
+            for tool_name in self._unique_strings(gap.requested_tools or [])
+            if tool_name not in requested_tools
+        ]
         graph = self._agent_operating_graph(
             agent_id=agent.id if agent else "company_builder",
             role_name=agent.role_name if agent else "Company Builder",
@@ -530,6 +606,10 @@ class WorkflowIntentService:
             ),
         )
         risk_level = self._risk_level(requested_tools, gap.severity)
+        if role_family == "knowledge" and not any(
+            tool_name in SIDE_EFFECT_APPROVAL_TOOLS for tool_name in requested_tools
+        ):
+            risk_level = "low"
         return {
             "title": f"Role gap follow-up: {gap.title}",
             "description": gap.description,
@@ -565,6 +645,7 @@ class WorkflowIntentService:
                     "severity": gap.severity,
                     "context": self._redact_large(gap.context or {}),
                     "proposed_role": self._redact_large(gap.proposed_role or {}),
+                    "excluded_unsafe_requested_tools": excluded_tools,
                 }
             },
             "dedupe_key": self._dedupe_key("role_gap", gap.id, gap.updated_at.isoformat()),
@@ -845,16 +926,41 @@ class WorkflowIntentService:
         return "Unclassified"
 
     @staticmethod
-    def _family_from_gap(gap: RoleGap) -> str:
+    def _family_from_gap(gap: RoleGap, manifest: dict[str, Any] | None = None) -> str:
         context = gap.context or {}
         for candidate in (
-            context.get("business_function"),
             context.get("role_family"),
-            gap.capability,
+            context.get("business_function"),
         ):
             if candidate:
-                return str(candidate).replace(" ", "_").lower()
+                normalized = str(candidate).replace(" ", "_").replace("-", "_").lower()
+                if normalized in KNOWN_ROLE_FAMILIES:
+                    return normalized
+        capability = str(gap.capability or "").replace(" ", "_").replace("-", "_").lower()
+        if capability in KNOWN_ROLE_FAMILIES:
+            return capability
+        if capability in CAPABILITY_FAMILY_MAP:
+            return CAPABILITY_FAMILY_MAP[capability]
+        text = " ".join(
+            str(value or "").lower()
+            for value in [gap.title, gap.description, gap.capability]
+        )
+        if any(hint in text for hint in KNOWLEDGE_ROLE_GAP_HINTS):
+            return "knowledge"
+        manifest_family = str((manifest or {}).get("family") or "").strip()
+        if manifest_family:
+            return manifest_family
         return "operations"
+
+    def _requested_tools_for_role_gap(self, gap: RoleGap, role_family: str) -> list[str]:
+        requested_tools = self._unique_strings(gap.requested_tools or [])
+        if role_family != "knowledge":
+            return requested_tools
+        return [
+            tool_name
+            for tool_name in requested_tools
+            if tool_name in KNOWLEDGE_SAFE_ROLE_TOOLS
+        ]
 
     @staticmethod
     def _humanize(value: str) -> str:

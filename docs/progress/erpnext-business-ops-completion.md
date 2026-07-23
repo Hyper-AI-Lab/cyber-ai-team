@@ -3849,3 +3849,29 @@
   - Staging memory entry `76f68f16-513e-4ea1-989e-4c8726925bfa`.
 - Next step:
   - Harden role-gap business-function/tool inference so memory/knowledge steward proposals cannot be misclassified into communications or request side-effectful send/call tools by default, then regenerate workflow intents and continue blocked-intent triage.
+
+### 2026-07-23T09:19:10Z — STEP-122 — Hardened Memory / Knowledge role-gap inference
+- Files/services changed:
+  - Updated `/home/projects/cyber-team/backend/src/cyber_team/agents/manager.py`.
+  - Updated `/home/projects/cyber-team/backend/src/cyber_team/operations/memory_steward.py`.
+  - Updated `/home/projects/cyber-team/backend/src/cyber_team/workflows/intents.py`.
+  - Added regression coverage in `/home/projects/cyber-team/backend/tests/test_operating_model.py`, `/home/projects/cyber-team/backend/tests/test_memory_steward.py`, and `/home/projects/cyber-team/backend/tests/test_workflow_intents.py`.
+- Commands run:
+  - `pytest ...` from the host shell, which failed because host-level `pytest` is not installed.
+  - `PYTHONPATH=src /home/projects/cyber-team/.venv-quality/bin/pytest ...` for focused role-gap, Memory Steward, and workflow-intent regressions.
+  - `PYTHONPATH=src /home/projects/cyber-team/.venv-quality/bin/pytest -q`.
+  - `PYTHONPATH=src /home/projects/cyber-team/.venv-quality/bin/ruff check src tests alembic`.
+  - `PYTHONPATH=src /home/projects/cyber-team/.venv-quality/bin/python -m compileall -q src tests alembic`.
+  - `git diff --check`.
+- Result:
+  - Memory/knowledge/steward role gaps now prefer explicit role-family metadata and known memory/knowledge capabilities before stale proposed-manifest metadata or broad text matches.
+  - Knowledge role-gap proposals sanitize default tools to safe knowledge/memory tools and record excluded unsafe requested tools such as `send_email`, `send_sms`, `make_call`, and `send_message`.
+  - Memory Steward-created role gaps now stamp `role_family=knowledge` and `business_function=knowledge` in context.
+  - Workflow-intent generation now keeps memory/steward role-gap follow-ups in the Knowledge business function and excludes unsafe communication tools when the gap is clearly knowledge-related.
+  - Full backend test suite passed with `221 passed`; Ruff, compileall, and diff hygiene passed.
+- Evidence:
+  - Local focused regression output from 2026-07-23T09:12Z: `5 passed`.
+  - Local full backend test output from 2026-07-23T09:18Z: `221 passed`.
+  - Local Ruff, compileall, and `git diff --check` output from 2026-07-23T09:18Z.
+- Next step:
+  - Commit and push the inference hardening, watch GitHub CI, then regenerate staging workflow intents so the live backlog can pick up the safer role-family/tool behavior.

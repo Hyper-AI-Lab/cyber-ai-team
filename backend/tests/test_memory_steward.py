@@ -333,6 +333,8 @@ async def test_memory_steward_executes_role_gap_action(monkeypatch):
             "knowledge_query",
         ]
         assert manager.gaps[0]["context"]["finding_id"] == finding["id"]
+        assert manager.gaps[0]["context"]["role_family"] == "knowledge"
+        assert manager.gaps[0]["context"]["business_function"] == "knowledge"
         assert manager.gaps[0]["reporter"] == "owner@example.com"
     finally:
         await engine.dispose()
