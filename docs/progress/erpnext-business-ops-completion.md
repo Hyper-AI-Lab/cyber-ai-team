@@ -3725,3 +3725,27 @@
   - Live staging API validation output from 2026-07-21T11:13Z.
 - Next step:
   - Replace or revalidate the staging Mistral API credential, then rerun LLM validation, regenerate workflow intents, and execute one generated workflow only after LLM readiness is `live`.
+
+### 2026-07-23T04:18:54Z — STEP-117 — Validated fresh Mistral credential and refreshed workflow intents
+- Files/services changed:
+  - No source code changed.
+  - Restarted staging `core` and `worker` containers so they reload the updated ignored staging environment.
+  - Regenerated live staging workflow intents after LLM readiness became live.
+- Commands run:
+  - Direct Mistral `/v1/models` validation using the staging `MISTRAL_API_KEY` without printing the key.
+  - `CORE_IMAGE=cyber-team-core:2b1a1c1 UI_IMAGE=cyber-team-ui:2b1a1c1 APP_VERSION=2b1a1c1 BUILD_SHA=2b1a1c12d1188d436fa98f42f7f8a16aa10af689 COMPOSE_PROJECT_NAME=cyberteam-staging CYBERTEAM_ENV_FILE=deploy/environments/staging.env docker compose --env-file deploy/environments/staging.env up -d --no-build core worker`
+  - Public staging `/health` check through `https://cyberteam.hyperailab.com`.
+  - Owner-authenticated `GET /api/integrations/status`.
+  - Owner-authenticated `GET /api/operations/readiness?refresh=true`.
+  - Owner-authenticated `POST /api/workflows/intents/generate`.
+- Result:
+  - Direct Mistral validation returned HTTP `200` and a model-list response.
+  - Staging health returned `ok` for version `2b1a1c1` and build SHA `2b1a1c12d1188d436fa98f42f7f8a16aa10af689`.
+  - Cyber-Team integration readiness now reports Mistral as `live` and non-blocking.
+  - Operations readiness has no required integration blockers.
+  - Workflow-intent regeneration completed with `32` current-snapshot proposals: `5` ready, `7` owner-review, `19` blocked by missing/inactive agents, and `1` still configuration-required for non-LLM tool/provider readiness.
+- Evidence:
+  - Direct Mistral validation output from 2026-07-23T04:17Z.
+  - Live staging integration/readiness outputs from 2026-07-23T04:18Z.
+- Next step:
+  - Execute one ready generated workflow on staging to prove end-to-end LLM-backed agent delegation now succeeds, then continue reducing blocked workflow intents by activating or dismissing the relevant missing agents/tools.
