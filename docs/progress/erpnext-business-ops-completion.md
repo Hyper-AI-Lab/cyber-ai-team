@@ -3749,3 +3749,27 @@
   - Live staging integration/readiness outputs from 2026-07-23T04:18Z.
 - Next step:
   - Execute one ready generated workflow on staging to prove end-to-end LLM-backed agent delegation now succeeds, then continue reducing blocked workflow intents by activating or dismissing the relevant missing agents/tools.
+
+### 2026-07-23T04:41:02Z — STEP-118 — Fixed frontend audit regression from new Next.js and sharp advisories
+- Files/services changed:
+  - `frontend/package.json`
+  - `frontend/package-lock.json`
+  - No staging services changed for this package-only CI fix.
+- Commands run:
+  - `gh run watch 29979261485 --repo Hyper-AI-Lab/cyber-ai-team --exit-status`
+  - `gh run view 29979261485 --repo Hyper-AI-Lab/cyber-ai-team --job 89117504968 --log`
+  - `cd frontend && npm audit --audit-level=moderate`
+  - `cd frontend && npm view next@15.5.21 version && npm view eslint-config-next@15.5.21 version`
+  - `cd frontend && npm install next@15.5.21 eslint-config-next@15.5.21`
+  - `cd frontend && npm pkg set overrides.sharp=0.35.3 && npm install`
+  - `docker run --rm -v /home/projects/cyber-team/frontend:/app -w /app node:20-bookworm-slim sh -lc 'npm ci && npm audit --audit-level=moderate && npm test && npm run build && npx tsc --noEmit --incremental false'`
+- Result:
+  - The docs-only push CI exposed a fresh frontend audit failure for Next.js advisories including GHSA-m99w-x7hq-7vfj and GHSA-89xv-2m56-2m9x, plus transitive `sharp <0.35.0`.
+  - Updated Next.js and `eslint-config-next` from `15.5.18` to `15.5.21`, which is the patched 15.x release line for the new Next.js advisories.
+  - Added a `sharp` override to `0.35.3` so npm audit no longer resolves the vulnerable optional Sharp/libvips package line.
+  - Clean Node 20 validation passed: `npm ci`, `npm audit --audit-level=moderate`, frontend tests (`23 passed`), production build, and TypeScript check.
+- Evidence:
+  - Failed GitHub Actions frontend job `89117504968` in run `29979261485`.
+  - Clean Docker Node 20 validation output from 2026-07-23T04:33Z through 2026-07-23T04:40Z.
+- Next step:
+  - Commit and push the frontend dependency fix, watch GitHub CI return green, then continue with the ready generated workflow staging execution.
