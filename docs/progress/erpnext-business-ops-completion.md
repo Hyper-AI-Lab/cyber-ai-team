@@ -3823,3 +3823,29 @@
   - Live operations readiness still shows Mistral `live` and non-blocking.
 - Next step:
   - Unblock Knowledge / Memory Steward via the Agents role backlog, then regenerate workflow intents and continue backlog cleanup.
+
+### 2026-07-23T08:53:31Z — STEP-121 — Cleaned up Knowledge / Memory Steward role backlog
+- Files/services changed:
+  - No source code or staging services changed.
+  - Owner created safe knowledge/memory agents and cleaned up stale role-gap/workflow-intent backlog items through the staging UI.
+- Commands run:
+  - Owner UI role backlog cleanup for Knowledge / Memory Steward.
+  - Owner UI workflow-intent regeneration and duplicate dismissal.
+  - Owner UI workflow proof for `Memory Consolidation Loop`.
+- Result:
+  - Identified a safety/mapping issue: the ERPNext-derived Memory Steward gap was mapped to `communications` and requested high-risk send/call tools (`send_email`, `send_sms`, `make_call`, `send_message`). That proposal was not approved.
+  - Instantiated core catalog role `knowledge_research_agent` in role family `knowledge` with tools `web_search`, `document_index`, `knowledge_query`, `research_report`, and `memory_remember`.
+  - Created safe steward role `company_memory_steward` in role family `knowledge` with tools `company_profile_read`, `memory_recall`, `memory_remember`, `knowledge_query`, `process_audit`, `approval_request`, and `owner_notify`.
+  - Deferred unsafe gap `gap_a7e85d820723` for Company Memory Steward because of the communications/send-tool mapping.
+  - Left `gap_aaaaebdd2e46` Knowledge & Research resolved from the prior baseline.
+  - Dismissed four stale Memory/Knowledge duplicate gaps and five duplicate Memory Steward role-gap follow-up workflow intents.
+  - Regenerated workflow intents with `0` created, `0` updated, and `31` unchanged in that pass; readiness card reported `6` ready, `7` owner-review, and `52` blocked.
+  - Ran low-risk `Memory Consolidation Loop` workflow `2c52490e-f80d-435f-a5f1-05690fd35f9a`; run `6b62a1cc-5af2-4fec-837a-d927146119d0` completed with no error.
+  - Memory Consolidation wrote memory `76f68f16-513e-4ea1-989e-4c8726925bfa` in namespace `company:cyber_team_smoke_company:operations`.
+  - Mistral remained `live`; Product / Legal / Ops workflows remained unrun.
+- Evidence:
+  - Owner-reported role backlog and workflow proof from 2026-07-23T08:53Z.
+  - Staging workflow run `6b62a1cc-5af2-4fec-837a-d927146119d0`.
+  - Staging memory entry `76f68f16-513e-4ea1-989e-4c8726925bfa`.
+- Next step:
+  - Harden role-gap business-function/tool inference so memory/knowledge steward proposals cannot be misclassified into communications or request side-effectful send/call tools by default, then regenerate workflow intents and continue blocked-intent triage.
