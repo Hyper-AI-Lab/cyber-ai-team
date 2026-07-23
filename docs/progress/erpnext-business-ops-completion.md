@@ -3801,3 +3801,25 @@
   - Live staging health/readiness output from 2026-07-23T05:07Z.
 - Next step:
   - Execute one ready generated workflow on staging to prove end-to-end LLM-backed agent delegation now succeeds, then continue reducing blocked workflow intents by activating or dismissing missing agents/tools.
+
+### 2026-07-23T08:33:16Z — STEP-120 — Proved live Mistral-backed generated workflow execution
+- Files/services changed:
+  - No source code or staging services changed.
+  - Owner executed two low-risk generated workflows through the staging UI.
+- Commands run:
+  - Owner UI workflow proof for `Integration Architect operating loop`.
+  - Owner UI workflow proof for `Compliance Sentinel operating loop`.
+- Result:
+  - `Integration Architect operating loop` intent instantiated successfully as workflow `7fbe04c6-21df-4b2d-83f6-e5b506e2bb18`.
+  - Integration Architect run `d4e44e25-e6d9-43c8-91fc-61828c9457d0` completed through `recall_context -> delegate_role -> record_result` with no error.
+  - Integration Architect wrote episodic memory `8fae0dcd-73bf-42fc-a8e1-17722ec016f5` in namespace `company:cyber_team_smoke_company:integration_architect`.
+  - `Compliance Sentinel operating loop` used existing workflow `72edd63d-beb9-4c33-ae6d-ee8093deb562`.
+  - Compliance Sentinel run `e6e92533-eec9-402b-bad2-00c9536c9855` completed through `recall_context -> delegate_role -> record_result` with no error.
+  - Compliance Sentinel wrote memory `56f161fd-5a19-459d-b24a-d40f33a944d4` in namespace `company:cyber_team_smoke_company:compliance_sentinel`.
+  - Both runs proved the generated workflow path now works end-to-end with live Mistral LLM delegation, memory recall/write, and workflow audit traces.
+  - Accidentally created Product/Legal/Ops/Compliance workflows were left unrun and produced no external side effects.
+- Evidence:
+  - Owner-reported workflow run proof from 2026-07-23T08:25Z and 2026-07-23T08:32Z.
+  - Live operations readiness still shows Mistral `live` and non-blocking.
+- Next step:
+  - Unblock Knowledge / Memory Steward via the Agents role backlog, then regenerate workflow intents and continue backlog cleanup.
