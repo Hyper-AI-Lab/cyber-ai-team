@@ -3958,3 +3958,33 @@
   - Live Operations readiness and workflow-intent list responses from 2026-07-24T01:45Z.
 - Next step:
   - Commit and push the progress log entry, watch GitHub CI, then continue owner-review triage for the 14 approval-gated workflow intents or instantiate the 11 ready low-risk intents when desired.
+
+### 2026-07-24T02:15:44Z — STEP-125 — Executed safe generated-workflow triage on staging
+- Files/services changed:
+  - No application source files changed in this step.
+  - Updated live staging workflow-intent state through the owner-authenticated workflow-intent API.
+  - Appended this evidence entry to `/home/projects/cyber-team/docs/progress/erpnext-business-ops-completion.md`.
+- Commands run:
+  - Owner-authenticated `GET https://cyberteam.hyperailab.com/health`.
+  - Owner-authenticated `GET /api/operations/readiness?refresh=true`.
+  - Owner-authenticated `GET /api/workflows/intents?limit=500`.
+  - Owner-authenticated `POST /api/workflows/intents/{id}/instantiate` for every current `ready` intent.
+  - Owner-authenticated `POST /api/workflows/{workflow_id}/run` for the nine `low`-risk ready intents only.
+  - Owner-authenticated `GET /api/workflows/runs/{run_id}` polling for the nine launched runs.
+  - `docker compose --env-file deploy/environments/staging.env ps --format json`.
+  - `docker compose --env-file deploy/environments/staging.env logs --since=10m worker` filtered for workflow/provider errors.
+- Result:
+  - Live readiness remained `ready` and non-blocking for workflow intents: `25` active, `11` ready, `14` owner-review, `0` blocked, `0` configuration-required, `0` missing-agent, with optional-disabled channels reported separately.
+  - All `11` ready intents were instantiated idempotently. The two medium-risk ready role-gap workflows, `Growth Experiment Designer` and `Integration Architect`, were created for review but were intentionally not executed.
+  - Eight of nine launched low-risk advisory runs completed successfully with no recorded workflow error: Compliance Sentinel, Security & Compliance, Owner Alignment, Integration Architect, Role Gap Monitoring, Memory Consolidation, Risk Review, and Customer Communication.
+  - Integration Discovery run `67bd5d01-b43e-49da-8d40-c3e2e40c5435` remained in `delegate_role` because the concurrently launched LLM requests hit the Mistral provider rate limit (`HTTP 429`, `rate_limited`). It was not reported as a successful run and no external mutation was performed.
+  - The remaining `14` proposed intents remain owner-review work because they include ERPNext writes, email/customer communication, procurement, approval resolution, CI execution, or other medium/high-risk actions. No approval was created, consumed, or bypassed by this step.
+  - All staging containers remained running; core and worker were healthy at inspection time.
+- Evidence:
+  - Live readiness: `https://cyberteam.hyperailab.com/api/operations/readiness?refresh=true`.
+  - Live intent snapshot: `/tmp/cyber-team-workflow-intents-20260724T021001Z.json`.
+  - Instantiation results: `/tmp/cyber-team-workflow-instantiation-20260724T021143Z.jsonl`.
+  - Run results: `/tmp/cyber-team-workflow-runs-20260724T021216Z.jsonl`.
+  - Rate-limit evidence: staging worker logs from `docker compose ... logs --since=10m worker`; affected run `67bd5d01-b43e-49da-8d40-c3e2e40c5435`.
+- Next step:
+  - After the provider cooldown, retry only the rate-limited Integration Discovery advisory run sequentially, then leave the remaining approval-gated intents for explicit owner decisions.
