@@ -3988,3 +3988,24 @@
   - Rate-limit evidence: staging worker logs from `docker compose ... logs --since=10m worker`; affected run `67bd5d01-b43e-49da-8d40-c3e2e40c5435`.
 - Next step:
   - After the provider cooldown, retry only the rate-limited Integration Discovery advisory run sequentially, then leave the remaining approval-gated intents for explicit owner decisions.
+
+### 2026-07-24T02:19:03Z — STEP-126 — Verified public CI for safe workflow triage evidence
+- Files/services changed:
+  - Appended the CI verification result to `/home/projects/cyber-team/docs/progress/erpnext-business-ops-completion.md`.
+  - No application source or staging service configuration changed.
+- Commands run:
+  - `git diff --check` before commit.
+  - `git add docs/progress/erpnext-business-ops-completion.md` and `git commit -m "docs: record safe workflow intent triage"`.
+  - `git push origin main`.
+  - `gh run watch 30061207533 --repo Hyper-AI-Lab/cyber-ai-team --exit-status`.
+  - `gh run view 30061207533 --repo Hyper-AI-Lab/cyber-ai-team --json status,conclusion,jobs,url`.
+- Result:
+  - Progress evidence commit `c1c595b` was pushed to `Hyper-AI-Lab/cyber-ai-team`.
+  - GitHub Actions run `30061207533` completed with overall `success`.
+  - Compose/secrets/diff hygiene, backend, and frontend jobs passed. Docker Compose Smoke, Docker Image Scan, and Observability Config were correctly skipped because this commit changed documentation only.
+  - The public repository is clean and synchronized after the push.
+- Evidence:
+  - GitHub CI run: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30061207533`.
+  - Commit: `c1c595ba3b1818c5299dfd99e217f2db1ee67474`.
+- Next step:
+  - Retry the single Mistral-rate-limited Integration Discovery advisory run after cooldown, using sequential execution, then prepare the 14 owner-review recommendations for explicit owner decisions.
