@@ -4075,3 +4075,28 @@
   - Implementation: `backend/src/cyber_team/workflows/intents.py::WorkflowIntentService.instantiate_intent`.
 - Next step:
   - Commit this hardening, run the full release gate, promote `b09072f` to staging, and perform the final live state assertions.
+
+### 2026-07-24T03:56:53Z — STEP-130 — Final release, staging promotion, and live workflow-intent verification
+- Files/services changed:
+  - Promoted the committed workflow-intent metadata hardening to staging.
+  - No owner-review or external side-effectful workflow intent was executed.
+- Commands run:
+  - `RELEASE_VERSION=e96c521 APP_VERSION=e96c521 NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`.
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=e96c521 ./scripts/promote-staging.sh`.
+  - Owner-authenticated live `GET /health`, `POST /api/workflows/intents/{id}/instantiate` replay checks, and `GET /api/workflows/intents?limit=500` with exact aggregate assertions.
+  - Staging core-log inspection for the first transient replay response.
+- Result:
+  - Release gate passed: `226 backend tests`, frontend build/typecheck/tests (`23 passed`), Alembic offline SQL and real PostgreSQL migration rehearsal, Compose smoke, dependency audits, secret scan, FOSS/resource policy scan, diff hygiene, and Trivy scans with `0` findings for both release images.
+  - Staging promotion passed with a fresh PostgreSQL backup and Compose smoke. Staging health reports `version=e96c521`, build SHA `e96c521d5d58f8b241622c9b45d1e3a5e1a2b214`, and `environment=staging`.
+  - The three previously stale workflow-backed intents now all report `status=instantiated` and `resolution.status=instantiated`, while preserving workflow IDs: Compliance Sentinel `72edd63d-beb9-4c33-ae6d-ee8093deb562`, Integration Architect `7fbe04c6-21df-4b2d-83f6-e5b506e2bb18`, and Memory Consolidation `2c52490e-f80d-435f-a5f1-05690fd35f9a`.
+  - Final live intent counts: `25 total`, `11 instantiated`, `14 proposed owner-review`, `11 ready`, `14 owner_review`, `0 blocked`, `0 configuration_required`, `0 missing_agent`.
+  - The first immediate replay attempt for Integration Architect returned a transient `400 not found`; a subsequent authenticated retry succeeded, the detail endpoint returned the record, and the final aggregate assertions passed. No core log error was emitted and no duplicate workflow was created.
+  - The safe triage slice is complete. Remaining owner-review intents were deliberately left for explicit owner decisions because they include ERPNext writes, customer/email communication, procurement, approval resolution, CI execution, or other medium/high-risk actions.
+- Evidence:
+  - Release manifest: `/home/projects/cyber-team/dist/releases/e96c521.json`.
+  - Staging backup: `/home/projects/cyber-team/backups/staging/cyberteam-staging-e96c521-20260724-035412.dump`.
+  - Promotion record: `/home/projects/cyber-team/dist/promotions/staging/e96c521-20260724-035519.json`.
+  - Live health: `https://cyberteam.hyperailab.com/health`.
+  - Live workflow-intent summary: `https://cyberteam.hyperailab.com/api/workflows/intents` (owner authentication required).
+- Next step:
+  - Commit and push this final evidence entry, watch GitHub CI, then pause for owner decisions on the 14 remaining approval-gated intents.
