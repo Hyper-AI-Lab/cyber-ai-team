@@ -261,6 +261,7 @@ class WorkflowIntentService:
                         intent.status = "instantiated"
                         intent.resolution = {
                             **(intent.resolution or {}),
+                            "status": "instantiated",
                             "instantiated_by": actor,
                             "workflow_id": existing["id"],
                             "instantiated_at": now.isoformat(),

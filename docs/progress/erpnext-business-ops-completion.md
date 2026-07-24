@@ -4031,3 +4031,28 @@
   - Implementation: `backend/src/cyber_team/workflows/intents.py::WorkflowIntentService.instantiate_intent`.
 - Next step:
   - Commit the fix, run the release gate, promote the new release to staging, and verify that all eleven safe intent records report `instantiated` without duplicate workflows.
+
+### 2026-07-24T02:56:10Z — STEP-128 — Verified staging idempotency repair and tightened resolution metadata
+- Files/services changed:
+  - Updated `/home/projects/cyber-team/backend/src/cyber_team/workflows/intents.py` so an existing workflow-backed intent also records `resolution.status=instantiated`.
+  - Updated `/home/projects/cyber-team/backend/tests/test_workflow_intents.py` with the matching metadata assertion.
+  - Staging was promoted to release `0630682` during verification.
+- Commands run:
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=0630682 ./scripts/promote-staging.sh`.
+  - Owner-authenticated `GET /health`, `POST /api/workflows/intents/{id}/instantiate` for three previously stale records, `GET /api/workflows/intents?limit=500`, and `GET /api/operations/readiness?refresh=true`.
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_workflow_intents.py -q`.
+  - `PYTHONPATH=src ../.venv-quality/bin/ruff check src/cyber_team/workflows/intents.py tests/test_workflow_intents.py`.
+  - `.venv-quality/bin/python -m compileall -q backend/src backend/tests backend/alembic` and `git diff --check`.
+- Result:
+  - Staging health reported `version=0630682` and the release smoke passed.
+  - Replaying instantiation for the three stale workflow-backed intents preserved their existing workflow IDs and produced no duplicate workflow records.
+  - Live workflow-intent state reached `11 instantiated`, `14 proposed owner-review`, `11 ready`, `0 blocked`, and `0 configuration-required`.
+  - The live check found stale `resolution.status=dismissed` metadata on one previously dismissed/recreated record; the follow-up patch now overwrites that active resolution status with `instantiated`.
+  - Focused workflow-intent tests passed with `9 passed`; Ruff, compileall, and diff hygiene passed.
+- Evidence:
+  - Staging promotion record: `/home/projects/cyber-team/dist/promotions/staging/0630682-20260724-025450.json`.
+  - Live health: `https://cyberteam.hyperailab.com/health`.
+  - Live aggregate intent/readiness responses from 2026-07-24T02:55Z.
+  - Regression test: `backend/tests/test_workflow_intents.py::test_existing_workflow_normalizes_proposed_intent_without_duplication`.
+- Next step:
+  - Commit the resolution-metadata hardening, run the release gate again, promote the final release, and recheck the three repaired records for `resolution.status=instantiated`.

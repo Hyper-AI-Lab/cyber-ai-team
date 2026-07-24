@@ -423,6 +423,7 @@ async def test_existing_workflow_normalizes_proposed_intent_without_duplication(
     assert intent is not None
     assert intent.status == "instantiated"
     assert intent.resolved_at is not None
+    assert intent.resolution["status"] == "instantiated"
     assert intent.resolution["workflow_id"] == workflow_id
     assert len(workflows) == 1
 
