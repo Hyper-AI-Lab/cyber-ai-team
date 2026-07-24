@@ -4056,3 +4056,22 @@
   - Regression test: `backend/tests/test_workflow_intents.py::test_existing_workflow_normalizes_proposed_intent_without_duplication`.
 - Next step:
   - Commit the resolution-metadata hardening, run the release gate again, promote the final release, and recheck the three repaired records for `resolution.status=instantiated`.
+
+### 2026-07-24T03:30:00Z — STEP-129 — Hardened existing workflow resolution metadata normalization
+- Files/services changed:
+  - Updated `/home/projects/cyber-team/backend/src/cyber_team/workflows/intents.py` so every existing workflow-backed intent with stale, missing, or non-instantiated resolution metadata is normalized without creating a workflow duplicate.
+  - Updated `/home/projects/cyber-team/backend/tests/test_workflow_intents.py` with regression coverage for an already-instantiated intent carrying stale dismissed metadata.
+- Commands run:
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m pytest backend/tests/test_workflow_intents.py -q`.
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/workflows/intents.py backend/tests/test_workflow_intents.py`.
+  - `PYTHONPATH=backend/src .venv-quality/bin/python -m compileall -q backend/src backend/tests`.
+  - `git diff --check`.
+- Result:
+  - Focused workflow-intent tests passed with `10 passed` and `2` pre-existing dependency deprecation warnings.
+  - Ruff, compileall, and diff hygiene passed.
+  - The fix is ready for the final release gate; staging remains on `0630682` until that gate and promotion complete.
+- Evidence:
+  - Regression test: `backend/tests/test_workflow_intents.py::test_existing_workflow_repairs_stale_resolution_metadata`.
+  - Implementation: `backend/src/cyber_team/workflows/intents.py::WorkflowIntentService.instantiate_intent`.
+- Next step:
+  - Commit this hardening, run the full release gate, promote `b09072f` to staging, and perform the final live state assertions.

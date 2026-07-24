@@ -429,6 +429,78 @@ async def test_existing_workflow_normalizes_proposed_intent_without_duplication(
 
 
 @pytest.mark.asyncio
+async def test_existing_workflow_repairs_stale_resolution_metadata(session_factory):
+    workflow_id = "existing-workflow-stale-resolution"
+    intent_id = "existing-intent-stale-resolution"
+    async with session_factory() as session:
+        session.add(
+            Workflow(
+                id=workflow_id,
+                name="Existing workflow with stale metadata",
+                description="The workflow exists and the intent is already instantiated.",
+                graph_definition={"entry_node": "recall_context", "nodes": []},
+                trigger_type="manual",
+                trigger_config={},
+                status="draft",
+            )
+        )
+        session.add(
+            WorkflowIntent(
+                id=intent_id,
+                title="Stale resolution intent",
+                description="The workflow state is current but metadata is stale.",
+                status="instantiated",
+                category="adaptive_loop",
+                business_function="Knowledge",
+                source_type="company_context_snapshot",
+                source_id="ctx_2",
+                source_hash="hash-2",
+                company_namespace="company:acme",
+                role_family="knowledge",
+                role_name="Knowledge Steward",
+                capability="memory_operations",
+                risk_level="low",
+                trigger_type="manual",
+                trigger_config={},
+                graph_definition={"entry_node": "recall_context", "nodes": []},
+                requested_tools=[],
+                required_agents=[],
+                tool_readiness=[],
+                readiness={"status": "ready"},
+                approval_required=False,
+                evidence={},
+                resolution={"status": "dismissed", "note": "stale metadata"},
+                dedupe_key="stale-resolution-dedupe",
+                proposed_by="test",
+                workflow_id=workflow_id,
+                resolved_at=datetime(2026, 7, 21, 10, 1, 0),
+                created_at=datetime(2026, 7, 21, 10, 1, 0),
+                updated_at=datetime(2026, 7, 21, 10, 1, 0),
+            )
+        )
+        await session.commit()
+
+    service = WorkflowIntentService(
+        orchestrator=Orchestrator(agent_manager=AgentManager(), memory_service=None),
+        tool_registry=FakeToolRegistry(),
+        llm_gateway=FakeLLMGateway(),
+        session_factory=session_factory,
+    )
+
+    result = await service.instantiate_intent(intent_id, actor="owner@example.com")
+
+    assert result["id"] == workflow_id
+    async with session_factory() as session:
+        intent = await session.get(WorkflowIntent, intent_id)
+        workflows = (await session.execute(select(Workflow))).scalars().all()
+    assert intent is not None
+    assert intent.status == "instantiated"
+    assert intent.resolution["status"] == "instantiated"
+    assert intent.resolution["workflow_id"] == workflow_id
+    assert len(workflows) == 1
+
+
+@pytest.mark.asyncio
 async def test_intent_blocks_when_required_agent_is_missing(session_factory):
     async with session_factory() as session:
         session.add(snapshot())

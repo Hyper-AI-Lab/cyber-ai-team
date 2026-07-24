@@ -256,7 +256,11 @@ class WorkflowIntentService:
             if intent.workflow_id:
                 existing = await self._orchestrator.get_workflow(intent.workflow_id)
                 if existing:
-                    if intent.status != "instantiated" or intent.resolved_at is None:
+                    if (
+                        intent.status != "instantiated"
+                        or intent.resolved_at is None
+                        or (intent.resolution or {}).get("status") != "instantiated"
+                    ):
                         now = utc_now()
                         intent.status = "instantiated"
                         intent.resolution = {
@@ -309,6 +313,7 @@ class WorkflowIntentService:
                 fresh.status = "instantiated"
                 fresh.resolution = {
                     **(fresh.resolution or {}),
+                    "status": "instantiated",
                     "instantiated_by": actor,
                     "workflow_id": workflow["id"],
                     "instantiated_at": utc_now().isoformat(),
