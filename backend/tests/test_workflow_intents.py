@@ -17,11 +17,29 @@ class FakeToolRegistry:
         self.live_tools = live_tools or {"memory_recall", "memory_remember"}
 
     def get_tool_readiness(self, tool_name: str):
+        side_effect_tools = {
+            "approval_resolve",
+            "call_make",
+            "crm_contact_update",
+            "crm_deal_update",
+            "crm_lead_create",
+            "email_send",
+            "make_call",
+            "message_send",
+            "send_email",
+            "send_message",
+            "send_sms",
+            "sms_send",
+            "task_create",
+            "task_update",
+            "ticket_create",
+            "ticket_update",
+        }
         if tool_name in self.live_tools:
             return {
                 "state": "live",
                 "readiness_reason": "Configured for test.",
-                "side_effects": tool_name in {"send_email", "make_call"},
+                "side_effects": tool_name in side_effect_tools,
                 "executor_kind": "live",
                 "requires_configuration": False,
                 "executable": True,
@@ -29,7 +47,7 @@ class FakeToolRegistry:
         return {
             "state": "configuration_required",
             "readiness_reason": f"{tool_name} requires configuration.",
-            "side_effects": tool_name in {"send_email", "make_call"},
+            "side_effects": tool_name in side_effect_tools,
             "executor_kind": "configuration_required",
             "requires_configuration": True,
             "executable": False,
@@ -126,6 +144,38 @@ def company_builder_agent() -> Agent:
         instructions="Design safe company roles.",
         tools=["memory_recall", "memory_remember"],
         memory_namespace="company:acme:company_builder",
+        approval_policy="auto",
+        status="active",
+        config={},
+        created_at=datetime(2026, 7, 21, 10, 0, 0),
+        updated_at=datetime(2026, 7, 21, 10, 0, 0),
+    )
+
+
+def misfamily_company_builder_agent() -> Agent:
+    return Agent(
+        id="review_erpnext_derived_role_company_builder_specialist",
+        role_family="marketing",
+        role_name="Review ERPNext-derived role: Company Builder Specialist",
+        instructions="Safely review company-builder role gaps.",
+        tools=["role_catalog_search", "company_profile_read", "memory_recall"],
+        memory_namespace="company:acme:company_builder",
+        approval_policy="auto",
+        status="active",
+        config={},
+        created_at=datetime(2026, 7, 21, 10, 0, 0),
+        updated_at=datetime(2026, 7, 21, 10, 0, 0),
+    )
+
+
+def misfamily_supervisor_agent() -> Agent:
+    return Agent(
+        id="review_erpnext_derived_role_supervisor_orchestrator_specialist",
+        role_family="marketing",
+        role_name="Review ERPNext-derived role: Supervisor / Orchestrator Specialist",
+        instructions="Safely review supervisor operating loops.",
+        tools=["agent_status_read", "agent_invoke", "memory_recall", "owner_notify"],
+        memory_namespace="company:acme:supervisor",
         approval_policy="auto",
         status="active",
         config={},
@@ -350,3 +400,194 @@ async def test_intent_requires_live_llm_provider_for_agent_delegation(session_fa
     assert intent["readiness"]["llm_provider"]["mode"] == "configuration_required"
     with pytest.raises(ValueError, match="not ready"):
         await service.instantiate_intent(intent["id"], actor="owner@example.com")
+
+
+@pytest.mark.asyncio
+async def test_core_agent_name_hints_unblock_existing_builder_and_supervisor_agents(
+    session_factory,
+):
+    ctx = snapshot()
+    ctx.operating_model = {
+        "planned_role_specs": [],
+        "adaptive_loops": [
+            {
+                "id": "risk_review_loop",
+                "owner_family": "supervisor",
+                "purpose": "Review operational risks.",
+            }
+        ],
+    }
+    async with session_factory() as session:
+        session.add(ctx)
+        session.add(misfamily_company_builder_agent())
+        session.add(misfamily_supervisor_agent())
+        session.add(
+            RoleGap(
+                id="gap_sales",
+                title="Review ERPNext-derived role: Sales & CRM Agent",
+                description="Sales role needs owner review.",
+                status="proposed",
+                severity="medium",
+                source_type="company_context_snapshot",
+                company_namespace="company:acme",
+                capability="crm",
+                requested_tools=["memory_recall"],
+                context={"source_hash": "hash-1"},
+                proposed_role={},
+                resolution={},
+                created_at=datetime(2026, 7, 21, 10, 1, 0),
+                updated_at=datetime(2026, 7, 21, 10, 1, 0),
+            )
+        )
+        await session.commit()
+
+    service = WorkflowIntentService(
+        orchestrator=Orchestrator(agent_manager=AgentManager(), memory_service=None),
+        tool_registry=FakeToolRegistry(),
+        llm_gateway=FakeLLMGateway(),
+        session_factory=session_factory,
+    )
+
+    generated = await service.generate_from_company_context(actor="test")
+    role_gap = next(item for item in generated["intents"] if item["category"] == "role_gap")
+    supervisor_loop = next(
+        item for item in generated["intents"] if item["category"] == "adaptive_loop"
+    )
+
+    assert role_gap["readiness"]["status"] == "ready"
+    assert role_gap["readiness"]["agent"]["id"] == (
+        "review_erpnext_derived_role_company_builder_specialist"
+    )
+    assert supervisor_loop["readiness"]["status"] == "ready"
+    assert supervisor_loop["readiness"]["agent"]["id"] == (
+        "review_erpnext_derived_role_supervisor_orchestrator_specialist"
+    )
+
+
+@pytest.mark.asyncio
+async def test_optional_provider_tools_are_not_configuration_blockers(session_factory):
+    ctx = snapshot()
+    ctx.operating_model["planned_role_specs"][0]["default_tools"] = [
+        "memory_recall",
+        "sms_send",
+        "call_make",
+        "message_send",
+    ]
+    ctx.operating_model["planned_role_specs"][0]["approval_policy"] = "auto"
+    async with session_factory() as session:
+        session.add(ctx)
+        session.add(sales_agent())
+        await session.commit()
+
+    service = WorkflowIntentService(
+        orchestrator=Orchestrator(agent_manager=AgentManager(), memory_service=None),
+        tool_registry=FakeToolRegistry(live_tools={"memory_recall", "memory_remember"}),
+        llm_gateway=FakeLLMGateway(),
+        session_factory=session_factory,
+    )
+
+    generated = await service.generate_from_company_context(actor="test")
+    intent = next(item for item in generated["intents"] if item["category"] == "role_capability")
+
+    assert intent["readiness"]["status"] == "owner_review"
+    assert intent["readiness"]["recommended_action"] == "review_optional_providers"
+    assert intent["approval_required"] is True
+    assert intent["risk_level"] == "high"
+    assert {
+        item["tool_name"] for item in intent["readiness"]["optional_disabled_tools"]
+    } == {"sms_send", "call_make", "message_send"}
+    assert intent["readiness"]["configuration_required_tools"] == []
+    assert intent["readiness"]["workflow_impact_counts"] == {
+        "configuration_required": 0,
+        "optional_disabled": 3,
+        "approval_gated": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_regeneration_resolves_superseded_active_intents(session_factory):
+    ctx = snapshot()
+    ctx.operating_model = {"planned_role_specs": [], "adaptive_loops": []}
+    async with session_factory() as session:
+        session.add(ctx)
+        session.add(misfamily_company_builder_agent())
+        session.add(
+            RoleGap(
+                id="gap_sales",
+                title="Review ERPNext-derived role: Sales & CRM Agent",
+                description="Sales role needs owner review.",
+                status="proposed",
+                severity="medium",
+                source_type="company_context_snapshot",
+                company_namespace="company:acme",
+                capability="crm",
+                requested_tools=["memory_recall"],
+                context={"source_hash": "hash-1"},
+                proposed_role={},
+                resolution={},
+                created_at=datetime(2026, 7, 21, 10, 1, 0),
+                updated_at=datetime(2026, 7, 21, 10, 2, 0),
+            )
+        )
+        session.add(
+            WorkflowIntent(
+                id="old_intent",
+                title="Role gap follow-up: Review ERPNext-derived role: Sales & CRM Agent",
+                description="Old stale role-gap follow-up.",
+                status="proposed",
+                category="role_gap",
+                business_function="Sales",
+                source_type="role_gap",
+                source_id="gap_sales",
+                source_hash="hash-1",
+                company_namespace="company:acme",
+                role_family="sales",
+                role_name="Review ERPNext-derived role: Sales & CRM Agent",
+                capability="crm",
+                risk_level="medium",
+                trigger_type="manual",
+                trigger_config={},
+                graph_definition={},
+                requested_tools=["memory_recall"],
+                required_agents=["company_builder"],
+                tool_readiness=[],
+                readiness={
+                    "status": "blocked",
+                    "blockers": ["No active agent is available for role family company_builder."],
+                },
+                approval_required=True,
+                evidence={},
+                resolution={},
+                dedupe_key="old-dedupe",
+                proposed_by="test",
+                created_at=datetime(2026, 7, 21, 10, 1, 0),
+                updated_at=datetime(2026, 7, 21, 10, 1, 0),
+            )
+        )
+        await session.commit()
+
+    service = WorkflowIntentService(
+        orchestrator=Orchestrator(agent_manager=AgentManager(), memory_service=None),
+        tool_registry=FakeToolRegistry(),
+        llm_gateway=FakeLLMGateway(),
+        session_factory=session_factory,
+    )
+
+    generated = await service.generate_from_company_context(actor="test")
+
+    assert generated["created"] == 1
+    assert generated["superseded"] == 1
+    assert generated["intents"][0]["readiness"]["status"] == "ready"
+    async with session_factory() as session:
+        old_intent = await session.get(WorkflowIntent, "old_intent")
+        active = (
+            await session.execute(
+                select(WorkflowIntent).where(
+                    WorkflowIntent.status.in_(["proposed", "instantiated", "blocked"])
+                )
+            )
+        ).scalars().all()
+    assert old_intent is not None
+    assert old_intent.status == "resolved"
+    assert old_intent.resolution["reason"] == "superseded_by_regenerated_intent"
+    assert len(active) == 1

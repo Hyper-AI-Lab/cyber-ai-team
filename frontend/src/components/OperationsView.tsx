@@ -929,7 +929,9 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
                   readiness.workflow_intents?.active_count
                     ? `${readiness.workflow_intents.ready_count || 0} ready · ${
                         readiness.workflow_intents.owner_review_count || 0
-                      } review`
+                      } review · ${readiness.workflow_intents.blocked_count || 0} blocked · ${
+                        readiness.workflow_intents.optional_disabled_count || 0
+                      } optional-disabled`
                     : readiness.workflow_intents?.detail || 'no generated intents yet'
                 }
               />

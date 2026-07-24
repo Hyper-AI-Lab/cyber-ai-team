@@ -242,6 +242,9 @@ export default function WorkflowsView() {
               const readinessStatus = readiness.status || 'unknown'
               const canInstantiate = ['ready', 'owner_review'].includes(readinessStatus) && !intent.workflow_id
               const blockedReason = (readiness.blockers || readiness.warnings || []).slice(0, 2).join(' ')
+              const optionalDisabledTools = readiness.optional_disabled_tools || []
+              const configurationRequiredTools = readiness.configuration_required_tools || []
+              const approvalGatedTools = readiness.approval_gated_tools || []
 
               return (
                 <div key={intent.id} className="rounded border border-slate-700 bg-slate-950/60 p-4">
@@ -275,6 +278,35 @@ export default function WorkflowsView() {
                     <div className="mt-3 flex items-start gap-2 rounded border border-amber-900/70 bg-amber-950/20 p-2 text-xs text-amber-200">
                       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-none" />
                       <span className="line-clamp-2">{blockedReason}</span>
+                    </div>
+                  )}
+
+                  {(optionalDisabledTools.length > 0 || configurationRequiredTools.length > 0 || approvalGatedTools.length > 0) && (
+                    <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+                      {optionalDisabledTools.length > 0 && (
+                        <div className="rounded border border-slate-700 bg-slate-900/70 p-2 text-slate-300">
+                          <div className="font-medium text-slate-200">Optional Disabled</div>
+                          <div className="mt-1 line-clamp-2">
+                            {optionalDisabledTools.map((tool: any) => tool.tool_name).join(', ')}
+                          </div>
+                        </div>
+                      )}
+                      {configurationRequiredTools.length > 0 && (
+                        <div className="rounded border border-amber-800 bg-amber-950/20 p-2 text-amber-200">
+                          <div className="font-medium">Config Required</div>
+                          <div className="mt-1 line-clamp-2">
+                            {configurationRequiredTools.map((tool: any) => tool.tool_name).join(', ')}
+                          </div>
+                        </div>
+                      )}
+                      {approvalGatedTools.length > 0 && (
+                        <div className="rounded border border-blue-800 bg-blue-950/20 p-2 text-blue-200">
+                          <div className="font-medium">Approval Gated</div>
+                          <div className="mt-1 line-clamp-2">
+                            {approvalGatedTools.map((tool: any) => tool.tool_name).join(', ')}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 

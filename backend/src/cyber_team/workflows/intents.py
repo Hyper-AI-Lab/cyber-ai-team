@@ -20,20 +20,33 @@ from cyber_team.db.models import (
     RoleGap,
     WorkflowIntent,
 )
+from cyber_team.operations.tool_readiness_policy import tool_is_required_for_readiness
 
 ACTIVE_INTENT_STATUSES = {"proposed", "instantiated", "blocked"}
 RESOLVED_INTENT_STATUSES = {"dismissed", "resolved"}
 GRAPH_TOOL_NAMES = ("memory_recall", "memory_remember")
 SIDE_EFFECT_APPROVAL_TOOLS = {
+    "approval_resolve",
+    "call_make",
+    "crm_contact_update",
+    "crm_deal_update",
+    "crm_lead_create",
+    "email_send",
     "make_call",
-    "send_sms",
-    "send_email",
-    "send_message",
     "erpnext_create_lead",
     "erpnext_invoice_create",
+    "message_send",
     "procurement_request",
     "payment_charge",
     "payment_refund",
+    "send_email",
+    "send_message",
+    "send_sms",
+    "sms_send",
+    "task_create",
+    "task_update",
+    "ticket_create",
+    "ticket_update",
 }
 KNOWN_ROLE_FAMILIES = {
     "communications",
@@ -100,6 +113,13 @@ KNOWLEDGE_SAFE_ROLE_TOOLS = {
     "research_report",
     "role_gap_report",
     "web_search",
+}
+CORE_AGENT_NAME_HINTS = {
+    "company_builder": ("company builder", "team builder"),
+    "supervisor": ("supervisor", "orchestrator"),
+}
+CORE_AGENT_FAMILY_FALLBACKS = {
+    "supervisor": ("orchestration",),
 }
 
 
@@ -340,6 +360,8 @@ class WorkflowIntentService:
             "configuration_required",
             0,
         )
+        optional_disabled_count = counts.get("optional_disabled_count", 0)
+        missing_agent_count = counts.get("missing_agent_count", 0)
         status = "ready"
         detail = "Generated workflow intent service is ready."
         if not active_count:
@@ -347,7 +369,15 @@ class WorkflowIntentService:
             detail = "No generated workflow intents have been created yet."
         elif blocked_count or configuration_required_count:
             status = "degraded"
-            detail = "Some generated workflow intents need missing agents or tool readiness."
+            if missing_agent_count:
+                detail = "Some generated workflow intents need core agents activated."
+            else:
+                detail = "Some generated workflow intents need required tool readiness."
+        elif optional_disabled_count:
+            detail = (
+                "Generated workflow intents are usable; some optional external channels "
+                "are disabled."
+            )
         return {
             "status": status,
             "blocking": False,
@@ -357,6 +387,15 @@ class WorkflowIntentService:
             "configuration_required_count": configuration_required_count,
             "owner_review_count": counts.get("by_readiness", {}).get("owner_review", 0),
             "ready_count": counts.get("by_readiness", {}).get("ready", 0),
+            "optional_disabled_count": optional_disabled_count,
+            "optional_disabled_tool_count": counts.get("optional_disabled_tool_count", 0),
+            "approval_gated_tool_count": counts.get("approval_gated_tool_count", 0),
+            "configuration_required_tool_count": counts.get(
+                "configuration_required_tool_count",
+                0,
+            ),
+            "missing_agent_count": missing_agent_count,
+            "by_recommended_action": counts.get("by_recommended_action", {}),
             "groups": summary["groups"],
             "detail": detail,
         }
@@ -373,7 +412,7 @@ class WorkflowIntentService:
             )
             return result.scalar_one_or_none()
 
-    async def _load_active_agents(self) -> dict[str, dict[str, Agent]]:
+    async def _load_active_agents(self) -> dict[str, Any]:
         async with self._session_factory() as session:
             result = await session.execute(select(Agent).where(Agent.status == "active"))
             agents = result.scalars().all()
@@ -383,7 +422,7 @@ class WorkflowIntentService:
         for agent in agents:
             by_family.setdefault(agent.role_family, agent)
             by_name.setdefault(slug_id(agent.role_name), agent)
-        return {"by_id": by_id, "by_family": by_family, "by_name": by_name}
+        return {"by_id": by_id, "by_family": by_family, "by_name": by_name, "all": agents}
 
     async def _load_role_gaps(self, snapshot: CompanyContextSnapshot) -> list[RoleGap]:
         async with self._session_factory() as session:
@@ -401,7 +440,7 @@ class WorkflowIntentService:
     def _build_proposals(
         self,
         snapshot: CompanyContextSnapshot,
-        agents: dict[str, dict[str, Agent]],
+        agents: dict[str, Any],
         role_gaps: list[RoleGap],
         llm_readiness: dict[str, Any],
     ) -> list[dict[str, Any]]:
@@ -430,7 +469,7 @@ class WorkflowIntentService:
         self,
         snapshot: CompanyContextSnapshot,
         role_spec: dict[str, Any],
-        agents: dict[str, dict[str, Agent]],
+        agents: dict[str, Any],
         llm_readiness: dict[str, Any],
     ) -> dict[str, Any] | None:
         role_name = str(role_spec.get("name") or "").strip()
@@ -507,14 +546,17 @@ class WorkflowIntentService:
         self,
         snapshot: CompanyContextSnapshot,
         loop: dict[str, Any],
-        agents: dict[str, dict[str, Agent]],
+        agents: dict[str, Any],
         llm_readiness: dict[str, Any],
     ) -> dict[str, Any] | None:
         loop_id = str(loop.get("id") or "").strip()
         owner_family = str(loop.get("owner_family") or "supervisor").strip()
         if not loop_id:
             return None
-        agent = agents["by_family"].get(owner_family) or agents["by_family"].get("supervisor")
+        agent = self._agent_for_family(agents, owner_family) or self._agent_for_family(
+            agents,
+            "supervisor",
+        )
         title = self._humanize(loop_id)
         graph = self._agent_operating_graph(
             agent_id=agent.id if agent else owner_family,
@@ -569,13 +611,12 @@ class WorkflowIntentService:
         self,
         snapshot: CompanyContextSnapshot,
         gap: RoleGap,
-        agents: dict[str, dict[str, Agent]],
+        agents: dict[str, Any],
         llm_readiness: dict[str, Any],
     ) -> dict[str, Any] | None:
-        agent = (
-            agents["by_family"].get("company_builder")
-            or agents["by_family"].get("supervisor")
-            or agents["by_name"].get("company_builder")
+        agent = self._agent_for_family(agents, "company_builder") or self._agent_for_family(
+            agents,
+            "supervisor",
         )
         proposed_role = gap.proposed_role or {}
         manifest = proposed_role.get("manifest_payload") or proposed_role
@@ -660,6 +701,7 @@ class WorkflowIntentService:
         created = 0
         updated = 0
         unchanged = 0
+        superseded = 0
         now = utc_now()
         intents: list[dict[str, Any]] = []
         async with self._session_factory() as session:
@@ -680,6 +722,12 @@ class WorkflowIntentService:
                         unchanged += 1
                     else:
                         updated += 1
+                    superseded += await self._supersede_replaced_intents(
+                        session,
+                        proposal,
+                        actor=actor,
+                        now=now,
+                    )
                     intents.append(self._intent_to_dict(existing))
                     continue
                 intent = WorkflowIntent(
@@ -695,12 +743,19 @@ class WorkflowIntentService:
                 )
                 session.add(intent)
                 created += 1
+                superseded += await self._supersede_replaced_intents(
+                    session,
+                    proposal,
+                    actor=actor,
+                    now=now,
+                )
                 intents.append(self._intent_to_dict(intent))
             await session.commit()
         return {
             "created": created,
             "updated": updated,
             "unchanged": unchanged,
+            "superseded": superseded,
             "intents": sorted(
                 intents,
                 key=lambda item: (
@@ -717,18 +772,90 @@ class WorkflowIntentService:
                 continue
             setattr(intent, key, value)
 
+    @staticmethod
+    async def _supersede_replaced_intents(
+        session,
+        proposal: dict[str, Any],
+        *,
+        actor: str,
+        now,
+    ) -> int:
+        result = await session.execute(
+            select(WorkflowIntent).where(
+                WorkflowIntent.status.in_(ACTIVE_INTENT_STATUSES),
+                WorkflowIntent.company_namespace == proposal["company_namespace"],
+                WorkflowIntent.source_type == proposal["source_type"],
+                WorkflowIntent.source_id == proposal["source_id"],
+                WorkflowIntent.category == proposal["category"],
+                WorkflowIntent.title == proposal["title"],
+                WorkflowIntent.dedupe_key != proposal["dedupe_key"],
+            )
+        )
+        stale = result.scalars().all()
+        for intent in stale:
+            intent.status = "resolved"
+            intent.resolution = {
+                **(intent.resolution or {}),
+                "status": "resolved",
+                "reason": "superseded_by_regenerated_intent",
+                "superseded_by_dedupe_key": proposal["dedupe_key"],
+                "resolved_by": actor,
+                "resolved_at": now.isoformat(),
+            }
+            intent.updated_at = now
+            intent.resolved_at = now
+        return len(stale)
+
     def _find_agent_for_role(
         self,
         role_spec: dict[str, Any],
-        agents: dict[str, dict[str, Agent]],
+        agents: dict[str, Any],
     ) -> Agent | None:
         role_name = str(role_spec.get("name") or "")
         role_family = str(role_spec.get("family") or "")
         return (
             agents["by_name"].get(slug_id(role_name))
-            or agents["by_family"].get(role_family)
+            or self._agent_for_family(agents, role_family)
             or agents["by_id"].get(str(role_spec.get("agent_id") or ""))
         )
+
+    @staticmethod
+    def _agent_for_family(agents: dict[str, Any], role_family: str) -> Agent | None:
+        family = str(role_family or "").strip().lower()
+        if not family:
+            return None
+        exact = agents["by_family"].get(family)
+        if exact:
+            return exact
+        by_name = agents["by_name"]
+        for candidate in (family, family.replace("_", "-"), family.replace("_", " ")):
+            match = by_name.get(slug_id(candidate))
+            if match:
+                return match
+        hints = CORE_AGENT_NAME_HINTS.get(family, ())
+        if hints:
+            candidates = [
+                agent
+                for agent in agents.get("all", [])
+                if any(
+                    hint in f"{agent.role_name} {agent.id}".replace("_", " ").lower()
+                    for hint in hints
+                )
+            ]
+            if candidates:
+                return sorted(
+                    candidates,
+                    key=lambda agent: (
+                        "baseline" in f"{agent.role_name} {agent.id}".lower(),
+                        str(agent.created_at or ""),
+                        agent.id,
+                    ),
+                )[0]
+        for fallback_family in CORE_AGENT_FAMILY_FALLBACKS.get(family, ()):
+            fallback = agents["by_family"].get(fallback_family)
+            if fallback:
+                return fallback
+        return None
 
     def _agent_operating_graph(
         self,
@@ -820,8 +947,31 @@ class WorkflowIntentService:
                 "Agent delegation requires a live LLM provider: "
                 f"{llm_readiness.get('detail') or llm_readiness.get('mode')}"
             )
+        configuration_required_tools = [
+            item
+            for item in requested_readiness
+            if item.get("workflow_impact") == "configuration_required"
+        ]
+        optional_disabled_tools = [
+            item
+            for item in requested_readiness
+            if item.get("workflow_impact") == "optional_disabled"
+        ]
+        approval_gated_tools = [
+            item
+            for item in requested_readiness
+            if item.get("workflow_impact") == "approval_gated"
+        ]
         for item in requested_readiness:
             if item.get("state") not in {"live", "advisory"} or not item.get("executable"):
+                if item.get("workflow_impact") == "optional_disabled":
+                    warnings.append(
+                        f"Requested role tool {item['tool_name']} is optional_disabled: "
+                        f"{item.get('readiness_reason')}. It is not listed in "
+                        "REQUIRED_COMMUNICATION_PROVIDERS, so the advisory workflow can "
+                        "still run without this external channel."
+                    )
+                    continue
                 warnings.append(
                     f"Requested role tool {item['tool_name']} is {item['state']}: "
                     f"{item.get('readiness_reason')}"
@@ -841,12 +991,16 @@ class WorkflowIntentService:
             else:
                 status = "blocked"
                 recommended_action = "create_or_activate_agent"
-        elif any("configuration_required" in warning for warning in warnings):
+        elif configuration_required_tools:
             status = "configuration_required"
             recommended_action = "configure_tools"
         elif warnings or approval_policy not in {"auto", "low"}:
             status = "owner_review"
-            recommended_action = "owner_review"
+            recommended_action = (
+                "review_optional_providers"
+                if optional_disabled_tools and not approval_gated_tools
+                else "owner_review"
+            )
         else:
             status = "ready"
             recommended_action = "instantiate"
@@ -858,6 +1012,14 @@ class WorkflowIntentService:
             "llm_provider": llm_readiness,
             "graph_tool_readiness": graph_readiness,
             "requested_tool_readiness": requested_readiness,
+            "configuration_required_tools": configuration_required_tools,
+            "optional_disabled_tools": optional_disabled_tools,
+            "approval_gated_tools": approval_gated_tools,
+            "workflow_impact_counts": {
+                "configuration_required": len(configuration_required_tools),
+                "optional_disabled": len(optional_disabled_tools),
+                "approval_gated": len(approval_gated_tools),
+            },
             "agent": (
                 {
                     "id": agent.id,
@@ -896,7 +1058,19 @@ class WorkflowIntentService:
         rows = []
         for tool_name in self._unique_strings(tools):
             readiness = self._tool_registry.get_tool_readiness(tool_name)
-            rows.append({"tool_name": tool_name, **readiness})
+            row = {"tool_name": tool_name, **readiness}
+            row["required_for_readiness"] = tool_is_required_for_readiness(row)
+            if row.get("state") not in {"live", "advisory"} or not row.get("executable"):
+                row["workflow_impact"] = (
+                    "configuration_required"
+                    if row["required_for_readiness"]
+                    else "optional_disabled"
+                )
+            elif row.get("side_effects"):
+                row["workflow_impact"] = "approval_gated"
+            else:
+                row["workflow_impact"] = "ready"
+            rows.append(row)
         return rows
 
     def _approval_required(self, requested_tools: list[str], role_spec: dict[str, Any]) -> bool:
@@ -1043,6 +1217,9 @@ class WorkflowIntentService:
                     "owner_review_count": 0,
                     "blocked_count": 0,
                     "configuration_required_count": 0,
+                    "optional_disabled_count": 0,
+                    "approval_gated_tool_count": 0,
+                    "configuration_required_tool_count": 0,
                     "categories": [],
                     "items": [],
                 },
@@ -1057,6 +1234,13 @@ class WorkflowIntentService:
                 group["configuration_required_count"] += 1
             elif readiness_status == "blocked":
                 group["blocked_count"] += 1
+            readiness = item.get("readiness") or {}
+            if readiness.get("optional_disabled_tools"):
+                group["optional_disabled_count"] += 1
+            group["approval_gated_tool_count"] += len(readiness.get("approval_gated_tools") or [])
+            group["configuration_required_tool_count"] += len(
+                readiness.get("configuration_required_tools") or []
+            )
             group["categories"] = WorkflowIntentService._unique_strings(
                 [*group["categories"], item.get("category")]
             )
@@ -1070,16 +1254,37 @@ class WorkflowIntentService:
             "by_status": {},
             "by_readiness": {},
             "by_category": {},
+            "by_recommended_action": {},
+            "missing_agent_count": 0,
+            "configuration_required_tool_count": 0,
+            "optional_disabled_count": 0,
+            "optional_disabled_tool_count": 0,
+            "approval_gated_tool_count": 0,
         }
         for item in items:
             status = item.get("status") or "unknown"
             readiness_status = (item.get("readiness") or {}).get("status") or "unknown"
+            readiness = item.get("readiness") or {}
             category = item.get("category") or "unknown"
             counts["by_status"][status] = counts["by_status"].get(status, 0) + 1
             counts["by_readiness"][readiness_status] = (
                 counts["by_readiness"].get(readiness_status, 0) + 1
             )
             counts["by_category"][category] = counts["by_category"].get(category, 0) + 1
+            action = readiness.get("recommended_action") or "unknown"
+            counts["by_recommended_action"][action] = (
+                counts["by_recommended_action"].get(action, 0) + 1
+            )
+            if any("No active agent" in blocker for blocker in readiness.get("blockers") or []):
+                counts["missing_agent_count"] += 1
+            configuration_required_tools = readiness.get("configuration_required_tools") or []
+            optional_disabled_tools = readiness.get("optional_disabled_tools") or []
+            approval_gated_tools = readiness.get("approval_gated_tools") or []
+            counts["configuration_required_tool_count"] += len(configuration_required_tools)
+            counts["optional_disabled_tool_count"] += len(optional_disabled_tools)
+            counts["approval_gated_tool_count"] += len(approval_gated_tools)
+            if optional_disabled_tools:
+                counts["optional_disabled_count"] += 1
         return counts
 
     async def _record(
