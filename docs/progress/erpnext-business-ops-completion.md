@@ -3910,3 +3910,51 @@
   - Live readiness response from 2026-07-23T14:05Z.
 - Next step:
   - Continue blocked-intent triage by separating optional-disabled/provider-required work from owner-review work, then run or dismiss the remaining safe generated workflow intents without executing Product / Legal / Ops side effects.
+
+### 2026-07-24T01:45:52Z — STEP-124 — Clarified workflow-intent readiness and removed stale blocked duplicates
+- Files/services changed:
+  - Updated `/home/projects/cyber-team/backend/src/cyber_team/workflows/intents.py`.
+  - Updated `/home/projects/cyber-team/backend/tests/test_workflow_intents.py`.
+  - Updated `/home/projects/cyber-team/frontend/src/components/WorkflowsView.tsx`.
+  - Updated `/home/projects/cyber-team/frontend/src/components/OperationsView.tsx`.
+  - Updated `/home/projects/cyber-team/frontend/package.json` and `/home/projects/cyber-team/frontend/package-lock.json`.
+  - Promoted `/home/projects/cyber-team` commit `c53565b085bfd691c29ede64c0ed8f281dd3f4a8` to staging.
+- Commands run:
+  - `PYTHONPATH=src /home/projects/cyber-team/.venv-quality/bin/pytest tests/test_workflow_intents.py -q`.
+  - `PYTHONPATH=src /home/projects/cyber-team/.venv-quality/bin/pytest -q`.
+  - `PYTHONPATH=src /home/projects/cyber-team/.venv-quality/bin/ruff check src tests alembic`.
+  - `PYTHONPATH=src /home/projects/cyber-team/.venv-quality/bin/python -m compileall -q src tests alembic`.
+  - Docker Node 20 frontend validation: `npm test -- --run`, `npx tsc --noEmit --incremental false`, `npm run build`, and `npm audit --audit-level=moderate`.
+  - `CYBERTEAM_ENV_FILE=.env.example docker compose --env-file .env.example config --quiet`.
+  - `python3 scripts/secret-scan.py`.
+  - `python3 scripts/resource-policy-check.py`.
+  - `git diff --check`.
+  - `RELEASE_VERSION=c53565b APP_VERSION=c53565b NEXT_PUBLIC_API_URL=https://cyberteam.hyperailab.com NEXT_PUBLIC_WS_URL=wss://cyberteam.hyperailab.com RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`.
+  - `PROMOTE_DRY_RUN=0 RELEASE_VERSION=c53565b ./scripts/promote-staging.sh`.
+  - Owner-authenticated `POST /api/workflows/intents/generate` with `{"limit":75,"instantiate_low_risk":false}`.
+  - Owner-authenticated `GET /api/operations/readiness`.
+  - Owner-authenticated `GET /api/workflows/intents?limit=500` and `GET /api/workflows/intents?status=blocked&limit=20`.
+- Result:
+  - Workflow-intent readiness now treats optional-disabled tools as warnings instead of configuration blockers, while approval-gated tools remain explicit owner-review work.
+  - Tool readiness rows now expose `required_for_readiness` and `workflow_impact`, and UI cards separate optional-disabled, configuration-required, and approval-gated tool buckets.
+  - Company Builder and Supervisor intents can use existing active core agents by safe name/family fallbacks, fixing false missing-agent blockers caused by older mis-family records.
+  - Regeneration now resolves older active intents for the same source/category/title when their dedupe key changes, preventing stale blocked duplicates from surviving after role-gap metadata changes.
+  - PostCSS override was bumped from `8.5.10` to `8.5.22`, clearing the frontend moderate npm audit finding while preserving the existing Next.js override structure.
+  - Focused workflow-intent tests passed with `8 passed`; full backend tests passed with `224 passed`.
+  - Ruff, compileall, frontend tests/typecheck/build/audit, compose config, secret scan, FOSS/resource scan, and diff hygiene passed.
+  - Release gate passed with Alembic offline SQL, real PostgreSQL migration rehearsal, isolated compose smoke, Docker image builds, and Trivy scans reporting `0` vulnerabilities for `cyber-team-core:c53565b` and `cyber-team-ui:c53565b`.
+  - Staging promotion completed and public smoke passed through `https://cyberteam.hyperailab.com`.
+  - Live health reports `version=c53565b` and build SHA `c53565b085bfd691c29ede64c0ed8f281dd3f4a8`.
+  - Live intent regeneration completed with `8` created, `17` updated, `6` unchanged, and `64` superseded.
+  - Live workflow-intents readiness now reports `status=ready`, `blocking=false`, `active_count=25`, `ready_count=11`, `owner_review_count=14`, `blocked_count=0`, `missing_agent_count=0`, `configuration_required_tool_count=0`, `optional_disabled_tool_count=7`, and `approval_gated_tool_count=18`.
+  - `GET /api/workflows/intents?status=blocked&limit=20` returned an empty list after regeneration.
+  - Host Node 18 remains too old for the current frontend test toolchain, so frontend verification used the CI-compatible Docker Node 20 runtime.
+- Evidence:
+  - Release manifest `/home/projects/cyber-team/dist/releases/c53565b.json`.
+  - Staging backup `/home/projects/cyber-team/backups/staging/cyberteam-staging-c53565b-20260724-014402.dump`.
+  - Promotion record `/home/projects/cyber-team/dist/promotions/staging/c53565b-20260724-014455.json`.
+  - Live staging `/health` response from 2026-07-24T01:44Z.
+  - Live workflow-intent generation response from 2026-07-24T01:45Z.
+  - Live Operations readiness and workflow-intent list responses from 2026-07-24T01:45Z.
+- Next step:
+  - Commit and push the progress log entry, watch GitHub CI, then continue owner-review triage for the 14 approval-gated workflow intents or instantiate the 11 ready low-risk intents when desired.
