@@ -4009,3 +4009,25 @@
   - Commit: `c1c595ba3b1818c5299dfd99e217f2db1ee67474`.
 - Next step:
   - Retry the single Mistral-rate-limited Integration Discovery advisory run after cooldown, using sequential execution, then prepare the 14 owner-review recommendations for explicit owner decisions.
+
+### 2026-07-24T02:19:03Z — STEP-127 — Fixed workflow-intent idempotency state normalization
+- Files/services changed:
+  - Updated `/home/projects/cyber-team/backend/src/cyber_team/workflows/intents.py`.
+  - Updated `/home/projects/cyber-team/backend/tests/test_workflow_intents.py`.
+  - Added regression coverage for an existing workflow whose intent was still marked `proposed`.
+- Commands run:
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest tests/test_workflow_intents.py -q`.
+  - `PYTHONPATH=src ../.venv-quality/bin/ruff check src/cyber_team/workflows/intents.py tests/test_workflow_intents.py`.
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest -q`.
+  - `.venv-quality/bin/python -m compileall -q backend/src backend/tests backend/alembic`.
+  - `git diff --check`.
+- Result:
+  - `instantiate_intent` now normalizes an existing workflow-backed intent to `instantiated`, records its existing workflow ID and timestamps, and does not create a duplicate workflow.
+  - Focused workflow-intent tests passed with `9 passed`.
+  - Full backend tests passed with `225 passed` and `2` pre-existing dependency deprecation warnings.
+  - Ruff, compileall, and diff hygiene passed.
+- Evidence:
+  - Regression test: `backend/tests/test_workflow_intents.py::test_existing_workflow_normalizes_proposed_intent_without_duplication`.
+  - Implementation: `backend/src/cyber_team/workflows/intents.py::WorkflowIntentService.instantiate_intent`.
+- Next step:
+  - Commit the fix, run the release gate, promote the new release to staging, and verify that all eleven safe intent records report `instantiated` without duplicate workflows.

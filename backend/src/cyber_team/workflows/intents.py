@@ -256,6 +256,18 @@ class WorkflowIntentService:
             if intent.workflow_id:
                 existing = await self._orchestrator.get_workflow(intent.workflow_id)
                 if existing:
+                    if intent.status != "instantiated" or intent.resolved_at is None:
+                        now = utc_now()
+                        intent.status = "instantiated"
+                        intent.resolution = {
+                            **(intent.resolution or {}),
+                            "instantiated_by": actor,
+                            "workflow_id": existing["id"],
+                            "instantiated_at": now.isoformat(),
+                        }
+                        intent.updated_at = now
+                        intent.resolved_at = now
+                        await session.commit()
                     return existing
             readiness = intent.readiness or {}
             readiness_status = readiness.get("status")
