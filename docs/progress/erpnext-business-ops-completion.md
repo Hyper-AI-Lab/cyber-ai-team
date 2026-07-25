@@ -4135,3 +4135,28 @@
   - Final evidence commit: `0470195e955d0364cc48501bf5916259879bc357`.
 - Next step:
   - No further owner-independent implementation or verification work remains for this slice; wait for explicit owner decisions on the 14 risk-gated intents.
+
+### 2026-07-25T01:20:41Z — STEP-133 — Executed owner-approved alert email proof and verified readiness evidence
+- Files/services changed:
+  - Appended live operational evidence to `/home/projects/cyber-team/docs/progress/erpnext-business-ops-completion.md`.
+  - No application source or staging configuration changed.
+- Commands run:
+  - Owner-authenticated `POST /api/operations/alerts/test-email` with `dry_run=false` and an owner-approval note referencing `appr_d2b344e7ce0b4581`.
+  - Owner-authenticated `GET /api/operations/readiness?refresh=true`.
+  - Owner-authenticated `GET /api/comms/logs?channel=email&limit=10`.
+  - Owner-authenticated `GET /api/audit/events?limit=50`.
+  - Owner-authenticated `GET /api/dashboard/approval-queue?status=approved`.
+- Result:
+  - The real alert-delivery proof executed once and returned HTTP 200 with `status=ready`, `recipient=contact@hyperailab.com`, and SMTP response `email_id=86b04b00-ebe0-402b-b27d-a9ed90254bb8`, `status=sent`, `provider=smtp`.
+  - Control evidence `1a47239a-f3e0-4dde-8162-b9912cbb442e` was recorded at `2026-07-25T01:20:10.384296Z` for `alert_delivery.email`.
+  - Live readiness now reports `alerts.status=ready`, `alerts.blocking=false`, `alerts.stale=false`, and `alerts.last_delivery_test=2026-07-25T01:20:10.384296Z`.
+  - Overall readiness remains `degraded`, but not because of alerts; the alert-proof blocker is cleared again.
+  - Communication log entry `74968205-0e4f-496c-a0dc-1d77e61279f6` recorded the email send with `status=sent` to `contact@hyperailab.com`.
+  - The approved executive-action approval remained `approved` and not `consumed`; the current implementation requires explicit execution after approval rather than auto-dispatching the action from the approval itself.
+- Evidence:
+  - Alert test response and readiness capture were taken live from `https://cyberteam.hyperailab.com`.
+  - Control evidence id: `1a47239a-f3e0-4dde-8162-b9912cbb442e`.
+  - Communication log id: `74968205-0e4f-496c-a0dc-1d77e61279f6`.
+  - Approved executive action: `appr_d2b344e7ce0b4581`.
+- Next step:
+  - No user action is required for alert proof. The remaining pending approvals are the four duplicate `memory_steward.report_role_gap` items, which should stay untouched until we decide whether to deduplicate or dismiss them.
