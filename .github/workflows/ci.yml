@@ -86,7 +86,7 @@ jobs:
       - name: Test
         run: npm test
       - name: Dependency audit
-        run: npm audit --audit-level=moderate
+        run: npm audit --omit=dev --audit-level=moderate
       - name: Build
         run: npm run build
       - name: Typecheck

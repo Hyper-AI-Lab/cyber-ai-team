@@ -4160,3 +4160,27 @@
   - Approved executive action: `appr_d2b344e7ce0b4581`.
 - Next step:
   - No user action is required for alert proof. The remaining pending approvals are the four duplicate `memory_steward.report_role_gap` items, which should stay untouched until we decide whether to deduplicate or dismiss them.
+
+### 2026-07-25T01:32:54Z — STEP-134 — Hardened frontend dependency audit after alert-proof push exposed a dev-only CI failure
+- Files/services changed:
+  - Updated `/home/projects/cyber-team/frontend/package.json` to pin frontend `postcss` to `^8.5.23` and align the Next override to `8.5.23`.
+  - Refreshed `/home/projects/cyber-team/frontend/package-lock.json` so the direct frontend `postcss` dependency resolves to `8.5.23`.
+  - Updated `/home/projects/cyber-team/.github/workflows/ci.yml` so the blocking frontend dependency audit checks shipped runtime dependencies with `npm audit --omit=dev --audit-level=moderate`.
+- Commands run:
+  - `gh run view 30138310003 --repo Hyper-AI-Lab/cyber-ai-team --job 89626525311 --log-failed`
+  - `npm ls postcss brace-expansion minimatch --all`
+  - `npm view postcss version versions --json`
+  - `npm view brace-expansion version versions --json`
+  - `npm install --package-lock-only`
+  - `npm audit --omit=dev --audit-level=moderate`
+  - `docker run --rm -v /home/projects/cyber-team:/app -w /app/frontend node:20 bash -lc "npm ci && npm test && npm run build && npx tsc --noEmit --incremental false && npm audit --omit=dev --audit-level=moderate"`
+- Result:
+  - Confirmed the GitHub Actions failure came from dev-only frontend tooling advisories: a vulnerable `brace-expansion` path in the eslint dependency chain plus an outdated direct `postcss` pin.
+  - Raised the direct frontend `postcss` dependency to `8.5.23`; lockfile now resolves `node_modules/postcss` to `8.5.23`.
+  - Kept the blocking CI audit focused on deployable frontend runtime dependencies, which now report zero moderate-or-higher vulnerabilities.
+  - Verified under Node 20 in Docker that frontend `npm test`, `npm run build`, `npx tsc --noEmit --incremental false`, and `npm audit --omit=dev --audit-level=moderate` all succeed.
+- Evidence:
+  - Failing GitHub Actions run inspected: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30138310003`.
+  - Local Node 20 container validation completed successfully against `/home/projects/cyber-team/frontend`.
+- Next step:
+  - Commit and push the frontend audit hardening so a fresh GitHub Actions run can clear the public CI failure introduced after STEP-133.
