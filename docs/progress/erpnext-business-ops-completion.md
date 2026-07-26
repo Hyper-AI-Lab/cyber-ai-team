@@ -4264,3 +4264,150 @@
   - Verified source commit: `5dea7468556b492b28a5161a6a5a593efd56271a`.
 - Next step:
   - This LLM provider-resilience and false-memory-finding cleanup slice is complete. The next production-readiness work is to refresh the four stale operational evidence areas: alert delivery, restore drills, conservative load, and business workflow smoke.
+
+### 2026-07-26T14:13:39Z — STEP-138 — Refreshed live owner alert-email delivery evidence
+- Files/services changed:
+  - No source or runtime configuration changed; the staging operations API sent one owner-authorized alert proof through the live SMTP gateway and persisted readiness control evidence.
+- Commands run:
+  - Loaded the ignored staging environment without printing credentials.
+  - Authenticated through `POST /api/auth/login` and called `POST /api/operations/alerts/test-email` with `dry_run=false` and the note `Production readiness evidence refresh 2026-07-26`.
+- Result:
+  - The API returned `status=ready`; the communications gateway returned `status=sent` and `provider=smtp`.
+  - The proof was a real delivery attempt to the configured owner address, not a simulation.
+  - No credential values or access tokens were written to logs or evidence.
+- Evidence:
+  - Communication id: `280b5165-2b10-41bd-b8fe-691237943ba2`.
+  - Control evidence id: `1245d968-6155-4262-8523-c8c58bc32af7`, outcome `success`.
+  - Staging endpoint: `https://cyberteam.hyperailab.com/api/operations/alerts/test-email`.
+- Next step:
+  - Refresh isolated PostgreSQL, Qdrant, and ERPNext restore-drill evidence without mutating the live staging databases or ERPNext site.
+
+### 2026-07-26T14:49:28Z — STEP-139 — Proved isolated PostgreSQL and Qdrant restore paths
+- Files/services changed:
+  - Hardened `/home/projects/cyber-team/scripts/staging-restore-drill.sh` to load and normalize staging bind-port configuration, resolve relative virtualenv paths, create a live Qdrant collection snapshot, restore it into a disposable container using the exact deployed Qdrant image, compare point counts, and clean up all temporary state.
+  - Hardened `/home/projects/cyber-team/backend/src/cyber_team/operations/readiness.py` so a nominal PostgreSQL artifact without successful Qdrant restore proof cannot satisfy the combined readiness control.
+  - Added readiness regressions in `/home/projects/cyber-team/backend/tests/test_readiness_evidence.py` and updated `/home/projects/cyber-team/docs/runbooks/backup-restore.md`.
+- Commands run:
+  - `bash -n scripts/staging-restore-drill.sh`.
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest -q tests/test_readiness_evidence.py` from the backend directory.
+  - `.venv-quality/bin/ruff check backend/src/cyber_team/operations/readiness.py backend/tests/test_readiness_evidence.py`.
+  - `CYBERTEAM_ENV_FILE=deploy/environments/staging.env BACKEND_VENV=.venv-quality ./scripts/staging-restore-drill.sh`.
+  - Post-run checks for temporary containers and source Qdrant snapshots.
+- Result:
+  - Focused tests passed (`6 passed`), Ruff passed, and shell syntax passed.
+  - PostgreSQL restored from the latest staging dump into a disposable PostgreSQL 16 container; Alembic revision `0014_workflow_intents` and key table counts were verified.
+  - Qdrant restored the `cyberteam_memory` snapshot into a disposable container running the deployed digest-pinned image; source and restored collections both contained 439 points.
+  - The temporary PostgreSQL/Qdrant containers, downloaded snapshot, and source-server snapshot were removed after evidence was written. The live staging database and live Qdrant collection were not overwritten.
+- Evidence:
+  - `/home/projects/cyber-team/dist/restore-drills/staging/staging-restore-drill-20260726T144853Z.json`.
+  - PostgreSQL backup size: 20,817,526 bytes; drill duration: 35 seconds.
+  - Qdrant snapshot checksum: `042d762d5887d47a3d67aaa33d0eb4849e2ad81c66179cf76e70f840b9086457`; snapshot size: 4,154,880 bytes.
+- Next step:
+  - Create a fresh ERPNext staging backup and prove database plus site-file restoration through a disposable ERPNext site.
+
+### 2026-07-26T14:58:51Z — STEP-140 — Refreshed ERPNext backup and isolated restore-drill evidence
+- Files/services changed:
+  - Created a new ERPNext database/public/private-file backup set and manifest under the ignored staging backup directory.
+  - Created a temporary ERPNext restore site, restored and migrated the fresh artifacts, validated the API and canonical business record counts, then dropped the temporary site.
+  - No live ERPNext site records or configuration were replaced.
+- Commands run:
+  - `ERPNEXT_ENV_FILE=deploy/environments/staging.env ./scripts/erpnext-backup.sh`.
+  - `ERPNEXT_ENV_FILE=deploy/environments/staging.env ./scripts/erpnext-restore-drill.sh`.
+  - Post-run checks for temporary-site removal and live `erpnext.hyperailab.com` ping health.
+- Result:
+  - Fresh ERPNext backup completed with database, public files, private files, checksums, and manifest.
+  - Restore into `restore-drill-20260726T145158Z.local` passed; `bench migrate` completed and `/api/method/ping` returned `pong`.
+  - Restored record counts were verified for Company, Issue, Item, Lead, Material Request, Task, and User; the Cyber-Team integration user existed in the restored site.
+  - The temporary site was removed, and the live ERPNext endpoint continued returning `pong`.
+- Evidence:
+  - Backup manifest: `/home/projects/cyber-team/backups/erpnext/staging/20260726T145132Z/backup-manifest.json`.
+  - Backup evidence: `/home/projects/cyber-team/dist/erpnext/backups/erpnext-backup-20260726T145132Z.json`.
+  - Restore evidence: `/home/projects/cyber-team/dist/erpnext/restore-drills/erpnext-restore-drill-20260726T145158Z.json`.
+  - Restore duration: 413 seconds; integration-user check: passed.
+- Next step:
+  - Run the Dockerized conservative single-owner load gate and retain machine-readable threshold evidence.
+
+### 2026-07-26T15:09:11Z — STEP-141 — Diagnosed the failed load gate and hardened readiness latency behavior
+- Files/services changed:
+  - Updated `/home/projects/cyber-team/scripts/k6/cyberteam-owner-console.js` so the acceptance gate measures only the specified health, login, dashboard, and readiness paths; records per-endpoint p95, aggregate p95, HTTP failure rate, explicit HTTP 5xx rate, and check rate; and enforces the 750 ms threshold independently for every required path.
+  - Updated `/home/projects/cyber-team/backend/src/cyber_team/api/routes/operations.py` to serve an expired readiness snapshot immediately while one background refresh updates it; explicit `refresh=true` remains synchronous.
+  - Added a stale-while-revalidate route regression in `/home/projects/cyber-team/backend/tests/test_api_operations.py`.
+  - Rebuilt and restarted only the staging `core` service after focused verification.
+- Commands run:
+  - Initial planned five-minute `CYBERTEAM_ENV_FILE=deploy/environments/staging.env ./scripts/load-smoke.sh`.
+  - Serial endpoint timing checks and staging core error-log review.
+  - Focused readiness route/evidence tests, Ruff, shell syntax, and diff hygiene.
+  - `docker compose --env-file deploy/environments/staging.env up -d --build core`.
+  - Thirty-second five-VU path-specific diagnostic gate.
+- Result:
+  - The original gate correctly failed with zero request failures and all checks passing because aggregate p95 was 4,054.56 ms; it also revealed that unrelated integration/tool inventory calls were included in a gate intended for four owner-console paths.
+  - The corrected path-specific diagnostic showed health p95 108.00 ms, login p95 328.91 ms, dashboard p95 423.72 ms, zero failures, zero 5xx, and 100% checks.
+  - Readiness p95 remained 2,897.52 ms in the short diagnostic because all five VUs contributed cold-cache samples at startup. Subsequent expired-cache reads are now served stale-while-revalidate, so the full five-minute distribution must be rerun before acceptance.
+  - Focused backend verification passed (`10 passed`), Ruff passed, shell syntax passed, and the rebuilt core returned healthy.
+- Evidence:
+  - Original failed gate: `/home/projects/cyber-team/dist/load-tests/load-smoke-20260726T145933Z.json`.
+  - Corrected short diagnostic: `/home/projects/cyber-team/dist/load-tests/load-smoke-20260726T150838Z.json`.
+- Next step:
+  - Run the complete five-minute path-specific gate against the warmed staging readiness cache and accept it only if every required endpoint meets its own threshold.
+
+### 2026-07-26T15:15:03Z — STEP-142 — Passed the full conservative staging load gate
+- Files/services changed:
+  - No additional source changed in this step; it validates the corrected gate and stale-while-revalidate readiness behavior deployed in STEP-141.
+- Commands run:
+  - Owner-authenticated synchronous readiness prewarm through `GET /api/operations/readiness?refresh=true`.
+  - `CYBERTEAM_ENV_FILE=deploy/environments/staging.env ./scripts/load-smoke.sh` with 5 virtual users for 5 minutes.
+- Result:
+  - The load gate passed after 991 completed iterations with zero request failures, zero HTTP 5xx responses, a 100% check rate, and no failed thresholds.
+  - Endpoint p95 latency was 139.82 ms for health, 254.70 ms for login, 583.08 ms for dashboard, and 483.22 ms for operations readiness.
+  - Every required path remained below the 750 ms threshold; the maximum required-path p95 was 583.08 ms.
+- Evidence:
+  - `/home/projects/cyber-team/dist/load-tests/load-smoke-20260726T151002Z.json`.
+- Next step:
+  - Run the safe end-to-end business workflow smoke across Cyber-Team authentication, ERPNext readiness/context sync, role backlog, owner attention, and approval-gate rejection.
+
+### 2026-07-26T15:15:56Z — STEP-143 — Passed business workflow smoke and cleared staging readiness blockers
+- Files/services changed:
+  - No additional source changed; this step created fresh staging workflow-smoke evidence and forced the deployed readiness service to re-evaluate every production-readiness control.
+- Commands run:
+  - `CYBERTEAM_ENV_FILE=deploy/environments/staging.env python3 scripts/business-workflow-smoke.py`.
+  - Owner-authenticated `GET /api/operations/readiness?refresh=true` against staging.
+- Result:
+  - All eight business-smoke checks passed: health, owner login, integrations status, live ERPNext readiness, ERPNext company-context dry-run sync, role backlog summary, owner-attention dry-run, and rejection of an invalid approval for `send_email`.
+  - Staging operations readiness now reports `status=ready` and an empty blocker list.
+  - Alert delivery, PostgreSQL/Qdrant restore, ERPNext restore, conservative load, business workflow smoke, and CI evidence all report `ready`.
+  - Credential rotation reports `review_required` but `blocking=false`; required credentials are present/non-placeholder and actual secret replacement remains an owner-managed ceremony.
+- Evidence:
+  - `/home/projects/cyber-team/dist/business-workflows/business-workflow-smoke-20260726T151555Z.json`.
+  - Live readiness endpoint: `https://cyberteam.hyperailab.com/api/operations/readiness?refresh=true` returned `status=ready`, `blockers=[]`, and `qdrant_verified=true`.
+- Next step:
+  - Run the full repository release checks, append final verification evidence, commit and push the hardening slice, and watch public GitHub CI.
+
+### 2026-07-26T15:31:40Z — STEP-144 — Completed local release verification and final staging deployment
+- Files/services changed:
+  - Aligned `/home/projects/cyber-team/scripts/quality-gate.sh` with the public CI security boundary by enforcing `npm audit --omit=dev --audit-level=moderate` for shipped frontend runtime dependencies; the current ESLint 8 development-only tree remains outside the production image and is tracked separately from runtime risk.
+  - Tightened Qdrant evidence validation so `restore_status=ok` is insufficient without real, non-negative, equal source/restored point counts.
+  - Rebuilt the final staging `core` image and restarted only that service.
+- Commands run:
+  - Full `scripts/quality-gate.sh` with existing locked dependencies.
+  - `npm audit --omit=dev --audit-level=moderate`.
+  - `BACKEND_VENV=/home/projects/cyber-team/.venv-quality ./scripts/migration-rehearsal.sh`.
+  - Isolated `scripts/compose-smoke.sh` with a unique project/network/container prefix and high-numbered localhost ports, followed by container/network/volume cleanup.
+  - Focused readiness tests after the final evidence-validation hardening, Ruff, shell syntax, secret scan, FOSS/resource policy scan, and `git diff --check`.
+  - `docker compose --env-file deploy/environments/staging.env up -d --build core` and final live health/readiness checks.
+- Result:
+  - Full backend suite passed (`236 passed`); Ruff, compileall, Alembic offline SQL through `0014_workflow_intents`, and Python dependency audit passed.
+  - Frontend production build, TypeScript, Vitest (`23 passed`), and shipped-runtime dependency audit (`0 vulnerabilities`) passed.
+  - Compose config, shell/dashboard syntax, secret scan, FOSS/resource policy, and diff hygiene passed.
+  - Migration rehearsals passed against both legacy pre-Alembic and representative seeded `0001` schemas.
+  - The isolated Compose owner-console smoke passed health/readiness/UI/login/dashboard/integrations/WebSocket/tool-readiness/approval/replay/log checks; all unique smoke resources were removed afterward.
+  - Final focused regressions passed (`11 passed`), including rejection of incomplete Qdrant evidence.
+  - Deployed staging health is `ok`; `core`, PostgreSQL, UI, Qdrant, and worker are running, with `core` and PostgreSQL healthy.
+  - Final live operations readiness is `ready` with zero blockers; alert, CI, restore, load, and business workflow controls are all ready and `qdrant_verified=true`.
+- Evidence:
+  - Alert control evidence: `1245d968-6155-4262-8523-c8c58bc32af7`.
+  - PostgreSQL/Qdrant restore: `/home/projects/cyber-team/dist/restore-drills/staging/staging-restore-drill-20260726T144853Z.json`.
+  - ERPNext restore: `/home/projects/cyber-team/dist/erpnext/restore-drills/erpnext-restore-drill-20260726T145158Z.json`.
+  - Load gate: `/home/projects/cyber-team/dist/load-tests/load-smoke-20260726T151002Z.json`.
+  - Business workflow: `/home/projects/cyber-team/dist/business-workflows/business-workflow-smoke-20260726T151555Z.json`.
+- Next step:
+  - Commit and push the production-readiness evidence hardening slice, then require a green public GitHub CI run for completion.

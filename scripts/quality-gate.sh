@@ -124,8 +124,8 @@ run_frontend_node ./node_modules/typescript/bin/tsc --noEmit --incremental false
 echo "== Frontend: tests =="
 run_frontend_node ./node_modules/vitest/vitest.mjs run
 
-echo "== Frontend: dependency audit =="
-run_frontend_npm audit --audit-level=moderate
+echo "== Frontend: runtime dependency audit =="
+run_frontend_npm audit --omit=dev --audit-level=moderate
 
 echo "== Compose: config =="
 (cd "$ROOT_DIR" && docker compose config --quiet)

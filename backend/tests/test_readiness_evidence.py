@@ -35,6 +35,11 @@ async def test_readiness_evidence_reads_fresh_artifacts(tmp_path, monkeypatch):
             "status": "passed",
             "finished_at": now,
             "row_counts": {"agents": 1},
+            "qdrant": {
+                "restore_status": "ok",
+                "source_points_count": 11,
+                "restored_points_count": 11,
+            },
         },
         "dist/erpnext/restore-drills/erpnext-restore-drill-20260623T000000Z.json": {
             "status": "passed",
@@ -70,6 +75,81 @@ async def test_readiness_evidence_reads_fresh_artifacts(tmp_path, monkeypatch):
     assert summary["backup_restore"]["status"] == "ready"
     assert summary["load_test"]["status"] == "ready"
     assert summary["business_workflow_smoke"]["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_readiness_rejects_restore_artifact_without_qdrant_proof(
+    tmp_path,
+    monkeypatch,
+):
+    now = datetime.now(UTC).isoformat()
+    artifacts = {
+        "dist/restore-drills/staging/staging-restore-drill-now.json": {
+            "status": "passed",
+            "finished_at": now,
+            "row_counts": {"agents": 1},
+        },
+        "dist/erpnext/restore-drills/erpnext-restore-drill-now.json": {
+            "status": "passed",
+            "finished_at": now,
+            "row_counts": {"User": 2},
+        },
+    }
+    for relative_path, payload in artifacts.items():
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        "cyber_team.operations.readiness.settings.environment",
+        "staging",
+    )
+
+    summary = await ProductionReadinessEvidenceService(
+        audit_service=FakeAudit(),
+        root_dir=tmp_path,
+    ).summary()
+
+    postgres_qdrant = summary["backup_restore"]["postgres_qdrant"]
+    assert summary["backup_restore"]["status"] == "degraded"
+    assert postgres_qdrant["status"] == "failed"
+    assert postgres_qdrant["qdrant_verified"] is False
+    assert "Qdrant" in postgres_qdrant["detail"]
+
+
+@pytest.mark.asyncio
+async def test_readiness_rejects_qdrant_proof_without_point_counts(
+    tmp_path,
+    monkeypatch,
+):
+    now = datetime.now(UTC).isoformat()
+    artifacts = {
+        "dist/restore-drills/staging/staging-restore-drill-now.json": {
+            "status": "passed",
+            "finished_at": now,
+            "qdrant": {"restore_status": "ok"},
+        },
+        "dist/erpnext/restore-drills/erpnext-restore-drill-now.json": {
+            "status": "passed",
+            "finished_at": now,
+        },
+    }
+    for relative_path, payload in artifacts.items():
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        "cyber_team.operations.readiness.settings.environment",
+        "staging",
+    )
+
+    summary = await ProductionReadinessEvidenceService(
+        audit_service=FakeAudit(),
+        root_dir=tmp_path,
+    ).summary()
+
+    postgres_qdrant = summary["backup_restore"]["postgres_qdrant"]
+    assert postgres_qdrant["status"] == "failed"
+    assert postgres_qdrant["qdrant_verified"] is False
 
 
 @pytest.mark.asyncio

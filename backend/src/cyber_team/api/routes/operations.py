@@ -1,5 +1,7 @@
 """Autonomous operations routes."""
 
+import asyncio
+import logging
 import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -16,6 +18,16 @@ from cyber_team.operations.tool_readiness_policy import tool_is_required_for_rea
 
 router = APIRouter()
 READINESS_CACHE_TTL_SECONDS = 5.0
+logger = logging.getLogger(__name__)
+
+
+def _readiness_refresh_finished(task: asyncio.Task) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.exception("Background operations-readiness refresh failed")
 
 
 class AutonomousCycleRequest(BaseModel):
@@ -1640,9 +1652,25 @@ async def operations_readiness(
     if (
         not refresh
         and isinstance(cache, dict)
-        and cache.get("expires_at", 0) > now
         and isinstance(cache.get("payload"), dict)
     ):
+        if cache.get("expires_at", 0) > now:
+            return cache["payload"]
+        refresh_task = getattr(
+            request.app.state,
+            "operations_readiness_refresh_task",
+            None,
+        )
+        if not refresh_task or refresh_task.done():
+            refresh_task = asyncio.create_task(
+                operations_readiness(
+                    request=request,
+                    refresh=True,
+                    principal=principal,
+                )
+            )
+            refresh_task.add_done_callback(_readiness_refresh_finished)
+            request.app.state.operations_readiness_refresh_task = refresh_task
         return cache["payload"]
 
     registry = request.app.state.tool_registry

@@ -661,6 +661,81 @@ def test_operations_readiness_caches_snapshot_until_refresh(monkeypatch):
     assert registry.calls == 2
 
 
+def test_operations_readiness_serves_stale_snapshot_while_refreshing(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+
+    class FakeRegistry:
+        def __init__(self):
+            self.calls = 0
+
+        def list_tool_contracts(self):
+            self.calls += 1
+            return [{"name": "memory_recall", "state": "live", "side_effects": False}]
+
+    class FakeComms:
+        def integration_status(self):
+            return []
+
+    class DeferredTask:
+        def done(self):
+            return False
+
+        def add_done_callback(self, callback):
+            self.callback = callback
+
+    registry = FakeRegistry()
+    app.state.tool_registry = registry
+    app.state.comms_gateway = FakeComms()
+    app.state.audit_service = AsyncMock()
+    app.state.audit_service.list_events.return_value = []
+    app.state.memory_service = AsyncMock()
+    app.state.memory_service.list_memory_traces.return_value = []
+    app.state.memory_conflict_service = AsyncMock()
+    app.state.memory_conflict_service.readiness.return_value = {
+        "status": "ready",
+        "blocking": False,
+        "open_count": 0,
+        "blocking_count": 0,
+    }
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.settings.required_communication_providers",
+        "",
+    )
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+
+    client = TestClient(app)
+    first = client.get("/api/operations/readiness")
+    assert first.status_code == 200
+    app.state.operations_readiness_cache["expires_at"] = 0
+
+    scheduled = []
+
+    def defer(coroutine):
+        scheduled.append(coroutine)
+        return DeferredTask()
+
+    monkeypatch.setattr("cyber_team.api.routes.operations.asyncio.create_task", defer)
+    second = client.get("/api/operations/readiness")
+
+    assert second.status_code == 200
+    assert second.json() == first.json()
+    assert registry.calls == 1
+    assert len(scheduled) == 1
+    scheduled[0].close()
+
+
 def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
     app = FastAPI()
     app.include_router(operations_router, prefix="/api/operations")

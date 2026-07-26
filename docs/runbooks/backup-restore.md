@@ -66,16 +66,21 @@ BACKEND_VENV=/tmp/cyberteam-verify-venv ./scripts/staging-restore-drill.sh
 ```
 
 The script starts an isolated PostgreSQL 16 container, restores the custom-format
-backup, verifies Alembic state and key table row counts, removes the container, and
-writes JSON evidence to:
+backup, and verifies Alembic state and key table row counts. It also creates and
+downloads a snapshot of the live `cyberteam_memory` Qdrant collection, restores that
+snapshot into a disposable Qdrant container running the exact deployed image, and
+verifies that source and restored point counts match. The source snapshot, downloaded
+temporary file, and both disposable containers are removed by the cleanup trap. The
+script writes combined JSON evidence to:
 
 ```text
 dist/restore-drills/staging/staging-restore-drill-YYYYMMDDTHHMMSSZ.json
 ```
 
-The Operations readiness board treats this evidence as stale after 30 days.
+The Operations readiness board requires both PostgreSQL and Qdrant proof in the
+artifact and treats the combined evidence as stale after 30 days.
 
-## Qdrant Backup
+## Manual Qdrant Backup
 
 Create a collection snapshot:
 
@@ -92,7 +97,7 @@ curl "http://localhost:6333/collections/cyberteam_memory/snapshots"
 Copy snapshots from the Qdrant volume or configure object storage according to the
 deployment environment.
 
-## Qdrant Restore
+## Manual Qdrant Restore
 
 Restore the snapshot into a staging Qdrant instance first, then run memory recall smoke
 checks. If Qdrant is unavailable or restore fails, the application should continue with
