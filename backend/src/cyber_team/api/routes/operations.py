@@ -1711,6 +1711,30 @@ async def operations_readiness(
             "optional_disabled": False,
             "blocking": False,
         }
+    llm_execution_health = {
+        "status": "unavailable",
+        "blocking": False,
+        "detail": "Persisted LLM completion health is unavailable.",
+    }
+    memory_steward = getattr(request.app.state, "memory_steward_service", None)
+    health_reader = getattr(memory_steward, "llm_provider_health", None)
+    if callable(health_reader):
+        observed_health = await health_reader()
+        if isinstance(observed_health, dict):
+            llm_execution_health = observed_health
+    llm_status["execution_health"] = llm_execution_health
+    if llm_status.get("mode") == "live" and llm_execution_health.get("blocking"):
+        failure_category = llm_execution_health.get("status") or "provider_error"
+        llm_status.update({
+            "mode": (
+                "configuration_required"
+                if failure_category == "authentication_error"
+                else "degraded"
+            ),
+            "status": failure_category,
+            "blocking": True,
+            "detail": llm_execution_health.get("detail"),
+        })
     provider_items.append(llm_status)
     integration_blockers = [
         {

@@ -538,8 +538,30 @@ def test_operations_readiness_reports_tool_and_integration_blockers(monkeypatch)
                 }
             ]
 
+    class FakeLLM:
+        async def validate_provider(self):
+            return {
+                "provider": "mistral",
+                "configured": True,
+                "mode": "live",
+                "status": "live",
+                "blocking": False,
+                "detail": "Credentials validated.",
+            }
+
+    class FakeMemorySteward:
+        async def llm_provider_health(self):
+            return {
+                "status": "rate_limited",
+                "blocking": True,
+                "detail": "Latest persisted completion was rate limited.",
+                "last_failure_category": "rate_limited",
+            }
+
     app.state.tool_registry = FakeRegistry()
     app.state.comms_gateway = FakeComms()
+    app.state.llm_gateway = FakeLLM()
+    app.state.memory_steward_service = FakeMemorySteward()
     app.state.audit_service = AsyncMock()
     app.state.audit_service.list_events.return_value = [{"id": "evidence-1"}]
     app.state.memory_service = AsyncMock()
@@ -577,6 +599,9 @@ def test_operations_readiness_reports_tool_and_integration_blockers(monkeypatch)
     assert body["status"] == "degraded"
     assert body["tools"]["side_effect_blockers"][0]["tool_name"] == "task_create"
     assert body["integrations"]["blocking_readiness"] is True
+    assert body["integrations"]["llm"]["mode"] == "degraded"
+    assert body["integrations"]["llm"]["status"] == "rate_limited"
+    assert body["integrations"]["llm"]["execution_health"]["blocking"] is True
     assert body["memory"]["recent_trace_errors"] == 1
 
 

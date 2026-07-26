@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     litellm_log: str = "INFO"
     llm_history_max_conversations: int = 100
     llm_history_max_messages: int = 20
+    llm_retry_attempts: int = 3
+    llm_retry_backoff_seconds: float = 1.0
+    llm_provider_timeout_seconds: float = 60.0
+    llm_circuit_breaker_failure_threshold: int = 3
+    llm_circuit_breaker_cooldown_seconds: int = 120
+    llm_provider_health_lookback_minutes: int = 60
 
     # PostgreSQL
     postgres_host: str = "localhost"

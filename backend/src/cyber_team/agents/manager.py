@@ -214,8 +214,9 @@ class AgentManager:
         memory_service: MemoryService | None = None,
         audit_service: AuditService | None = None,
         tool_registry: Any | None = None,
+        llm_gateway: LLMGateway | None = None,
     ):
-        self._llm = LLMGateway()
+        self._llm = llm_gateway or LLMGateway()
         self._memory = memory_service
         self._audit = audit_service
         self._metrics = getattr(audit_service, "_metrics", None)

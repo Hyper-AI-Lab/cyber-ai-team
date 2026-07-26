@@ -1,7 +1,9 @@
 """LLM Gateway — LiteLLM with Mistral as default provider."""
 
+import asyncio
 import json
 import logging
+import time
 from collections import OrderedDict
 from datetime import timedelta
 
@@ -9,8 +11,13 @@ import httpx
 
 from cyber_team.clock import utc_now
 from cyber_team.config import settings
+from cyber_team.llm.resilience import classify_llm_exception, llm_error_is_retryable
 
 logger = logging.getLogger(__name__)
+
+
+class LLMCircuitOpenError(RuntimeError):
+    """Raised while provider calls are cooling down after repeated failures."""
 
 
 class LLMGateway:
@@ -21,6 +28,9 @@ class LLMGateway:
         self._max_messages = max(2, settings.llm_history_max_messages)
         self._last_validation_result: dict | None = None
         self._last_validation_at = None
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0
+        self._last_invocation_result: dict | None = None
 
         # Integrate Langfuse tracing if API keys are configured
         if settings.langfuse_public_key and settings.langfuse_secret_key:
@@ -56,44 +66,67 @@ class LLMGateway:
 
         messages.append({"role": "user", "content": user_message})
 
-        try:
-            import litellm
-            litellm.api_key = settings.mistral_api_key
+        self._ensure_provider_available()
+        import litellm
 
-            # Construct trace metadata for Langfuse
-            metadata = {
-                "generation_name": f"{agent_id}-completion",
-                "tags": [agent_id, settings.environment],
-            }
-            if conversation_id:
-                metadata["trace_id"] = conversation_id
-                metadata["session_id"] = conversation_id
+        litellm.api_key = settings.mistral_api_key
+        metadata = {
+            "generation_name": f"{agent_id}-completion",
+            "tags": [agent_id, settings.environment],
+        }
+        if conversation_id:
+            metadata["trace_id"] = conversation_id
+            metadata["session_id"] = conversation_id
 
-            response = await litellm.acompletion(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                metadata=metadata,
-            )
-
-            result = response.choices[0].message.content
-
-            # Store conversation history
-            if conversation_id:
-                self._append_history(conversation_id, user_message, result)
-
-            logger.info(
-                "LLM invoke: agent=%s, model=%s, tokens=%s",
-                agent_id,
-                model,
-                response.usage.total_tokens,
-            )
-            return result
-
-        except Exception as e:
-            logger.error(f"LLM invoke failed: {e}")
-            raise
+        attempts = max(1, settings.llm_retry_attempts)
+        last_error: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                response = await asyncio.wait_for(
+                    litellm.acompletion(
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        metadata=metadata,
+                    ),
+                    timeout=max(1.0, settings.llm_provider_timeout_seconds),
+                )
+                result = response.choices[0].message.content
+                self._record_provider_success()
+                if conversation_id:
+                    self._append_history(conversation_id, user_message, result)
+                logger.info(
+                    "LLM invoke: agent=%s, model=%s, tokens=%s",
+                    agent_id,
+                    model,
+                    response.usage.total_tokens,
+                )
+                return result
+            except Exception as exc:
+                last_error = exc
+                category = classify_llm_exception(exc)
+                if attempt >= attempts - 1 or not llm_error_is_retryable(category):
+                    self._record_provider_failure(category)
+                    logger.error(
+                        "LLM invoke failed: agent=%s category=%s attempt=%s/%s",
+                        agent_id,
+                        category,
+                        attempt + 1,
+                        attempts,
+                    )
+                    raise
+                backoff = max(0.0, settings.llm_retry_backoff_seconds) * (2**attempt)
+                logger.warning(
+                    "Retrying LLM invoke: agent=%s category=%s attempt=%s/%s",
+                    agent_id,
+                    category,
+                    attempt + 1,
+                    attempts,
+                )
+                if backoff:
+                    await asyncio.sleep(backoff)
+        raise last_error or RuntimeError("LLM provider invocation failed")
 
     async def validate_provider(self, *, force: bool = False) -> dict:
         now = utc_now()
@@ -103,7 +136,7 @@ class LLMGateway:
             and self._last_validation_at
             and now - self._last_validation_at < timedelta(minutes=5)
         ):
-            return self._last_validation_result
+            return self._merge_runtime_status(self._last_validation_result, now)
 
         if not settings.mistral_api_key:
             result = {
@@ -117,7 +150,7 @@ class LLMGateway:
             }
             self._last_validation_result = result
             self._last_validation_at = now
-            return result
+            return self._merge_runtime_status(result, now)
 
         try:
             async with httpx.AsyncClient(timeout=10) as client:
@@ -170,7 +203,92 @@ class LLMGateway:
             }
         self._last_validation_result = result
         self._last_validation_at = now
-        return result
+        return self._merge_runtime_status(result, now)
+
+    def runtime_status(self) -> dict:
+        now = utc_now()
+        circuit_open = self._circuit_open_until > time.monotonic()
+        last = dict(self._last_invocation_result or {})
+        status = "ready"
+        blocking = False
+        detail = "No recent LLM completion failures are recorded in this process."
+        if circuit_open:
+            status = last.get("category") or "circuit_open"
+            blocking = True
+            detail = "LLM completion circuit is cooling down after repeated failures."
+        elif last.get("outcome") == "failed":
+            status = last.get("category") or "provider_error"
+            blocking = status in {
+                "authentication_error",
+                "rate_limited",
+                "provider_unavailable",
+                "timeout",
+                "circuit_open",
+            }
+            detail = f"The latest LLM completion failed with category {status}."
+        elif last.get("outcome") == "success":
+            detail = "The latest LLM completion succeeded."
+        return {
+            "status": status,
+            "blocking": blocking,
+            "detail": detail,
+            "consecutive_failures": self._consecutive_failures,
+            "circuit_open": circuit_open,
+            "cooldown_remaining_seconds": max(
+                0,
+                round(self._circuit_open_until - time.monotonic()),
+            ),
+            "last_invocation": last or None,
+            "checked_at": now.isoformat(),
+        }
+
+    def _ensure_provider_available(self) -> None:
+        if self._circuit_open_until > time.monotonic():
+            raise LLMCircuitOpenError(
+                "LLM provider circuit breaker is open; retry after the cooldown."
+            )
+
+    def _record_provider_success(self) -> None:
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0
+        self._last_invocation_result = {
+            "outcome": "success",
+            "category": None,
+            "at": utc_now().isoformat(),
+        }
+
+    def _record_provider_failure(self, category: str) -> None:
+        self._consecutive_failures += 1
+        threshold = max(1, settings.llm_circuit_breaker_failure_threshold)
+        if (
+            llm_error_is_retryable(category)
+            and self._consecutive_failures >= threshold
+        ):
+            self._circuit_open_until = time.monotonic() + max(
+                1,
+                settings.llm_circuit_breaker_cooldown_seconds,
+            )
+        self._last_invocation_result = {
+            "outcome": "failed",
+            "category": category,
+            "at": utc_now().isoformat(),
+        }
+
+    def _merge_runtime_status(self, result: dict, now) -> dict:
+        runtime = self.runtime_status()
+        merged = {**result, "runtime_health": runtime}
+        if result.get("mode") == "live" and runtime["blocking"]:
+            category = runtime["status"]
+            merged.update({
+                "mode": "configuration_required"
+                if category == "authentication_error"
+                else "degraded",
+                "status": category,
+                "blocking": True,
+                "detail": runtime["detail"],
+                "last_checked_at": now.isoformat(),
+            })
+        return merged
 
     async def invoke_json(
         self,

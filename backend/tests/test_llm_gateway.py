@@ -1,7 +1,10 @@
+import sys
+from types import SimpleNamespace
+
 import pytest
 
 from cyber_team.config import settings
-from cyber_team.llm.gateway import LLMGateway
+from cyber_team.llm.gateway import LLMCircuitOpenError, LLMGateway
 
 
 def test_llm_history_is_bounded(monkeypatch):
@@ -79,3 +82,76 @@ async def test_validate_provider_reports_rejected_mistral_credentials(monkeypatc
 
     assert result["mode"] == "configuration_required"
     assert result["blocking"] is True
+
+
+@pytest.mark.asyncio
+async def test_invoke_retries_rate_limit_then_records_recovery(monkeypatch):
+    monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_retry_attempts", 2)
+    monkeypatch.setattr(settings, "llm_retry_backoff_seconds", 0)
+    monkeypatch.setattr(settings, "llm_provider_timeout_seconds", 1)
+    calls = 0
+
+    class RateLimitError(Exception):
+        pass
+
+    async def fake_completion(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RateLimitError("rate limit exceeded")
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Recovered."))],
+            usage=SimpleNamespace(total_tokens=12),
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=fake_completion),
+    )
+    gateway = LLMGateway()
+
+    result = await gateway.invoke("System", "Task", agent_id="ops")
+
+    assert result == "Recovered."
+    assert calls == 2
+    assert gateway.runtime_status()["status"] == "ready"
+    assert gateway.runtime_status()["last_invocation"]["outcome"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_invoke_opens_circuit_after_repeated_rate_limits(monkeypatch):
+    monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_retry_attempts", 1)
+    monkeypatch.setattr(settings, "llm_circuit_breaker_failure_threshold", 2)
+    monkeypatch.setattr(settings, "llm_circuit_breaker_cooldown_seconds", 60)
+    calls = 0
+
+    class RateLimitError(Exception):
+        pass
+
+    async def fake_completion(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise RateLimitError("rate limit exceeded")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=fake_completion),
+    )
+    gateway = LLMGateway()
+
+    with pytest.raises(RateLimitError):
+        await gateway.invoke("System", "First", agent_id="ops")
+    with pytest.raises(RateLimitError):
+        await gateway.invoke("System", "Second", agent_id="ops")
+    with pytest.raises(LLMCircuitOpenError):
+        await gateway.invoke("System", "Third", agent_id="ops")
+
+    assert calls == 2
+    status = gateway.runtime_status()
+    assert status["status"] == "rate_limited"
+    assert status["blocking"] is True
+    assert status["circuit_open"] is True

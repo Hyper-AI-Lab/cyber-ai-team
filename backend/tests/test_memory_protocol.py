@@ -200,6 +200,9 @@ async def test_memory_protocol_records_failure_trace_without_memory_write():
     assert memory.traces[0]["written_memory_ids"] == []
     assert memory.traces[0]["write_count"] == 0
     assert memory.traces[0]["metadata"]["test"] is True
+    assert memory.traces[0]["metadata"]["failure_domain"] == "llm_provider"
+    assert memory.traces[0]["metadata"]["failure_code"] == "provider_error"
+    assert memory.traces[0]["metadata"]["failure_retryable"] is False
     assert memory.traces[0]["errors"] == [
         "invoke:RuntimeError:provider unavailable",
     ]

@@ -97,6 +97,8 @@ class MemoryStewardRunResponse(BaseModel):
     traces_reviewed: int
     findings_created: int
     findings_updated: int
+    findings_reclassified: int = 0
+    approvals_cancelled: int = 0
     findings: list[MemoryStewardFindingResponse] = Field(default_factory=list)
     remediation_plan: dict | None = None
 

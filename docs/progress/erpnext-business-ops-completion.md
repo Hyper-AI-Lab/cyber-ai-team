@@ -4214,3 +4214,33 @@
   - Full backend verification in the current core image: `229 passed, 2 warnings in 68.92s`.
 - Next step:
   - Commit and push the approval-refresh hardening so GitHub CI can verify the repository state; the owner can now review the 6 refreshed memory-steward approvals in the UI with clearer descriptions.
+
+### 2026-07-26T13:06:08Z — STEP-136 — Added LLM provider resilience and corrected memory-steward error classification
+- Files/services changed:
+  - Added shared, secret-free LLM error classification in `/home/projects/cyber-team/backend/src/cyber_team/llm/resilience.py`.
+  - Hardened `/home/projects/cyber-team/backend/src/cyber_team/llm/gateway.py` with bounded retry/backoff, provider timeouts, completion-health state, and a cooldown circuit breaker.
+  - Updated the API and Temporal worker service graphs so each process shares its LLM gateway state instead of resetting the cooldown for every invocation.
+  - Updated `/home/projects/cyber-team/backend/src/cyber_team/memory/protocol.py` to record structured provider failure domain, category, and retryability metadata.
+  - Updated `/home/projects/cyber-team/backend/src/cyber_team/operations/memory_steward.py` to separate provider failures from actual recall/write failures, report persisted completion health, and resolve historical misclassifications using their exact linked trace ids.
+  - Updated operations readiness and Memory Steward API response types, LLM environment examples, and focused regression tests.
+  - Rebuilt and restarted staging `core` and `worker` services.
+- Commands run:
+  - Dockerized focused Pytest for LLM gateway, memory protocol/steward, and operations readiness tests.
+  - Dockerized full backend Pytest, Ruff, compileall, Compose config validation, and `git diff --check`.
+  - `docker compose --env-file deploy/environments/staging.env up -d --build core worker`.
+  - Owner-authenticated `POST /api/memory/steward/run`, `GET /api/dashboard/approval-queue`, `POST /api/agents/compliance_sentinel/invoke`, and `GET /api/operations/readiness?refresh=true` against staging.
+  - Public staging `/health` and container health checks for `core` and `worker`.
+- Result:
+  - Focused regression suite passed (`32 passed`), Ruff passed, compileall passed, Compose configuration passed, and the full backend suite passed (`234 passed`, two known dependency deprecation warnings).
+  - The live steward run resolved 6 `memory_operation_errors` findings whose linked traces actually contained Mistral provider failures, and automatically rejected all 6 invalid pending role-gap approvals. It created no replacement approvals.
+  - The pending approval queue is now empty.
+  - A fresh advisory-only Compliance Sentinel invocation returned exactly `Provider health verification complete.` through Mistral.
+  - Operations readiness now reports Mistral credential mode `live`, in-process runtime health `ready`, persisted execution health `ready`, no LLM integration blocker, and a fresh successful completion timestamp.
+  - Open Memory Steward findings now contain only two legitimate `stale_procedural_memory` findings; no open provider failure or false memory-operation finding remains.
+  - Overall staging readiness remains `degraded` only for the previously known stale alert-email, restore-drill, conservative-load, and business-workflow-smoke evidence.
+- Evidence:
+  - Live reconciliation at `2026-07-26T13:03:57.153693Z`: `findings_reclassified=6`, `approvals_cancelled=6`, `approvals_requested=0`, `approvals_pending=0`.
+  - Fresh Mistral completion at `2026-07-26T13:05:34.840429Z`; persisted trace success at `2026-07-26T13:05:35.131109Z`.
+  - Staging health returned `status=ok`; `cyberteam-staging-core` was healthy and `cyberteam-staging-worker` was running.
+- Next step:
+  - Commit and push this provider-resilience/reclassification slice, watch public GitHub CI, and append final CI evidence.

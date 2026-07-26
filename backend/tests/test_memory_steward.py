@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cyber_team.config import settings
 from cyber_team.db import Base
-from cyber_team.db.models import MemoryStewardFinding, MemoryTrace
+from cyber_team.db.models import ApprovalRequest, MemoryStewardFinding, MemoryTrace
 from cyber_team.operations.memory_steward import MemoryStewardService
 
 
@@ -127,6 +127,8 @@ def memory_trace(
     errors: list[str] | None = None,
     created_at: datetime | None = None,
     scope_results: list[dict] | None = None,
+    source_type: str = "agent_invocation",
+    metadata: dict | None = None,
 ) -> MemoryTrace:
     now = created_at or datetime(2026, 6, 2, 12, 0, 0)
     return MemoryTrace(
@@ -134,7 +136,7 @@ def memory_trace(
         invocation_id=f"invoke-{trace_id}",
         agent_id=agent_id,
         conversation_id=None,
-        source_type="agent_invocation",
+        source_type=source_type,
         task_excerpt="Prepare launch operations.",
         memory_namespace=namespace,
         read_policy={
@@ -156,7 +158,10 @@ def memory_trace(
         recall_count=recall_count,
         write_count=1,
         errors=errors or [],
-        metadata_={"memory_coverage": "empty" if recall_count == 0 else "hit"},
+        metadata_={
+            "memory_coverage": "empty" if recall_count == 0 else "hit",
+            **(metadata or {}),
+        },
         created_at=now,
     )
 
@@ -526,5 +531,191 @@ async def test_memory_steward_planner_reissues_expired_approval(monkeypatch):
         assert plan["approval_id"] == "approval-2"
         assert plan["previous_approval_id"] == "approval-1"
         assert plan["previous_approval_state"] == "expired"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_memory_steward_separates_provider_and_policy_errors(monkeypatch):
+    now = datetime(2026, 6, 2, 12, 0, 0)
+    engine, session_factory = await build_session_factory()
+    monkeypatch.setattr(settings, "memory_steward_trace_lookback_hours", 24)
+    monkeypatch.setattr(settings, "memory_steward_trace_limit", 100)
+    monkeypatch.setattr(settings, "memory_steward_planner_enabled", False)
+
+    try:
+        async with session_factory() as session:
+            session.add_all([
+                memory_trace(
+                    "trace-rate-limit",
+                    recall_count=1,
+                    errors=["invoke:RateLimitError:rate limit exceeded"],
+                    created_at=now - timedelta(minutes=3),
+                    scope_results=[],
+                ),
+                memory_trace(
+                    "trace-auth",
+                    recall_count=1,
+                    errors=["invoke:AuthenticationError:unauthorized"],
+                    created_at=now - timedelta(minutes=2),
+                    scope_results=[],
+                ),
+                memory_trace(
+                    "trace-approval",
+                    recall_count=1,
+                    errors=["approval_required"],
+                    created_at=now - timedelta(minutes=1),
+                    scope_results=[],
+                    source_type="tool_execution",
+                ),
+            ])
+            await session.commit()
+
+        steward = MemoryStewardService(session_factory=session_factory)
+        result = await steward.run_once(now=now, actor="test")
+        findings = await steward.list_findings(status="open")
+
+        assert result["findings_created"] == 2
+        assert {finding["finding_type"] for finding in findings} == {
+            "llm_provider_errors"
+        }
+        assert {finding["evidence"]["category"] for finding in findings} == {
+            "rate_limited",
+            "authentication_error",
+        }
+        assert all(finding["available_actions"] == [] for finding in findings)
+        assert all(
+            finding["finding_type"] != "memory_operation_errors"
+            for finding in findings
+        )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_llm_provider_health_recovers_after_newer_success(monkeypatch):
+    now = datetime(2026, 6, 2, 12, 0, 0)
+    engine, session_factory = await build_session_factory()
+    monkeypatch.setattr(settings, "llm_provider_health_lookback_minutes", 60)
+    monkeypatch.setattr(settings, "memory_steward_trace_limit", 100)
+
+    try:
+        async with session_factory() as session:
+            session.add_all([
+                memory_trace(
+                    "trace-provider-failure",
+                    recall_count=1,
+                    errors=["invoke:RateLimitError:rate limit exceeded"],
+                    created_at=now - timedelta(minutes=2),
+                    scope_results=[],
+                ),
+                memory_trace(
+                    "trace-provider-success",
+                    recall_count=1,
+                    created_at=now - timedelta(minutes=1),
+                    scope_results=[],
+                    metadata={
+                        "protocol_version": "agent-memory-protocol-v1",
+                        "result_excerpt": "Completed advisory review.",
+                    },
+                ),
+            ])
+            await session.commit()
+
+        health = await MemoryStewardService(
+            session_factory=session_factory
+        ).llm_provider_health(now=now)
+
+        assert health["status"] == "ready"
+        assert health["blocking"] is False
+        assert health["recovered"] is True
+        assert health["failure_counts"] == {"rate_limited": 1}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_memory_steward_reclassifies_legacy_finding_and_cancels_approval(
+    monkeypatch,
+):
+    now = datetime(2026, 6, 2, 12, 0, 0)
+    engine, session_factory = await build_session_factory()
+    monkeypatch.setattr(settings, "memory_steward_trace_lookback_hours", 24)
+    monkeypatch.setattr(settings, "memory_steward_trace_limit", 100)
+    monkeypatch.setattr(settings, "memory_steward_planner_enabled", False)
+
+    try:
+        async with session_factory() as session:
+            session.add(
+                memory_trace(
+                    "trace-misclassified",
+                    recall_count=1,
+                    errors=["invoke:RateLimitError:rate limit exceeded"],
+                    created_at=now - timedelta(days=2),
+                    scope_results=[],
+                )
+            )
+            session.add(
+                MemoryStewardFinding(
+                    id="finding-misclassified",
+                    finding_type="memory_operation_errors",
+                    severity="medium",
+                    status="open",
+                    agent_id="ops_agent",
+                    memory_namespace="company:acme:ops",
+                    company_namespace="company:acme",
+                    title="Memory operation errors for ops_agent",
+                    description="Legacy misclassification.",
+                    recommendation="Open a role gap.",
+                    trace_ids=["trace-misclassified"],
+                    evidence={"dedupe_key": "memory_operation_errors:ops_agent"},
+                    metadata_={},
+                    created_at=now - timedelta(days=2),
+                    updated_at=now - timedelta(days=2),
+                )
+            )
+            session.add(
+                ApprovalRequest(
+                    id="approval-misclassified",
+                    agent_id="ops_agent",
+                    action_type="memory_steward.report_role_gap",
+                    action_description="Open memory role gap.",
+                    action_payload={"finding_id": "finding-misclassified"},
+                    target_type="memory_steward_finding",
+                    target_id="finding-misclassified",
+                    status="pending",
+                    expires_at=now + timedelta(hours=1),
+                    created_at=now - timedelta(minutes=1),
+                )
+            )
+            await session.commit()
+
+        result = await MemoryStewardService(
+            session_factory=session_factory
+        ).run_once(now=now, actor="test")
+
+        assert result["findings_reclassified"] == 1
+        assert result["approvals_cancelled"] == 1
+        async with session_factory() as session:
+            finding = (
+                await session.execute(
+                    select(MemoryStewardFinding).where(
+                        MemoryStewardFinding.id == "finding-misclassified"
+                    )
+                )
+            ).scalar_one()
+            approval = (
+                await session.execute(
+                    select(ApprovalRequest).where(
+                        ApprovalRequest.id == "approval-misclassified"
+                    )
+                )
+            ).scalar_one()
+            assert finding.status == "resolved"
+            assert finding.metadata_["resolution"]["actor"] == (
+                "memory_steward_reclassifier"
+            )
+            assert approval.status == "rejected"
+            assert approval.reviewer == "memory_steward_reclassifier"
     finally:
         await engine.dispose()

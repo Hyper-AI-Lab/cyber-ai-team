@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
+from cyber_team.llm.resilience import classify_llm_exception, llm_error_is_retryable
+
 PROTOCOL_VERSION = "agent-memory-protocol-v1"
 WRITE_POLICY_VERSION = "memory-write-policy-v1"
 
@@ -148,10 +150,20 @@ class AgentMemoryProtocol:
         exc: Exception,
         trace_metadata: dict[str, Any] | None = None,
     ) -> None:
+        category = classify_llm_exception(exc)
         context.errors.append(
             f"invoke:{type(exc).__name__}:{self.excerpt(str(exc), 160)}"
         )
-        await self.record_trace(context, result="", metadata=trace_metadata)
+        await self.record_trace(
+            context,
+            result="",
+            metadata={
+                "failure_domain": "llm_provider",
+                "failure_code": category,
+                "failure_retryable": llm_error_is_retryable(category),
+                **(trace_metadata or {}),
+            },
+        )
 
     async def record_trace(
         self,

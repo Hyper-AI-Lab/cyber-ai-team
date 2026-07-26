@@ -12,7 +12,14 @@ from sqlalchemy import desc, select
 from cyber_team.clock import utc_now
 from cyber_team.config import settings
 from cyber_team.db import async_session
-from cyber_team.db.models import Agent, MemoryEntry, MemoryStewardFinding, MemoryTrace
+from cyber_team.db.models import (
+    Agent,
+    ApprovalRequest,
+    MemoryEntry,
+    MemoryStewardFinding,
+    MemoryTrace,
+)
+from cyber_team.llm.resilience import classify_llm_trace_error
 
 
 class MemoryStewardService:
@@ -45,6 +52,7 @@ class MemoryStewardService:
         traces = await self._load_recent_traces(now)
         proposals = self._propose_findings(traces)
         proposals.extend(await self._stale_procedural_memory_findings(now))
+        reconciliation = await self._reconcile_reclassified_memory_findings(traces, now)
         findings = []
         created = 0
         updated = 0
@@ -63,6 +71,8 @@ class MemoryStewardService:
             "traces_reviewed": len(traces),
             "findings_created": created,
             "findings_updated": updated,
+            "findings_reclassified": reconciliation["findings_resolved"],
+            "approvals_cancelled": reconciliation["approvals_rejected"],
             "findings": findings,
         }
         if settings.memory_steward_planner_enabled:
@@ -83,6 +93,8 @@ class MemoryStewardService:
                     "traces_reviewed": len(traces),
                     "findings_created": created,
                     "findings_updated": updated,
+                    "findings_reclassified": reconciliation["findings_resolved"],
+                    "approvals_cancelled": reconciliation["approvals_rejected"],
                     "finding_types": [finding["finding_type"] for finding in findings],
                 },
             )
@@ -331,6 +343,7 @@ class MemoryStewardService:
         proposals: list[dict] = []
         proposals.extend(self._empty_recall_findings(traces))
         proposals.extend(self._memory_error_findings(traces))
+        proposals.extend(self._llm_provider_error_findings(traces))
         proposals.extend(self._missing_company_memory_findings(traces))
         proposals.extend(self._missing_trace_coverage_findings(traces))
         proposals.extend(self._namespace_mismatch_findings(traces))
@@ -381,13 +394,17 @@ class MemoryStewardService:
     def _memory_error_findings(self, traces: list[dict]) -> list[dict]:
         groups: dict[tuple[str | None, str | None], list[dict]] = defaultdict(list)
         for trace in traces:
-            if not trace["errors"]:
+            if not self._memory_errors_for_trace(trace):
                 continue
             groups[(trace["agent_id"], trace["memory_namespace"])].append(trace)
 
         findings = []
         for (agent_id, memory_namespace), grouped in groups.items():
-            all_errors = [error for trace in grouped for error in trace["errors"]]
+            all_errors = [
+                error
+                for trace in grouped
+                for error in self._memory_errors_for_trace(trace)
+            ]
             error_counts = Counter(error.split(":", 1)[0] for error in all_errors)
             severity = "high" if any("write" in error for error in all_errors) else "medium"
             company_namespace = self._company_namespace_for(memory_namespace)
@@ -412,12 +429,254 @@ class MemoryStewardService:
                     "sample_errors": [
                         error
                         for trace in grouped[:3]
-                        for error in trace["errors"][:2]
+                        for error in self._memory_errors_for_trace(trace)[:2]
                     ][:5],
                 },
                 "metadata": {"source": "memory_steward"},
             })
         return findings
+
+    def _llm_provider_error_findings(self, traces: list[dict]) -> list[dict]:
+        groups: dict[str, list[dict]] = defaultdict(list)
+        for trace in traces:
+            categories = self._llm_error_categories(trace)
+            for category in categories:
+                groups[category].append(trace)
+
+        findings = []
+        for category, grouped in groups.items():
+            unique_traces = {trace["id"]: trace for trace in grouped}
+            grouped = list(unique_traces.values())
+            agent_ids = sorted({
+                trace["agent_id"] for trace in grouped if trace.get("agent_id")
+            })
+            severity = "high" if category == "authentication_error" else "medium"
+            label = category.replace("_", " ")
+            findings.append({
+                "finding_type": "llm_provider_errors",
+                "severity": severity,
+                "agent_id": None,
+                "memory_namespace": None,
+                "company_namespace": None,
+                "title": f"LLM provider {label}",
+                "description": (
+                    f"{len(grouped)} recent agent invocation traces reported {label}. "
+                    "This is an LLM provider condition, not a memory subsystem failure."
+                ),
+                "recommendation": self._llm_provider_recommendation(category),
+                "trace_ids": [trace["id"] for trace in grouped],
+                "evidence": {
+                    "dedupe_key": f"llm_provider_errors:{category}",
+                    "provider": "mistral",
+                    "category": category,
+                    "affected_agent_ids": agent_ids,
+                    "occurrence_count": len(grouped),
+                    "sample_errors": [
+                        error
+                        for trace in grouped[:3]
+                        for error in trace["errors"]
+                        if classify_llm_trace_error(error) == category
+                    ][:5],
+                },
+                "metadata": {
+                    "source": "memory_steward",
+                    "failure_domain": "llm_provider",
+                },
+            })
+        return findings
+
+    async def llm_provider_health(self, *, now: datetime | None = None) -> dict:
+        now = now or utc_now()
+        cutoff = now - timedelta(
+            minutes=max(1, settings.llm_provider_health_lookback_minutes)
+        )
+        limit = max(1, min(settings.memory_steward_trace_limit, 1000))
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(MemoryTrace)
+                .where(MemoryTrace.created_at >= cutoff)
+                .order_by(desc(MemoryTrace.created_at))
+                .limit(limit)
+            )
+            traces = [self._trace_to_dict(trace) for trace in result.scalars().all()]
+
+        failures: list[tuple[datetime, str, dict]] = []
+        successes: list[tuple[datetime, dict]] = []
+        category_counts: Counter = Counter()
+        for trace in traces:
+            created_at = datetime.fromisoformat(trace["created_at"])
+            categories = self._llm_error_categories(trace)
+            for category in categories:
+                failures.append((created_at, category, trace))
+                category_counts[category] += 1
+            metadata = trace.get("metadata") or {}
+            if (
+                metadata.get("protocol_version")
+                and metadata.get("result_excerpt")
+                and not categories
+            ):
+                successes.append((created_at, trace))
+
+        latest_failure = max(failures, default=None, key=lambda item: item[0])
+        latest_success = max(successes, default=None, key=lambda item: item[0])
+        recovered = bool(
+            latest_success
+            and latest_failure
+            and latest_success[0] > latest_failure[0]
+        )
+        status = "ready"
+        blocking = False
+        detail = "No recent LLM completion failures were observed."
+        if latest_failure and not recovered:
+            status = latest_failure[1]
+            blocking = True
+            detail = (
+                "The latest persisted LLM completion observation failed with category "
+                f"{status}."
+            )
+        elif recovered:
+            detail = "A successful LLM completion followed the latest provider failure."
+        elif not latest_success:
+            status = "no_recent_execution"
+            detail = "No recent LLM completion execution evidence is available."
+        return {
+            "status": status,
+            "blocking": blocking,
+            "recovered": recovered,
+            "detail": detail,
+            "lookback_minutes": max(1, settings.llm_provider_health_lookback_minutes),
+            "failure_counts": dict(category_counts),
+            "last_success_at": latest_success[0].isoformat() if latest_success else None,
+            "last_failure_at": latest_failure[0].isoformat() if latest_failure else None,
+            "last_failure_category": latest_failure[1] if latest_failure else None,
+            "checked_at": now.isoformat(),
+        }
+
+    async def _reconcile_reclassified_memory_findings(
+        self,
+        traces: list[dict],
+        now: datetime,
+    ) -> dict:
+        traces_by_id = {trace["id"]: trace for trace in traces}
+        resolved_ids = []
+        approval_ids = []
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(MemoryStewardFinding).where(
+                    MemoryStewardFinding.finding_type == "memory_operation_errors",
+                    MemoryStewardFinding.status.in_(self.OPEN_STATUSES),
+                )
+            )
+            findings = list(result.scalars().all())
+            linked_trace_ids = {
+                trace_id
+                for finding in findings
+                for trace_id in finding.trace_ids or []
+                if trace_id not in traces_by_id
+            }
+            if linked_trace_ids:
+                historical = await session.execute(
+                    select(MemoryTrace).where(MemoryTrace.id.in_(linked_trace_ids))
+                )
+                traces_by_id.update({
+                    trace.id: self._trace_to_dict(trace)
+                    for trace in historical.scalars().all()
+                })
+            for finding in findings:
+                observed = [
+                    traces_by_id[trace_id]
+                    for trace_id in finding.trace_ids or []
+                    if trace_id in traces_by_id
+                ]
+                if not observed or any(
+                    self._memory_errors_for_trace(trace) for trace in observed
+                ):
+                    continue
+                metadata = dict(finding.metadata_ or {})
+                metadata["resolution"] = {
+                    "status": "resolved",
+                    "note": (
+                        "Reclassified: linked traces contain provider or policy errors, "
+                        "not memory recall/write failures."
+                    ),
+                    "actor": "memory_steward_reclassifier",
+                    "resolved_at": now.isoformat(),
+                }
+                finding.status = "resolved"
+                finding.metadata_ = metadata
+                finding.updated_at = now
+                finding.resolved_at = now
+                resolved_ids.append(finding.id)
+
+                approvals = await session.execute(
+                    select(ApprovalRequest).where(
+                        ApprovalRequest.target_type == "memory_steward_finding",
+                        ApprovalRequest.target_id == finding.id,
+                        ApprovalRequest.status == "pending",
+                    )
+                )
+                for approval in approvals.scalars().all():
+                    approval.status = "rejected"
+                    approval.reviewer = "memory_steward_reclassifier"
+                    approval.review_note = (
+                        "Automatically cancelled because the source finding was "
+                        "reclassified as a non-memory provider/policy condition."
+                    )
+                    approval.resolved_at = now
+                    approval_ids.append(approval.id)
+            if resolved_ids or approval_ids:
+                await session.commit()
+        return {
+            "findings_resolved": len(resolved_ids),
+            "finding_ids": resolved_ids,
+            "approvals_rejected": len(approval_ids),
+            "approval_ids": approval_ids,
+        }
+
+    @staticmethod
+    def _memory_errors_for_trace(trace: dict) -> list[str]:
+        errors = [str(error) for error in trace.get("errors") or []]
+        scope_errors = {
+            str(scope.get("error"))
+            for scope in (trace.get("read_policy") or {}).get("scope_results") or []
+            if scope.get("error")
+        }
+        return [
+            error
+            for error in errors
+            if error.startswith(("memory_service:", "recall:", "write:"))
+            or error in scope_errors
+        ]
+
+    @staticmethod
+    def _llm_error_categories(trace: dict) -> set[str]:
+        metadata = trace.get("metadata") or {}
+        if metadata.get("failure_domain") == "llm_provider" and metadata.get(
+            "failure_code"
+        ):
+            return {str(metadata["failure_code"])}
+        return {
+            category
+            for error in trace.get("errors") or []
+            if (category := classify_llm_trace_error(error)) is not None
+        }
+
+    @staticmethod
+    def _llm_provider_recommendation(category: str) -> str:
+        if category == "rate_limited":
+            return (
+                "Allow the bounded retry/cooldown policy to recover, reduce concurrent "
+                "review loops, and validate provider health before replaying work."
+            )
+        if category == "authentication_error":
+            return (
+                "Validate Mistral credentials in Integrations and replace the key if the "
+                "latest execution still fails authentication."
+            )
+        return (
+            "Validate the LLM provider, inspect the latest completion evidence, and replay "
+            "the affected advisory work after provider health recovers."
+        )
 
     def _missing_company_memory_findings(self, traces: list[dict]) -> list[dict]:
         groups: dict[str, list[dict]] = defaultdict(list)
@@ -1054,11 +1313,12 @@ class MemoryStewardService:
                 "label": "Seed Memory",
                 "description": "Write a durable memory entry that guides future recall.",
             })
-        actions.append({
-            "type": "report_role_gap",
-            "label": "Open Gap",
-            "description": "Create a role or capability gap for follow-up.",
-        })
+        if finding["finding_type"] != "llm_provider_errors":
+            actions.append({
+                "type": "report_role_gap",
+                "label": "Open Gap",
+                "description": "Create a role or capability gap for follow-up.",
+            })
         return actions
 
     @staticmethod

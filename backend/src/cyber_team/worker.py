@@ -15,7 +15,11 @@ logger = logging.getLogger(__name__)
 with workflow.unsafe.imports_passed_through():
     from cyber_team.agents.manager import AgentManager
     from cyber_team.config import settings
+    from cyber_team.llm.gateway import LLMGateway
     from cyber_team.memory.service import MemoryService
+
+
+worker_llm_gateway = LLMGateway()
 
 
 @asynccontextmanager
@@ -37,6 +41,7 @@ async def activity_services():
         memory_service=memory,
         audit_service=audit,
         tool_registry=registry,
+        llm_gateway=worker_llm_gateway,
     )
     registry.set_services(
         comms=comms,
