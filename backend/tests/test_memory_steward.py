@@ -34,6 +34,7 @@ class FakeAgentManager:
         self.approvals = []
         self.approved = set()
         self.consumed = []
+        self.approval_states = {}
 
     async def report_role_gap(self, data, reporter="system"):
         gap_id = f"gap-{len(self.gaps) + 1}"
@@ -62,6 +63,7 @@ class FakeAgentManager:
         **kwargs,
     ):
         approval_id = f"approval-{len(self.approvals) + 1}"
+        state = kwargs.pop("state", "pending")
         self.approvals.append({
             "id": approval_id,
             "agent_id": agent_id,
@@ -70,6 +72,7 @@ class FakeAgentManager:
             "payload": payload,
             **kwargs,
         })
+        self.approval_states[approval_id] = state
         return approval_id
 
     async def approval_is_executable(
@@ -79,6 +82,18 @@ class FakeAgentManager:
         target_id=None,
     ):
         return approval_id in self.approved
+
+    async def approval_status(
+        self,
+        approval_id,
+        *,
+        target_type=None,
+        target_id=None,
+    ):
+        state = self.approval_states.get(approval_id)
+        if state is None:
+            return None
+        return {"approval_id": approval_id, "state": state}
 
     async def consume_approval(
         self,
@@ -93,6 +108,7 @@ class FakeAgentManager:
             "target_type": target_type,
             "target_id": target_id,
         })
+        self.approval_states[approval_id] = "consumed"
 
 
 async def build_session_factory():
@@ -432,7 +448,9 @@ async def test_memory_steward_planner_requests_and_consumes_approval(monkeypatch
             apply_safe_actions=True,
             request_approvals=True,
         )
+        assert "Memory operation errors" in manager.approvals[0]["description"]
         manager.approved.add("approval-1")
+        manager.approval_states["approval-1"] = "approved"
         applied = await steward.plan_remediations(
             actor="planner",
             apply_safe_actions=True,
@@ -453,5 +471,60 @@ async def test_memory_steward_planner_requests_and_consumes_approval(monkeypatch
         assert plan["status"] == "applied"
         assert plan["approval_id"] == "approval-1"
         assert finding["metadata"]["last_action"]["action_type"] == "report_role_gap"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_memory_steward_planner_reissues_expired_approval(monkeypatch):
+    now = datetime(2026, 6, 2, 12, 0, 0)
+    engine, session_factory = await build_session_factory()
+    monkeypatch.setattr(settings, "memory_steward_empty_recall_threshold", 2)
+    monkeypatch.setattr(settings, "memory_steward_trace_lookback_hours", 24)
+    monkeypatch.setattr(settings, "memory_steward_trace_limit", 100)
+    monkeypatch.setattr(settings, "memory_steward_planner_enabled", False)
+
+    try:
+        async with session_factory() as session:
+            session.add(
+                memory_trace(
+                    "trace-plan-expired-1",
+                    errors=["write:RuntimeError:database unavailable"],
+                    recall_count=1,
+                    created_at=now - timedelta(minutes=1),
+                    scope_results=[],
+                )
+            )
+            await session.commit()
+
+        manager = FakeAgentManager()
+        steward = MemoryStewardService(
+            agent_manager=manager,
+            session_factory=session_factory,
+        )
+        await steward.run_once(now=now, actor="test")
+
+        first = await steward.plan_remediations(
+            actor="planner",
+            apply_safe_actions=True,
+            request_approvals=True,
+        )
+        manager.approval_states["approval-1"] = "expired"
+        second = await steward.plan_remediations(
+            actor="planner",
+            apply_safe_actions=True,
+            request_approvals=True,
+        )
+
+        assert first["approvals_requested"] == 1
+        assert second["approvals_requested"] == 1
+        assert len(manager.approvals) == 2
+
+        finding = (await steward.list_findings(status="open"))[0]
+        plan = finding["metadata"]["remediation_plan"]
+        assert plan["status"] == "approval_requested"
+        assert plan["approval_id"] == "approval-2"
+        assert plan["previous_approval_id"] == "approval-1"
+        assert plan["previous_approval_state"] == "expired"
     finally:
         await engine.dispose()

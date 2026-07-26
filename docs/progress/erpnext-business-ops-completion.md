@@ -4184,3 +4184,33 @@
   - Local Node 20 container validation completed successfully against `/home/projects/cyber-team/frontend`.
 - Next step:
   - Commit and push the frontend audit hardening so a fresh GitHub Actions run can clear the public CI failure introduced after STEP-133.
+
+### 2026-07-26T01:03:18Z — STEP-135 — Hardened memory-steward approval refresh/reuse flow and verified it live in staging
+- Files/services changed:
+  - Updated `/home/projects/cyber-team/backend/src/cyber_team/agents/manager.py` so targeted approvals reuse existing actionable requests and stale pending requests are marked expired before reissue.
+  - Updated `/home/projects/cyber-team/backend/src/cyber_team/operations/memory_steward.py` so remediation plans distinguish `pending` vs `expired/consumed/rejected`, request a fresh approval when needed, and record previous expired approval ids/states in plan metadata.
+  - Updated `/home/projects/cyber-team/backend/tests/test_memory_steward.py` and `/home/projects/cyber-team/backend/tests/test_approval_locking.py` with regressions for approval reuse and expired-approval reissue.
+  - Rebuilt and restarted the staging `core` and `worker` services with `docker compose --env-file deploy/environments/staging.env up -d --build core worker`.
+- Commands run:
+  - `docker run --rm -v /home/projects/cyber-team/backend:/app -w /app cyber-team-core:e96c521 bash -lc "pip install --quiet pytest pytest-asyncio pytest-cov ruff && PYTHONPATH=src pytest -q tests/test_memory_steward.py tests/test_approval_locking.py"`
+  - `docker run --rm -v /home/projects/cyber-team/backend:/app -w /app cyber-team-core:e96c521 bash -lc "python -m compileall -q src tests && pip install --quiet ruff && ruff check src tests"`
+  - `docker run --rm -v /home/projects/cyber-team:/workspace -w /workspace/backend cyber-team-core:latest bash -lc "pip install --quiet pytest pytest-asyncio pytest-cov && PYTHONPATH=src pytest -q"`
+  - Owner-authenticated `POST /api/memory/steward/plan` against staging with `{"apply_safe_actions":true,"request_approvals":true,"limit":20}`.
+  - Owner-authenticated `GET /api/dashboard/approval-queue?status=pending` and `GET /health` against `https://cyberteam.hyperailab.com`.
+- Result:
+  - Focused regressions passed, compile passed, Ruff passed, and the full backend suite passed (`229 passed`).
+  - Staging `core` and `worker` were rebuilt from the updated backend code and came back healthy after a brief startup `502` window while Caddy was ahead of the app.
+  - A live Memory Steward planning run reviewed 9 findings and correctly reissued 6 fresh approvals for `report_role_gap` where the previous approval ids had expired; each plan now records `previous_approval_id` and `previous_approval_state=expired` instead of staying stuck in a fake `approval_pending` state.
+  - The refreshed pending approvals now carry finding-specific `action_description` text (for example naming the Company Builder, Integration Architect, Finance, Knowledge, and Supervisor review agents) rather than looking like indistinguishable duplicates.
+- Evidence:
+  - Live planner run at `2026-07-26T01:02:42.958615Z` returned 6 `approval_requested` items with fresh ids:
+    - `18a35799-d38d-4914-9bb4-78a32b6df7db`
+    - `063d10db-6e6b-4b1b-861a-6c17960abaa9`
+    - `90c42d46-e437-409c-8aa9-6ec9d541309b`
+    - `88c56f2b-0c8c-49af-b381-323d6cc7ee86`
+    - `e0e35c9e-2bbe-40cc-8c09-f528c57b3b91`
+    - `f1e77303-0cab-4da7-a884-1d18ce68f275`
+  - Staging health check: `https://cyberteam.hyperailab.com/health` returned `{"status":"ok","version":"0.1.0","build_sha":"local","environment":"staging"}` after restart.
+  - Full backend verification in the current core image: `229 passed, 2 warnings in 68.92s`.
+- Next step:
+  - Commit and push the approval-refresh hardening so GitHub CI can verify the repository state; the owner can now review the 6 refreshed memory-steward approvals in the UI with clearer descriptions.

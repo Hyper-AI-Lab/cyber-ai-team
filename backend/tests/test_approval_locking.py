@@ -69,6 +69,23 @@ class FakeQueueSession:
         self.commits += 1
 
 
+class FakeReusableApprovalSession:
+    def __init__(self, approvals):
+        self.approvals = approvals
+        self.added = []
+        self.commits = 0
+
+    async def execute(self, statement):
+        return FakeListResult(self.approvals)
+
+    def add(self, request):
+        self.added.append(request)
+        self.approvals.append(request)
+
+    async def commit(self):
+        self.commits += 1
+
+
 class FakeSessionContext:
     def __init__(self, session):
         self.session = session
@@ -122,6 +139,16 @@ def patch_queue_session(monkeypatch, requests):
     return session
 
 
+def patch_reusable_approval_session(monkeypatch, approvals):
+    session = FakeReusableApprovalSession(approvals)
+    monkeypatch.setattr(
+        manager_module,
+        "async_session",
+        lambda: FakeSessionContext(session),
+    )
+    return session
+
+
 @pytest.mark.asyncio
 async def test_resolve_approval_locks_row(monkeypatch):
     session = patch_session(monkeypatch, approval_request(status="pending"))
@@ -149,6 +176,60 @@ async def test_get_approval_queue_expires_stale_pending_requests(monkeypatch):
     assert expired.status == "expired"
     assert expired.resolved_at is not None
     assert session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_request_approval_reuses_pending_targeted_request(monkeypatch):
+    pending = approval_request(status="pending")
+    pending.id = "approval-pending"
+    pending.action_type = "memory_steward.report_role_gap"
+    pending.target_type = "memory_steward_finding"
+    pending.target_id = "finding-1"
+    pending.expires_at = utc_now() + manager_module.timedelta(minutes=10)
+    session = patch_reusable_approval_session(monkeypatch, [pending])
+
+    approval_id = await AgentManager()._request_approval(
+        None,
+        "memory_steward.report_role_gap",
+        "Review finding",
+        {"finding_id": "finding-1"},
+        requester="planner",
+        requester_type="agent",
+        target_type="memory_steward_finding",
+        target_id="finding-1",
+    )
+
+    assert approval_id == "approval-pending"
+    assert session.added == []
+    assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_request_approval_reissues_after_expired_targeted_request(monkeypatch):
+    expired = approval_request(status="pending")
+    expired.id = "approval-expired"
+    expired.action_type = "memory_steward.report_role_gap"
+    expired.target_type = "memory_steward_finding"
+    expired.target_id = "finding-1"
+    expired.expires_at = utc_now() - manager_module.timedelta(minutes=1)
+    session = patch_reusable_approval_session(monkeypatch, [expired])
+
+    approval_id = await AgentManager()._request_approval(
+        None,
+        "memory_steward.report_role_gap",
+        "Review finding",
+        {"finding_id": "finding-1"},
+        requester="planner",
+        requester_type="agent",
+        target_type="memory_steward_finding",
+        target_id="finding-1",
+    )
+
+    assert approval_id != "approval-expired"
+    assert expired.status == "expired"
+    assert expired.resolved_at is not None
+    assert len(session.added) == 1
+    assert session.commits == 2
 
 
 @pytest.mark.asyncio

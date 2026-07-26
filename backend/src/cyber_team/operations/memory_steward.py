@@ -763,7 +763,14 @@ class MemoryStewardService:
             plan["reason"] = "Agent manager is not available for approval routing."
             return "blocked"
         approval_id = existing_plan.get("approval_id")
-        if approval_id and await self._approval_is_executable(approval_id, finding["id"]):
+        approval_state = None
+        if approval_id:
+            approval_state = await self._approval_state(approval_id, finding["id"])
+        if (
+            approval_id
+            and approval_state == "approved"
+            and await self._approval_is_executable(approval_id, finding["id"])
+        ):
             try:
                 result = await self.execute_action(
                     finding["id"],
@@ -782,10 +789,13 @@ class MemoryStewardService:
             plan["applied_at"] = utc_now().isoformat()
             plan["result"] = result["action"]["result"] if result else {}
             return "actions_applied"
-        if approval_id:
+        if approval_id and approval_state == "pending":
             plan["status"] = "approval_pending"
             plan["approval_id"] = approval_id
             return "approvals_pending"
+        if approval_id and approval_state:
+            plan["previous_approval_id"] = approval_id
+            plan["previous_approval_state"] = approval_state
         approval_id = await self._request_action_approval(finding, plan, actor)
         if not approval_id:
             plan["status"] = "planned"
@@ -821,12 +831,17 @@ class MemoryStewardService:
         request_approval = getattr(self._agent_manager, "_request_approval", None)
         if not request_approval:
             return None
+        description = (
+            f"Review memory-steward role-gap remediation for '{finding['title']}'. "
+            f"{plan['description']}"
+        )
         return await request_approval(
             finding.get("agent_id"),
             f"memory_steward.{plan['action_type']}",
-            plan["description"],
+            description,
             {
                 "finding_id": finding["id"],
+                "finding_title": finding["title"],
                 "finding_type": finding["finding_type"],
                 "action_type": plan["action_type"],
                 "params": plan.get("params") or {},
@@ -837,6 +852,21 @@ class MemoryStewardService:
             target_type="memory_steward_finding",
             target_id=finding["id"],
         )
+
+    async def _approval_state(self, approval_id: str, finding_id: str) -> str | None:
+        approval_status = getattr(self._agent_manager, "approval_status", None)
+        if approval_status:
+            status = await approval_status(
+                approval_id,
+                target_type="memory_steward_finding",
+                target_id=finding_id,
+            )
+            if status:
+                return status.get("state")
+            return None
+        if await self._approval_is_executable(approval_id, finding_id):
+            return "approved"
+        return "pending"
 
     async def _approval_is_executable(self, approval_id: str, finding_id: str) -> bool:
         approval_is_executable = getattr(self._agent_manager, "approval_is_executable", None)

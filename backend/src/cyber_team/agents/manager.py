@@ -1487,6 +1487,14 @@ Propose a new role to fill this gap. Return JSON with:
         approval_id = str(uuid.uuid4())
         expires_at = utc_now() + timedelta(minutes=expires_in_minutes)
         async with async_session() as session:
+            existing = await self._find_reusable_approval(
+                session,
+                action_type=action_type,
+                target_type=target_type,
+                target_id=target_id,
+            )
+            if existing:
+                return existing.id
             req = ApprovalRequest(
                 id=approval_id,
                 agent_id=agent_id,
@@ -1521,6 +1529,50 @@ Propose a new role to fill this gap. Return JSON with:
         if self._metrics:
             self._metrics.record_approval_event("requested", "pending", risk_level)
         return approval_id
+
+    async def _find_reusable_approval(
+        self,
+        session,
+        *,
+        action_type: str,
+        target_type: str | None,
+        target_id: str | None,
+    ) -> ApprovalRequest | None:
+        if not target_type or not target_id:
+            return None
+        now = utc_now()
+        result = await session.execute(
+            select(ApprovalRequest)
+            .where(
+                ApprovalRequest.action_type == action_type,
+                ApprovalRequest.target_type == target_type,
+                ApprovalRequest.target_id == target_id,
+            )
+            .order_by(ApprovalRequest.created_at.desc())
+        )
+        approvals = list(result.scalars().all())
+        needs_commit = False
+        for approval in approvals:
+            if approval.status == "pending" and approval.expires_at and approval.expires_at < now:
+                approval.status = "expired"
+                approval.resolved_at = now
+                needs_commit = True
+                continue
+            if approval.status == "pending":
+                if needs_commit:
+                    await session.commit()
+                return approval
+            if (
+                approval.status == "approved"
+                and approval.consumed_at is None
+                and (approval.expires_at is None or approval.expires_at >= now)
+            ):
+                if needs_commit:
+                    await session.commit()
+                return approval
+        if needs_commit:
+            await session.commit()
+        return None
 
     async def get_approval_queue(self, status: str | None = None) -> list[dict]:
         async with async_session() as session:
@@ -1713,6 +1765,50 @@ Propose a new role to fill this gap. Return JSON with:
             )
         if self._metrics:
             self._metrics.record_approval_event("consumed", "success", req.risk_level)
+
+    async def approval_status(
+        self,
+        approval_id: str,
+        *,
+        target_type: str | None = None,
+        target_id: str | None = None,
+    ) -> dict | None:
+        async with async_session() as session:
+            result = await session.execute(
+                select(ApprovalRequest).where(ApprovalRequest.id == approval_id)
+            )
+            approval = result.scalar_one_or_none()
+            if not approval:
+                return None
+            if target_type and approval.target_type and approval.target_type != target_type:
+                return None
+            if target_id and approval.target_id and approval.target_id != target_id:
+                return None
+            if (
+                approval.status == "pending"
+                and approval.expires_at is not None
+                and approval.expires_at < utc_now()
+            ):
+                approval.status = "expired"
+                approval.resolved_at = utc_now()
+                await session.commit()
+            return {
+                "approval_id": approval.id,
+                "state": self._approval_state(approval),
+                "risk_level": approval.risk_level,
+                "target_type": approval.target_type,
+                "target_id": approval.target_id,
+                "consumed_at": (
+                    approval.consumed_at.isoformat() if approval.consumed_at else None
+                ),
+                "expires_at": (
+                    approval.expires_at.isoformat() if approval.expires_at else None
+                ),
+                "created_at": approval.created_at.isoformat(),
+                "resolved_at": (
+                    approval.resolved_at.isoformat() if approval.resolved_at else None
+                ),
+            }
 
     # ─── Agent Status ─────────────────────────────────────────────────
 
