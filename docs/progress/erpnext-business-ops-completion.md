@@ -4411,3 +4411,23 @@
   - Business workflow: `/home/projects/cyber-team/dist/business-workflows/business-workflow-smoke-20260726T151555Z.json`.
 - Next step:
   - Commit and push the production-readiness evidence hardening slice, then require a green public GitHub CI run for completion.
+
+### 2026-07-26T15:35:03Z — STEP-145 — Verified public CI for production-readiness evidence closure
+- Files/services changed:
+  - No application source changed in this step; this append-only entry records repository publication and independent GitHub verification.
+- Commands run:
+  - `git commit -m "fix: refresh production readiness evidence"`.
+  - `git push origin main`.
+  - `gh run watch 30208531764 --repo Hyper-AI-Lab/cyber-ai-team --exit-status`.
+- Result:
+  - Source commit `f690e2c0754c8701df498a89ff28e991fdd46518` was pushed to public `main`.
+  - GitHub Actions run `30208531764` completed with overall `success`.
+  - Backend lint, compile, all tests, Alembic offline SQL, real PostgreSQL upgrade, dependency audit, and migration rehearsal passed.
+  - Frontend tests, shipped-runtime dependency audit, production build, and TypeScript check passed.
+  - Compose configuration, operations syntax, secret scan, FOSS/resource policy, and diff hygiene passed.
+  - Event-policy-only jobs (observability, Compose smoke, and image scan) were skipped on this push; equivalent local/live checks were completed in STEP-144.
+- Evidence:
+  - GitHub CI: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30208531764`.
+  - Verified commit: `f690e2c0754c8701df498a89ff28e991fdd46518`.
+- Next step:
+  - Push this append-only CI record and verify the final documentation head; the requested operational evidence refresh is otherwise complete.
