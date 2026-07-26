@@ -4244,3 +4244,23 @@
   - Staging health returned `status=ok`; `cyberteam-staging-core` was healthy and `cyberteam-staging-worker` was running.
 - Next step:
   - Commit and push this provider-resilience/reclassification slice, watch public GitHub CI, and append final CI evidence.
+
+### 2026-07-26T13:09:59Z — STEP-137 — Verified public GitHub CI for LLM provider resilience
+- Files/services changed:
+  - No application source changed in this step; this append-only entry records the public CI result for STEP-136.
+- Commands run:
+  - `git commit -m "fix: harden llm provider resilience"`.
+  - `git push origin main`.
+  - `gh run watch 30203414076 --repo Hyper-AI-Lab/cyber-ai-team --exit-status`.
+- Result:
+  - Commit `5dea7468556b492b28a5161a6a5a593efd56271a` was pushed to public `main`.
+  - GitHub Actions run `30203414076` completed with overall `success`.
+  - Backend lint, compile, full tests, Alembic offline SQL, real PostgreSQL migration, dependency audit, and migration rehearsal all passed.
+  - Frontend tests, runtime dependency audit, build, and typecheck passed.
+  - Compose configuration, operations configuration, secret scan, FOSS/resource policy, and diff hygiene passed.
+  - Docker Compose Smoke, image scan, and observability jobs were intentionally skipped by the workflow path/event policy for this push; the updated staging services and live API path were already verified in STEP-136.
+- Evidence:
+  - GitHub CI: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30203414076`.
+  - Verified source commit: `5dea7468556b492b28a5161a6a5a593efd56271a`.
+- Next step:
+  - This LLM provider-resilience and false-memory-finding cleanup slice is complete. The next production-readiness work is to refresh the four stale operational evidence areas: alert delivery, restore drills, conservative load, and business workflow smoke.
