@@ -4610,3 +4610,19 @@
   - Current approval queue contains only `3f5e863d-e414-4873-a31e-893247f2911e` for snapshot `ctx_49008eabce98`.
 - Next step:
   - Commit and push the completed milestone and require green public GitHub CI.
+
+### 2026-07-27T08:09:14Z — STEP-156 — Published canonical-context hardening with green public CI
+- Files/services changed:
+  - Published the canonical ERPNext company scoping, fixture isolation, snapshot supersession, memory-conflict reconciliation, and stale-review lifecycle changes to public `main`.
+  - No runtime source changed during this evidence step.
+- Commands run:
+  - `git commit -m "fix: scope canonical company context"`.
+  - `git push origin main`.
+  - `gh run watch 30248631660 --repo Hyper-AI-Lab/cyber-ai-team --exit-status`.
+- Result:
+  - Commit `e6856a14f7c89aef6192abbfe708fab42fceedd7` was pushed successfully.
+  - Public GitHub CI passed backend lint/compile/tests, Alembic offline SQL, real PostgreSQL upgrade, dependency audit, migration rehearsal, frontend tests/audit/build/typecheck, Compose config, operations syntax, secret scan, FOSS/resource policy, and diff hygiene.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30248631660`.
+- Next step:
+  - Collect owner-defined business objectives, KPI targets, and risk-threshold confirmation for autonomous business activation under the canonical `HyperAILabs` context.
