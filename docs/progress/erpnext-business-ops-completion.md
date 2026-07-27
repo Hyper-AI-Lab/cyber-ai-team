@@ -4485,3 +4485,34 @@
   - Live approval queue returned `pending_count=0`; live readiness returned `status=ready`, `blockers=[]`.
 - Next step:
   - Commit and push the approval-lifecycle hardening, require green public GitHub CI, then assess live company context for the next business-objective/KPI activation milestone.
+
+### 2026-07-27T03:39:35Z — STEP-149 — Verified public CI for approval-lifecycle hardening
+- Files/services changed:
+  - No application source changed in this step; this entry records publication and independent GitHub verification.
+- Commands run:
+  - `git commit -m "fix: prevent approval replay artifacts"`.
+  - `git push origin main`.
+  - `gh run watch 30234795622 --repo Hyper-AI-Lab/cyber-ai-team --exit-status`.
+- Result:
+  - Commit `4461453b1f047196fca5f9929c1563fd6c97f10f` was pushed to public `main`.
+  - GitHub CI completed successfully: backend lint/compile/tests/Alembic offline SQL/real PostgreSQL upgrade/dependency audit/migration rehearsal, frontend tests/audit/build/typecheck, Compose config, syntax, secret scan, FOSS policy, and diff hygiene all passed.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30234795622`.
+- Next step:
+  - Inspect live ERPNext company context, objectives, KPIs, and benchmarks before activating business objectives.
+
+### 2026-07-27T03:39:35Z — STEP-150 — Assessed business-objective activation inputs
+- Files/services changed:
+  - No source or persistent business data changed; this was a read-only owner-authenticated assessment of live staging context and executive state.
+- Commands run:
+  - Read `GET /api/operations/company-objectives`, `GET /api/operations/company-context`, `GET /api/operations/executive-brief`, `GET /api/operations/governor/latest`, and `GET /api/operations/governor/benchmarks`.
+  - Inspected company-context normalization code and its unit tests.
+- Result:
+  - The executive layer has three valid system objectives (continuity, owner visibility, and FOSS-only policy), nine technical KPI observations, and six technical benchmarks, but no owner-defined commercial/product objectives or business KPI targets.
+  - The latest stored ERPNext context is stale and names `Cyber-Team Smoke Company` because normalization selects the first Company record. ERPNext Global Defaults identify `HyperAILabs` as the default company, while the site also contains demo and staging-smoke records.
+  - The latest executive run completed, but reported `18` open canonical-memory conflicts and one recent workflow failure; activating commercial autonomy from the current mixed context would be unsafe and misleading.
+- Evidence:
+  - Live company-context freshness reported `status=stale`, snapshot `ctx_a21b46339b2f`, namespace `company:cyber_team_smoke_company`.
+  - ERPNext Global Defaults reported `default_company=HyperAILabs`; live governor run `exegov_374b6159409f` completed at `2026-07-27T03:32:32.499682`.
+- Next step:
+  - Add explicit/default-company scoping and test/demo-data isolation to company-context sync, refresh canonical memory, then collect owner-defined business objectives and KPI targets for Autonomous Business Activation v1.
