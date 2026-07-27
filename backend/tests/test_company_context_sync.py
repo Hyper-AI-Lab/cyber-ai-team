@@ -8,7 +8,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from cyber_team.clock import utc_now
 from cyber_team.company.context_sync import CompanyContextSyncService
 from cyber_team.db import Base
-from cyber_team.db.models import CompanyContextSnapshot, CompanyContextSyncRun, RoleGap
+from cyber_team.db.models import (
+    ApprovalRequest,
+    AutonomousPlan,
+    AutonomousTask,
+    CompanyContextSnapshot,
+    CompanyContextSyncRun,
+    RoleGap,
+)
 
 
 async def build_session_factory():
@@ -69,6 +76,109 @@ class FakeERPNext:
         ][: limit or len(records)]
 
 
+class MultiCompanyERPNext(FakeERPNext):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    async def list_docs(self, doctype, filters=None, fields=None, limit=None):
+        self.calls.append({"doctype": doctype, "filters": filters})
+        records = {
+            "Company": [
+                {
+                    "name": "Cyber-Team Smoke Company",
+                    "company_name": "Cyber-Team Smoke Company",
+                    "country": "United States",
+                    "default_currency": "USD",
+                    "abbr": "CTSMK",
+                },
+                {
+                    "name": "Hyper AI Lab",
+                    "company_name": "Hyper AI Lab",
+                    "country": "Japan",
+                    "default_currency": "JPY",
+                    "abbr": "HAL",
+                },
+                {
+                    "name": "Hyper AI Lab (Demo)",
+                    "company_name": "Hyper AI Lab (Demo)",
+                    "country": "Japan",
+                    "default_currency": "JPY",
+                    "abbr": "HALD",
+                },
+            ],
+            "Account": [
+                {
+                    "name": "Cash - HAL",
+                    "account_name": "Cash",
+                    "company": "Hyper AI Lab",
+                    "account_type": "Cash",
+                    "root_type": "Asset",
+                    "is_group": 0,
+                }
+            ],
+            "Customer": [
+                {
+                    "name": "Demo Customer",
+                    "customer_name": "Demo Customer",
+                    "customer_group": "Demo Customer Group",
+                },
+                {
+                    "name": "Real Customer",
+                    "customer_name": "Real Customer",
+                    "customer_group": "Commercial",
+                },
+            ],
+            "Supplier": [
+                {
+                    "name": "Demo Supplier",
+                    "supplier_name": "Demo Supplier",
+                    "supplier_group": "Demo Supplier Group",
+                }
+            ],
+            "Lead": [
+                {
+                    "name": "LEAD-SMOKE",
+                    "lead_name": "Cyber-Team API ERPNext smoke 20260727T000000Z",
+                    "status": "Do Not Contact",
+                },
+                {"name": "LEAD-REAL", "lead_name": "Real Lead", "status": "Lead"},
+            ],
+            "Task": [
+                {
+                    "name": "TASK-SMOKE",
+                    "subject": "Cyber-Team ERPNext smoke 20260727T000000Z",
+                    "status": "Completed",
+                },
+                {"name": "TASK-REAL", "subject": "Ship product", "status": "Open"},
+            ],
+            "Issue": [
+                {
+                    "name": "ISS-SMOKE",
+                    "subject": "Cyber-Team API ERPNext smoke 20260727T000000Z issue",
+                    "status": "Closed",
+                }
+            ],
+            "Item": [
+                {
+                    "name": "SKU-DEMO",
+                    "item_name": "Demo Item",
+                    "item_group": "Demo Item Group",
+                },
+                {
+                    "name": "SKU-REAL",
+                    "item_name": "AI Company OS",
+                    "item_group": "Products",
+                },
+            ],
+        }.get(doctype, [])
+        allowed = set(fields or [])
+        return [
+            {key: value for key, value in record.items() if key in allowed}
+            for record in records
+        ][: limit or len(records)]
+
+
 class FakeAgentManager:
     def __init__(self):
         self.list_role_manifests = AsyncMock(return_value=[])
@@ -105,6 +215,121 @@ class FakeToolRegistry:
             "side_effects": False,
             "requires_configuration": False,
         }
+
+
+@pytest.mark.asyncio
+async def test_context_uses_global_default_company_filters_and_excludes_fixtures(monkeypatch):
+    monkeypatch.setattr(
+        "cyber_team.company.context_sync.settings.erpnext_primary_company",
+        "",
+    )
+    monkeypatch.setattr(
+        "cyber_team.company.context_sync.settings.erpnext_context_exclude_fixture_records",
+        True,
+    )
+    erpnext = MultiCompanyERPNext()
+    service = CompanyContextSyncService(
+        erpnext=erpnext,
+        agent_manager=FakeAgentManager(),
+        memory_service=FakeMemory(),
+        tool_registry=FakeToolRegistry(),
+    )
+
+    fetched = await service._fetch_erpnext_context()
+    profile = service._normalize_company_profile(fetched)
+    summary = fetched["summary"]
+
+    assert profile["company_name"] == "Hyper AI Lab"
+    assert profile["source_company"] == "Hyper AI Lab"
+    assert profile["company_selection_source"] == "erpnext_global_defaults"
+    assert summary["scope"]["primary_company"] == "Hyper AI Lab"
+    assert summary["scope"]["available_companies"] == [
+        "Cyber-Team Smoke Company",
+        "Hyper AI Lab",
+        "Hyper AI Lab (Demo)",
+    ]
+    assert summary["records"]["Company"] == [
+        {
+            "name": "Hyper AI Lab",
+            "company_name": "Hyper AI Lab",
+            "country": "Japan",
+            "default_currency": "JPY",
+            "abbr": "HAL",
+        }
+    ]
+    assert [record["customer_name"] for record in summary["records"]["Customer"]] == [
+        "Real Customer"
+    ]
+    assert summary["records"]["Supplier"] == []
+    assert [record["lead_name"] for record in summary["records"]["Lead"]] == [
+        "Real Lead"
+    ]
+    assert [record["subject"] for record in summary["records"]["Task"]] == [
+        "Ship product"
+    ]
+    assert summary["records"]["Issue"] == []
+    assert [record["item_name"] for record in summary["records"]["Item"]] == [
+        "AI Company OS"
+    ]
+    assert summary["scope"]["excluded_fixture_counts"] == {
+        "Customer": 1,
+        "Supplier": 1,
+        "Lead": 1,
+        "Task": 1,
+        "Issue": 1,
+        "Item": 1,
+    }
+    account_call = next(call for call in erpnext.calls if call["doctype"] == "Account")
+    assert account_call["filters"] == {"company": "Hyper AI Lab"}
+
+
+def test_primary_company_selection_honors_override_and_fails_ambiguous(monkeypatch):
+    companies = [
+        {"name": "Alpha", "company_name": "Alpha"},
+        {"name": "Beta", "company_name": "Beta"},
+    ]
+    monkeypatch.setattr(
+        "cyber_team.company.context_sync.settings.erpnext_primary_company",
+        "Beta",
+    )
+
+    selected, source = CompanyContextSyncService._select_primary_company(companies, {})
+
+    assert selected["name"] == "Beta"
+    assert source == "configuration"
+
+    monkeypatch.setattr(
+        "cyber_team.company.context_sync.settings.erpnext_primary_company",
+        "",
+    )
+    with pytest.raises(RuntimeError, match="multiple companies"):
+        CompanyContextSyncService._select_primary_company(companies, {})
+
+
+def test_excluded_fixture_counts_do_not_change_context_hash():
+    first = {
+        "scope": {
+            "primary_company": "Hyper AI Lab",
+            "excluded_fixture_counts": {"Task": 1},
+        },
+        "records": {"Task": []},
+    }
+    second = {
+        "scope": {
+            "primary_company": "Hyper AI Lab",
+            "excluded_fixture_counts": {"Task": 12, "Issue": 4},
+        },
+        "records": {"Task": []},
+    }
+
+    first_basis = CompanyContextSyncService._erpnext_summary_hash_basis(first)
+    second_basis = CompanyContextSyncService._erpnext_summary_hash_basis(second)
+
+    assert first_basis["scope"].get("excluded_fixture_counts") is None
+    assert second_basis["scope"].get("excluded_fixture_counts") is None
+    assert CompanyContextSyncService._source_hash(first_basis) == (
+        CompanyContextSyncService._source_hash(second_basis)
+    )
 
 
 @pytest.mark.asyncio
@@ -265,6 +490,115 @@ async def test_drift_scan_noops_when_erpnext_hash_is_unchanged():
 
 
 @pytest.mark.asyncio
+async def test_unchanged_drift_reconciles_superseded_snapshot_approval():
+    engine, session_factory = await build_session_factory()
+    memory = FakeMemory()
+    try:
+        service = CompanyContextSyncService(
+            erpnext=FakeERPNext(),
+            agent_manager=FakeAgentManager(),
+            memory_service=memory,
+            tool_registry=FakeToolRegistry(),
+            session_factory=session_factory,
+        )
+        current = await service.sync_from_erpnext(
+            actor="owner@example.com",
+            run_planner=False,
+        )
+        now = utc_now()
+        old_snapshot = CompanyContextSnapshot(
+            id="ctx_superseded",
+            source="erpnext",
+            source_id="erpnext.example.com",
+            source_hash="hash-superseded",
+            company_namespace="company:old",
+            normalized_profile={"company_name": "Old"},
+            erpnext_summary={},
+            operating_model={},
+            status="superseded",
+            created_by="test",
+            created_at=now - timedelta(days=1),
+        )
+        approval = ApprovalRequest(
+            id="approval_superseded",
+            action_type="autonomous_task.review",
+            action_description="Review superseded context.",
+            action_payload={"source_id": old_snapshot.id},
+            requester="scheduler",
+            requester_type="agent",
+            risk_level="medium",
+            target_type="autonomous_task",
+            target_id="task_superseded",
+            status="pending",
+            created_at=now,
+            expires_at=now + timedelta(days=1),
+        )
+        plan = AutonomousPlan(
+            id="plan_superseded",
+            title="Superseded plan",
+            objective="Review superseded context.",
+            source_type="company_context_snapshot",
+            source_id=old_snapshot.id,
+            status="waiting_approval",
+            priority="medium",
+            context={},
+            summary={},
+            created_at=now,
+            updated_at=now,
+        )
+        task = AutonomousTask(
+            id="task_superseded",
+            plan_id=plan.id,
+            sequence=1,
+            title="Review superseded context",
+            description="Owner review.",
+            task_type="company_context.report_risky_roles",
+            status="waiting_approval",
+            action_payload={"snapshot_id": old_snapshot.id},
+            result={"approval_id": approval.id},
+            approval_id=approval.id,
+            autonomous_allowed=False,
+            risk_level="medium",
+            created_at=now,
+            updated_at=now,
+        )
+        async with session_factory() as session:
+            session.add_all([old_snapshot, approval, plan, task])
+            await session.commit()
+
+        scan = await service.scan_for_erpnext_drift(
+            actor="scheduler",
+            apply_low_risk=False,
+            run_planner=False,
+        )
+        repeated = await service.scan_for_erpnext_drift(
+            actor="scheduler",
+            apply_low_risk=False,
+            run_planner=False,
+        )
+
+        assert scan["status"] == "unchanged"
+        assert scan["drift"]["current_snapshot_id"] == current["snapshot"]["id"]
+        assert scan["drift"]["stale_reviews"]["approval_ids"] == [
+            "approval_superseded"
+        ]
+        assert repeated["drift"]["stale_reviews"] == {
+            "plan_count": 0,
+            "task_count": 0,
+            "approval_count": 0,
+            "plan_ids": [],
+            "task_ids": [],
+            "approval_ids": [],
+        }
+        async with session_factory() as session:
+            reconciled = await session.get(ApprovalRequest, approval.id)
+            assert reconciled is not None
+            assert reconciled.status == "rejected"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_drift_scan_stales_previous_company_context_role_gaps_on_new_hash():
     engine, session_factory = await build_session_factory()
     erpnext = FakeERPNext()
@@ -280,6 +614,52 @@ async def test_drift_scan_stales_previous_company_context_role_gaps_on_new_hash(
         first = await service.sync_from_erpnext(actor="owner@example.com", run_planner=False)
         old_snapshot = first["snapshot"]
         async with session_factory() as session:
+            approval = ApprovalRequest(
+                id="approval_old_context",
+                action_type="autonomous_task.review",
+                action_description="Review old company context.",
+                action_payload={"source_id": old_snapshot["id"]},
+                requester="scheduler",
+                requester_type="agent",
+                risk_level="medium",
+                target_type="autonomous_task",
+                target_id="task_old_context",
+                status="pending",
+                created_at=utc_now(),
+                expires_at=utc_now() + timedelta(days=1),
+            )
+            plan = AutonomousPlan(
+                id="plan_old_context",
+                title="Old company context plan",
+                objective="Review old context.",
+                source_type="company_context_snapshot",
+                source_id=old_snapshot["id"],
+                status="waiting_approval",
+                priority="medium",
+                context={"source_hash": old_snapshot["source_hash"]},
+                summary={},
+                created_at=utc_now(),
+                updated_at=utc_now(),
+            )
+            task = AutonomousTask(
+                id="task_old_context",
+                plan_id=plan.id,
+                sequence=1,
+                title="Review old context roles",
+                description="Owner review for old context.",
+                task_type="company_context.report_risky_roles",
+                status="waiting_approval",
+                target_type="company_context_snapshot",
+                target_id=old_snapshot["id"],
+                action_payload={"snapshot_id": old_snapshot["id"]},
+                result={"approval_id": approval.id},
+                approval_id=approval.id,
+                autonomous_allowed=False,
+                risk_level="medium",
+                created_at=utc_now(),
+                updated_at=utc_now(),
+            )
+            session.add_all([approval, plan, task])
             session.add(
                 RoleGap(
                     id="gap_old_sales",
@@ -317,6 +697,16 @@ async def test_drift_scan_stales_previous_company_context_role_gaps_on_new_hash(
                     select(RoleGap).where(RoleGap.id == "gap_old_sales")
                 )
             ).scalar_one()
+            approval = await session.get(ApprovalRequest, "approval_old_context")
+            plan = await session.get(AutonomousPlan, "plan_old_context")
+            task = await session.get(AutonomousTask, "task_old_context")
+            snapshots = (
+                await session.execute(
+                    select(CompanyContextSnapshot).order_by(
+                        CompanyContextSnapshot.created_at
+                    )
+                )
+            ).scalars().all()
 
         assert scan["status"] == "changed"
         assert scan["drift"]["detected"] is True
@@ -326,6 +716,27 @@ async def test_drift_scan_stales_previous_company_context_role_gaps_on_new_hash(
         assert gap.status == "stale"
         assert gap.context["superseded_by_snapshot_id"] == scan["drift"]["current_snapshot_id"]
         assert gap.resolution["reason"] == "superseded_by_company_context_drift"
+        assert scan["drift"]["stale_reviews"] == {
+            "plan_count": 1,
+            "task_count": 1,
+            "approval_count": 1,
+            "plan_ids": ["plan_old_context"],
+            "task_ids": ["task_old_context"],
+            "approval_ids": ["approval_old_context"],
+        }
+        assert approval is not None
+        assert approval.status == "rejected"
+        assert approval.reviewer == "scheduler"
+        assert "superseded" in (approval.review_note or "").lower()
+        assert plan is not None
+        assert plan.status == "blocked"
+        assert plan.context["superseded_by_snapshot_id"] == scan["drift"][
+            "current_snapshot_id"
+        ]
+        assert task is not None
+        assert task.status == "blocked"
+        assert task.completed_at is not None
+        assert [snapshot.status for snapshot in snapshots] == ["superseded", "active"]
     finally:
         await engine.dispose()
 

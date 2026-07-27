@@ -16,13 +16,20 @@ from types import SimpleNamespace
 from typing import Any
 
 import httpx
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, update
 
 from cyber_team.clock import utc_now
 from cyber_team.company.operating_model import OperatingModelBuilder
 from cyber_team.config import settings
 from cyber_team.db import async_session
-from cyber_team.db.models import CompanyContextSnapshot, CompanyContextSyncRun, RoleGap
+from cyber_team.db.models import (
+    ApprovalRequest,
+    AutonomousPlan,
+    AutonomousTask,
+    CompanyContextSnapshot,
+    CompanyContextSyncRun,
+    RoleGap,
+)
 
 SOURCE = "erpnext"
 SNAPSHOT_STALE_AFTER = timedelta(hours=settings.erpnext_drift_stale_after_hours)
@@ -69,6 +76,7 @@ LIST_DOCTYPES: dict[str, list[str]] = {
     ],
     "Opportunity": [
         "name",
+        "company",
         "opportunity_from",
         "party_name",
         "status",
@@ -80,6 +88,7 @@ LIST_DOCTYPES: dict[str, list[str]] = {
     ],
     "Project": [
         "name",
+        "company",
         "project_name",
         "status",
         "expected_start_date",
@@ -90,6 +99,7 @@ LIST_DOCTYPES: dict[str, list[str]] = {
     "Issue": ["name", "subject", "status", "priority", "customer", "creation", "modified"],
     "Sales Invoice": [
         "name",
+        "company",
         "customer",
         "status",
         "grand_total",
@@ -108,6 +118,21 @@ LIST_DOCTYPES: dict[str, list[str]] = {
     ],
     "Item": ["name", "item_name", "item_group", "stock_uom", "disabled", "is_stock_item"],
 }
+
+COMPANY_SCOPED_DOCTYPES = {
+    "Account",
+    "Cost Center",
+    "Warehouse",
+    "Opportunity",
+    "Project",
+    "Sales Invoice",
+    "Material Request",
+}
+
+SMOKE_TEXT_PREFIXES = (
+    "cyber-team erpnext smoke ",
+    "cyber-team api erpnext smoke ",
+)
 
 
 class CompanyContextSyncService:
@@ -164,6 +189,14 @@ class CompanyContextSyncService:
             "count": 0,
             "role_gap_ids": [],
         }
+        stale_review_result = {
+            "plan_count": 0,
+            "task_count": 0,
+            "approval_count": 0,
+            "plan_ids": [],
+            "task_ids": [],
+            "approval_ids": [],
+        }
 
         if (
             drift_detected
@@ -177,6 +210,13 @@ class CompanyContextSyncService:
                 previous_source_hash=previous_snapshot["source_hash"],
                 new_snapshot_id=candidate_snapshot.get("id"),
                 new_source_hash=candidate_hash,
+                actor=actor,
+            )
+
+        if not dry_run and candidate_snapshot.get("id"):
+            stale_review_result = await self.reconcile_superseded_snapshot_reviews(
+                current_snapshot_id=candidate_snapshot["id"],
+                current_source_hash=candidate_hash,
                 actor=actor,
             )
 
@@ -200,6 +240,7 @@ class CompanyContextSyncService:
             "sync_run_id": sync_result.get("sync_run_id"),
             "sync_status": sync_result.get("status"),
             "stale_role_gaps": stale_result,
+            "stale_reviews": stale_review_result,
             "checked_at": utc_now().isoformat(),
             "dry_run": dry_run,
             "apply_low_risk": apply_low_risk and not dry_run,
@@ -250,7 +291,9 @@ class CompanyContextSyncService:
             source_hash = self._source_hash(
                 {
                     "normalized_profile": normalized_profile,
-                    "erpnext_summary": fetched["summary"],
+                    "erpnext_summary": self._erpnext_summary_hash_basis(
+                        fetched["summary"]
+                    ),
                     "operating_model_basis": operating_model.get("decision_basis", {}),
                 }
             )
@@ -287,6 +330,7 @@ class CompanyContextSyncService:
 
             existing = await self._get_snapshot_by_hash(source_hash)
             if existing:
+                existing = await self._activate_snapshot(existing["id"])
                 plan_result = await self._create_or_execute_snapshot_plan(
                     existing["id"],
                     actor=actor,
@@ -664,6 +708,151 @@ class CompanyContextSyncService:
             "role_gap_ids": stale_ids,
         }
 
+    async def invalidate_superseded_snapshot_reviews(
+        self,
+        *,
+        previous_snapshot_id: str,
+        previous_source_hash: str,
+        new_snapshot_id: str | None,
+        new_source_hash: str | None,
+        actor: str,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        reason = (
+            "The ERPNext company-context snapshot was superseded; regenerate review "
+            "from the current canonical snapshot."
+        )
+        candidate_plan_ids: list[str] = []
+        affected_plan_ids: set[str] = set()
+        task_ids: list[str] = []
+        approval_ids: list[str] = []
+        async with self._session_factory() as session:
+            plans = (
+                await session.execute(
+                    select(AutonomousPlan).where(
+                        AutonomousPlan.source_type == "company_context_snapshot",
+                        AutonomousPlan.source_id == previous_snapshot_id,
+                        AutonomousPlan.status.in_(
+                            ("planned", "running", "waiting_approval", "blocked")
+                        ),
+                    )
+                )
+            ).scalars().all()
+            candidate_plan_ids = [plan.id for plan in plans]
+            tasks = []
+            if candidate_plan_ids:
+                tasks = (
+                    await session.execute(
+                        select(AutonomousTask).where(
+                            AutonomousTask.plan_id.in_(candidate_plan_ids)
+                        )
+                    )
+                ).scalars().all()
+
+            for task in tasks:
+                if task.approval_id:
+                    approval = await session.get(ApprovalRequest, task.approval_id)
+                    if approval and approval.status == "pending":
+                        approval.status = "rejected"
+                        approval.reviewer = actor
+                        approval.review_note = reason
+                        approval.resolved_at = now
+                        approval_ids.append(approval.id)
+                        affected_plan_ids.add(task.plan_id)
+                if task.status in {"planned", "running", "waiting_approval"}:
+                    task.status = "blocked"
+                    task.error = reason
+                    task.result = {
+                        **(task.result or {}),
+                        "superseded_by_snapshot_id": new_snapshot_id,
+                        "superseded_by_source_hash": new_source_hash,
+                    }
+                    task.updated_at = now
+                    task.completed_at = now
+                    task_ids.append(task.id)
+                    affected_plan_ids.add(task.plan_id)
+
+            for plan in plans:
+                if plan.status in {"planned", "running", "waiting_approval"}:
+                    plan.status = "blocked"
+                    plan.context = {
+                        **(plan.context or {}),
+                        "blocked_reason": "superseded_company_context",
+                        "previous_source_hash": previous_source_hash,
+                        "superseded_by_snapshot_id": new_snapshot_id,
+                        "superseded_by_source_hash": new_source_hash,
+                    }
+                    plan.updated_at = now
+                    plan.completed_at = now
+                    affected_plan_ids.add(plan.id)
+            await session.commit()
+
+        plan_ids = sorted(affected_plan_ids)
+        if plan_ids:
+            await self._record(
+                "company_context.reviews_invalidated",
+                actor=actor,
+                resource_id=previous_snapshot_id,
+                metadata={
+                    "plan_ids": plan_ids,
+                    "task_ids": task_ids,
+                    "approval_ids": approval_ids,
+                    "previous_source_hash": previous_source_hash,
+                    "new_snapshot_id": new_snapshot_id,
+                    "new_source_hash": new_source_hash,
+                },
+            )
+        return {
+            "plan_count": len(plan_ids),
+            "task_count": len(task_ids),
+            "approval_count": len(approval_ids),
+            "plan_ids": plan_ids,
+            "task_ids": task_ids,
+            "approval_ids": approval_ids,
+        }
+
+    async def reconcile_superseded_snapshot_reviews(
+        self,
+        *,
+        current_snapshot_id: str,
+        current_source_hash: str | None,
+        actor: str,
+    ) -> dict[str, Any]:
+        async with self._session_factory() as session:
+            superseded = (
+                await session.execute(
+                    select(CompanyContextSnapshot).where(
+                        CompanyContextSnapshot.source == SOURCE,
+                        CompanyContextSnapshot.status == "superseded",
+                        CompanyContextSnapshot.id != current_snapshot_id,
+                    )
+                )
+            ).scalars().all()
+
+        combined = {
+            "plan_ids": [],
+            "task_ids": [],
+            "approval_ids": [],
+        }
+        for snapshot in superseded:
+            result = await self.invalidate_superseded_snapshot_reviews(
+                previous_snapshot_id=snapshot.id,
+                previous_source_hash=snapshot.source_hash,
+                new_snapshot_id=current_snapshot_id,
+                new_source_hash=current_source_hash,
+                actor=actor,
+            )
+            for key in combined:
+                combined[key].extend(result[key])
+        for key in combined:
+            combined[key] = sorted(set(combined[key]))
+        return {
+            "plan_count": len(combined["plan_ids"]),
+            "task_count": len(combined["task_ids"]),
+            "approval_count": len(combined["approval_ids"]),
+            **combined,
+        }
+
     async def seed_snapshot_memory(
         self,
         snapshot_id: str,
@@ -889,18 +1078,55 @@ class CompanyContextSyncService:
             except (httpx.HTTPError, RuntimeError, ValueError) as exc:
                 errors.append(self._fetch_error(doctype, exc, optional=True))
 
-        lists: dict[str, list[dict[str, Any]]] = {}
+        company_fields = LIST_DOCTYPES["Company"]
+        try:
+            company_docs = await self._erpnext.list_docs(
+                "Company",
+                fields=company_fields,
+                limit=50,
+            )
+            available_companies = [
+                self._allow_fields(self._redact_record(doc), company_fields)
+                for doc in company_docs
+            ]
+        except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+            raise RuntimeError(f"Could not load ERPNext companies: {exc}") from exc
+
+        primary_company, selection_source = self._select_primary_company(
+            available_companies,
+            singles.get("Global Defaults") or {},
+        )
+        primary_company_name = str(primary_company.get("name") or "")
+        lists: dict[str, list[dict[str, Any]]] = {"Company": [primary_company]}
+        excluded_counts: dict[str, int] = {}
         for doctype, fields in LIST_DOCTYPES.items():
+            if doctype == "Company":
+                continue
             try:
+                filters = (
+                    {"company": primary_company_name}
+                    if doctype in COMPANY_SCOPED_DOCTYPES
+                    else None
+                )
                 docs = await self._erpnext.list_docs(
                     doctype,
+                    filters=filters,
                     fields=fields,
                     limit=50,
                 )
-                lists[doctype] = [
+                sanitized = [
                     self._allow_fields(self._redact_record(doc), fields)
                     for doc in docs
                 ]
+                if settings.erpnext_context_exclude_fixture_records:
+                    lists[doctype] = [
+                        record
+                        for record in sanitized
+                        if not self._is_fixture_record(doctype, record)
+                    ]
+                else:
+                    lists[doctype] = sanitized
+                excluded_counts[doctype] = len(sanitized) - len(lists[doctype])
             except (httpx.HTTPError, RuntimeError, ValueError) as exc:
                 errors.append(self._fetch_error(doctype, exc, optional=doctype != "Company"))
                 lists[doctype] = []
@@ -910,6 +1136,25 @@ class CompanyContextSyncService:
             "site_url": f"https://{settings.erpnext_edge_domain}",
             "api_url": settings.erpnext_url,
             "validation": validation,
+            "scope": {
+                "primary_company": primary_company_name,
+                "primary_company_label": primary_company.get("company_name"),
+                "selection_source": selection_source,
+                "configured_company": settings.erpnext_primary_company or None,
+                "available_companies": self._names(
+                    available_companies,
+                    "company_name",
+                ),
+                "company_scoped_doctypes": sorted(COMPANY_SCOPED_DOCTYPES),
+                "fixture_records_excluded": (
+                    settings.erpnext_context_exclude_fixture_records
+                ),
+                "excluded_fixture_counts": {
+                    doctype: count
+                    for doctype, count in excluded_counts.items()
+                    if count
+                },
+            },
             "singles": singles,
             "records": lists,
             "counts": {doctype: len(records) for doctype, records in lists.items()},
@@ -972,6 +1217,10 @@ class CompanyContextSyncService:
             "default_currency": currency,
             "source": "erpnext",
             "source_site": settings.erpnext_site_name,
+            "source_company": primary_company.get("name") or company_name,
+            "company_selection_source": (summary.get("scope") or {}).get(
+                "selection_source"
+            ),
             "source_hash_basis": "allowlisted_redacted_erpnext_snapshot",
             "erpnext_counts": summary.get("counts", {}),
             "erpnext_statuses": summary.get("statuses", {}),
@@ -1178,6 +1427,14 @@ class CompanyContextSyncService:
         snapshot_id = f"ctx_{uuid.uuid4().hex[:12]}"
         now = utc_now()
         async with self._session_factory() as session:
+            await session.execute(
+                update(CompanyContextSnapshot)
+                .where(
+                    CompanyContextSnapshot.source == SOURCE,
+                    CompanyContextSnapshot.status == "active",
+                )
+                .values(status="superseded")
+            )
             snapshot = CompanyContextSnapshot(
                 id=snapshot_id,
                 source=data["source"],
@@ -1199,6 +1456,24 @@ class CompanyContextSyncService:
                 created_at=now,
             )
             session.add(snapshot)
+            await session.commit()
+            return self._snapshot_to_dict(snapshot)
+
+    async def _activate_snapshot(self, snapshot_id: str) -> dict[str, Any]:
+        async with self._session_factory() as session:
+            await session.execute(
+                update(CompanyContextSnapshot)
+                .where(
+                    CompanyContextSnapshot.source == SOURCE,
+                    CompanyContextSnapshot.id != snapshot_id,
+                    CompanyContextSnapshot.status == "active",
+                )
+                .values(status="superseded")
+            )
+            snapshot = await session.get(CompanyContextSnapshot, snapshot_id)
+            if not snapshot:
+                raise ValueError(f"Company context snapshot {snapshot_id} not found")
+            snapshot.status = "active"
             await session.commit()
             return self._snapshot_to_dict(snapshot)
 
@@ -1396,6 +1671,14 @@ class CompanyContextSyncService:
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     @staticmethod
+    def _erpnext_summary_hash_basis(summary: dict[str, Any]) -> dict[str, Any]:
+        hash_basis = dict(summary)
+        scope = dict(hash_basis.get("scope") or {})
+        scope.pop("excluded_fixture_counts", None)
+        hash_basis["scope"] = scope
+        return hash_basis
+
+    @staticmethod
     def _redact_record(record: dict[str, Any]) -> dict[str, Any]:
         redacted = {}
         for key, value in record.items():
@@ -1435,6 +1718,60 @@ class CompanyContextSyncService:
             if value and value not in names:
                 names.append(str(value))
         return names
+
+    @staticmethod
+    def _select_primary_company(
+        companies: list[dict[str, Any]],
+        global_defaults: dict[str, Any],
+    ) -> tuple[dict[str, Any], str]:
+        configured = settings.erpnext_primary_company.strip()
+        default_company = str(global_defaults.get("default_company") or "").strip()
+        requested = configured or default_company
+        selection_source = "configuration" if configured else "erpnext_global_defaults"
+
+        if requested:
+            requested_key = requested.casefold()
+            for company in companies:
+                names = {
+                    str(company.get("name") or "").casefold(),
+                    str(company.get("company_name") or "").casefold(),
+                }
+                if requested_key in names:
+                    return company, selection_source
+            available = CompanyContextSyncService._names(companies, "company_name")
+            raise RuntimeError(
+                f"ERPNext primary company {requested!r} was not found. "
+                f"Available companies: {', '.join(available) or 'none'}."
+            )
+
+        if len(companies) == 1:
+            return companies[0], "sole_company"
+        if not companies:
+            raise RuntimeError("ERPNext does not contain a Company record.")
+        available = CompanyContextSyncService._names(companies, "company_name")
+        raise RuntimeError(
+            "ERPNext contains multiple companies but neither ERPNEXT_PRIMARY_COMPANY "
+            "nor Global Defaults.default_company selects one. Available companies: "
+            + ", ".join(available)
+        )
+
+    @staticmethod
+    def _is_fixture_record(doctype: str, record: dict[str, Any]) -> bool:
+        if doctype == "Customer":
+            return str(record.get("customer_group") or "").casefold().startswith("demo ")
+        if doctype == "Supplier":
+            return str(record.get("supplier_group") or "").casefold().startswith("demo ")
+        if doctype == "Item":
+            return (
+                str(record.get("name") or "").casefold() == "cyberteam-smoke-service"
+                or str(record.get("item_group") or "").casefold().startswith("demo ")
+            )
+        fixture_text = ""
+        if doctype == "Lead":
+            fixture_text = str(record.get("lead_name") or "")
+        elif doctype in {"Task", "Issue"}:
+            fixture_text = str(record.get("subject") or "")
+        return fixture_text.casefold().startswith(SMOKE_TEXT_PREFIXES)
 
     @staticmethod
     def _derived_goals(

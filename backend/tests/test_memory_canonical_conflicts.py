@@ -143,6 +143,78 @@ async def test_scan_detects_structured_canonical_claim_mismatch():
 
 
 @pytest.mark.asyncio
+async def test_scan_resolves_conflicts_from_superseded_company_context():
+    engine, session_factory = await build_session_factory()
+    try:
+        old_snapshot = company_snapshot(snapshot_id="ctx_old", source_hash="hash-old")
+        old_snapshot.status = "superseded"
+        old_snapshot.created_at = datetime(2026, 7, 20, 12, 0, 0)
+        old_memory = memory_entry(
+            "mem_old_context",
+            metadata={
+                "source": "erpnext_company_context_sync",
+                "source_hash": "hash-old",
+                "company_namespace": "company:old_company",
+                "canonical_conflicts": {
+                    "memconf_old": {
+                        "status": "open",
+                        "conflict_type": "stale_canonical_memory",
+                    }
+                },
+                "canonical_conflict_status": "active",
+                "exclude_from_recall_reason": "active_memory_canonical_conflict",
+            },
+            namespace="company:old_company",
+        )
+        old_conflict = MemoryCanonicalConflict(
+            id="memconf_old",
+            conflict_type="stale_canonical_memory",
+            severity="medium",
+            status="open",
+            memory_id=old_memory.id,
+            memory_namespace=old_memory.namespace,
+            company_namespace="company:old_company",
+            canonical_source_type="erpnext_company_context",
+            canonical_source_id=old_snapshot.id,
+            canonical_source_hash=old_snapshot.source_hash,
+            memory_source_hash="older-hash",
+            claim_path=None,
+            title="Old conflict",
+            description="Old context conflict.",
+            recommendation="Prefer current context.",
+            memory_excerpt="old",
+            canonical_excerpt="old",
+            evidence={},
+            resolution={},
+            dedupe_key="old-conflict-key",
+            created_at=datetime(2026, 7, 20, 12, 1, 0),
+            updated_at=datetime(2026, 7, 20, 12, 1, 0),
+        )
+        async with session_factory() as session:
+            session.add_all([old_snapshot, company_snapshot(), old_memory, old_conflict])
+            await session.commit()
+
+        service = MemoryCanonicalConflictService(session_factory=session_factory)
+        result = await service.scan(actor="test")
+
+        assert result["superseded_cleared"] == 1
+        assert result["conflicts_found"] == 0
+        async with session_factory() as session:
+            conflict = await session.get(MemoryCanonicalConflict, "memconf_old")
+            memory = await session.get(MemoryEntry, "mem_old_context")
+            assert conflict is not None
+            assert conflict.status == "resolved"
+            assert conflict.resolution["superseded_by_snapshot_id"] == "ctx_current"
+            assert memory is not None
+            assert memory.metadata_["canonical_superseded"] is True
+            assert memory.metadata_["exclude_from_recall_reason"] == (
+                "canonical_record_preferred"
+            )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_resolve_prefer_canonical_supersedes_memory_recall():
     engine, session_factory = await build_session_factory()
     try:

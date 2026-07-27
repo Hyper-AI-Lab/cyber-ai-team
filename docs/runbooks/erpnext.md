@@ -158,6 +158,15 @@ After ERPNext onboarding changes, sync the live ERPNext setup into Cyber-Team so
 the owner console, memory, Company Builder, and autonomous planner share the same
 canonical company context:
 
+Set `ERPNEXT_PRIMARY_COMPANY` when the site contains more than one company.
+When it is empty, Cyber-Team uses ERPNext `Global Defaults.default_company`; a
+site with multiple companies and no valid selector fails closed. Company-owned
+DocTypes are queried with that company filter. Records created by Cyber-Team's
+ERPNext smoke tests and records in ERPNext demo customer, supplier, or item
+groups are excluded by default; set
+`ERPNEXT_CONTEXT_EXCLUDE_FIXTURE_RECORDS=false` only for a dedicated fixture
+environment.
+
 ```bash
 curl -sS \
   -H "Authorization: Bearer $CYBERTEAM_OWNER_TOKEN" \
@@ -172,6 +181,11 @@ Expected behavior:
   `company_context_sync_runs` row.
 - An unchanged ERPNext setup records a `noop` sync run with the same source
   hash.
+- Counts for excluded smoke/demo fixtures remain visible as diagnostics but do
+  not affect the canonical source hash.
+- When a snapshot is superseded, its unfinished company-context plans are
+  blocked and pending owner-review approvals are rejected with a supersession
+  reason. An unchanged drift scan also reconciles historical stale reviews.
 - Low-risk internal memory and role updates may apply automatically.
 - Side-effectful or higher-risk role/tool changes become owner-review planner
   tasks and role gaps; they must not execute external writes without approval.

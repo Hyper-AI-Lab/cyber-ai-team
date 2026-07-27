@@ -4516,3 +4516,97 @@
   - ERPNext Global Defaults reported `default_company=HyperAILabs`; live governor run `exegov_374b6159409f` completed at `2026-07-27T03:32:32.499682`.
 - Next step:
   - Add explicit/default-company scoping and test/demo-data isolation to company-context sync, refresh canonical memory, then collect owner-defined business objectives and KPI targets for Autonomous Business Activation v1.
+
+### 2026-07-27T07:27:38Z — STEP-151 — Implemented canonical ERPNext company scoping and fixture isolation
+- Files/services changed:
+  - Added `ERPNEXT_PRIMARY_COMPANY` and `ERPNEXT_CONTEXT_EXCLUDE_FIXTURE_RECORDS` configuration with staging/example coverage; local ignored staging configuration is explicitly pinned to `HyperAILabs`.
+  - Updated company-context sync to select the configured company, otherwise ERPNext Global Defaults, otherwise a sole company, and to fail closed on ambiguous or invalid selection.
+  - Added company filters for company-owned ERPNext DocTypes and excluded Cyber-Team smoke records plus ERPNext demo customer, supplier, and item groups from canonical context.
+  - Added source-scope evidence to snapshots, atomic supersession/reactivation of context snapshots, and automatic resolution of conflicts attached to superseded canonical contexts while keeping obsolete memory excluded from recall.
+  - Updated the ERPNext runbook and added focused company-context and canonical-memory regression coverage.
+- Commands run:
+  - Read-only ERPNext API inspection of Company, Global Defaults, Sales Invoice, Project, Opportunity, Material Request, Task, Issue, Lead, Item, Customer, and Supplier ownership/fixture fields.
+  - Focused Ruff and Pytest checks for company-context and canonical-memory behavior.
+- Result:
+  - ERPNext evidence confirmed `HyperAILabs` is the Global Defaults company; invoices belong to `HyperAILabs (Demo)`, procurement records belong to `Cyber-Team Smoke Company`, and remaining current business records are explicitly tagged smoke/demo fixtures.
+  - The focused suite passed (`13 passed`), including multi-company selection, explicit override, ambiguous-site rejection, company filters, fixture exclusion, snapshot supersession, and superseded-conflict reconciliation.
+- Evidence:
+  - Live ERPNext selection evidence: `default_company=HyperAILabs`; available companies are `Cyber-Team Smoke Company`, `HyperAILabs`, and `HyperAILabs (Demo)`.
+  - Focused verification: `13 passed`; Ruff passed.
+- Next step:
+  - Run the complete repository quality gate before deploying the scoped company-context behavior to staging.
+
+### 2026-07-27T07:48:41Z — STEP-152 — Completed the canonical-context release gate
+- Files/services changed:
+  - Refined the company-context source-hash basis so diagnostic counts for excluded smoke/demo fixtures remain visible in snapshots but do not create false canonical-context drift.
+  - Added regression coverage proving excluded fixture-count changes preserve the canonical hash.
+- Commands run:
+  - Focused Ruff and Pytest checks for company-context and canonical-memory behavior.
+  - `scripts/quality-gate.sh` for the complete backend, frontend, dependency, Compose, security, policy, and diff-hygiene gate.
+  - Previously completed real PostgreSQL migration rehearsals from both legacy pre-Alembic and representative seeded `0001` schemas remain applicable because this milestone adds no migration.
+- Result:
+  - Focused checks passed (`14 passed`), and the complete gate passed with `245` backend tests and `23` frontend tests.
+  - Ruff, compileall, Alembic offline SQL through `0014`, frontend build/typecheck, Compose validation, operations syntax, secret scan, FOSS/resource policy, and diff hygiene passed.
+  - Python and shipped frontend runtime audits reported no known vulnerabilities; the existing deprecated ESLint 8 development-only dependency tree remains non-runtime and separately tracked.
+- Evidence:
+  - Complete quality-gate terminal result: `Quality gate passed.`
+  - Canonical hash regression: `test_excluded_fixture_counts_do_not_change_context_hash`.
+- Next step:
+  - Deploy the scoped sync to staging, refresh canonical company context for `HyperAILabs`, and reconcile conflicts attached to superseded context snapshots.
+
+### 2026-07-27T08:01:04Z — STEP-153 — Activated scoped `HyperAILabs` context and reconciled canonical memory
+- Files/services changed:
+  - Rebuilt and recreated only the staging `core` and `worker` services with canonical company selection, company-owned DocType filters, and smoke/demo fixture exclusion.
+  - Created active snapshot `ctx_49008eabce98` in namespace `company:hyperailabs`; historical context snapshots were marked `superseded`.
+  - Reconciled memory conflicts against the new active snapshot while preserving obsolete context memory as excluded historical evidence.
+- Commands run:
+  - Targeted Docker Compose build/recreate for `core` and `worker`.
+  - Owner-authenticated dry-run and real `POST /api/operations/company-context/drift-scan` calls.
+  - Owner-authenticated `POST /api/memory/conflicts/scan` and conflict/readiness checks.
+  - Read-only PostgreSQL snapshot status verification.
+- Result:
+  - The dry run selected configured company `HyperAILabs`, produced namespace `company:hyperailabs`, retained only genuine company setup records, and returned no fetch errors.
+  - The real sync created one active canonical snapshot, six memory seeds, no agents/manifests, no external effects, and one approval-gated role-review plan.
+  - Exactly one snapshot is active and five historical snapshots are superseded. All `18` prior canonical-memory conflicts were resolved; no current conflicts were created or left open.
+- Evidence:
+  - Active source hash: `63a4aff4f3dbeb788824274b7a6a9886b982c8ca45e0a6713ec1e85f895e8e72`.
+  - Snapshot status proof: `active:1`, `superseded:5`; conflict proof: `superseded_cleared=18`, `open_count=0`.
+- Next step:
+  - Prove fixture-safe idempotency with a real ERPNext smoke, harden superseded approval cleanup, and run final governor/readiness checks.
+
+### 2026-07-27T08:01:04Z — STEP-154 — Proved fixture idempotency and superseded-review cleanup on staging
+- Files/services changed:
+  - Made excluded fixture counts diagnostic-only for source hashing.
+  - Added automatic blocking of unfinished plans/tasks and rejection of pending approvals tied to superseded company-context snapshots, including reconciliation during unchanged drift scans.
+  - Updated the ERPNext runbook and deployed the final lifecycle hardening to staging `core` and `worker`.
+- Commands run:
+  - ERPNext tool smoke, post-smoke dry-run hash comparison, and Cyber-Team business-workflow smoke.
+  - Focused checks (`15 passed`) and complete backend Ruff/Pytest/compile verification (`246 passed`).
+  - Owner-authenticated unchanged drift reconciliation, approval-queue inspection, forced operations readiness, Compose health, and recent error-log scan.
+- Result:
+  - The ERPNext smoke passed real Lead, Task, Issue, and Material Request paths and archived/closed/completed records where supported; the canonical hash remained unchanged after fixture counts increased.
+  - Historical reconciliation blocked five obsolete plans and nine unfinished tasks and rejected the one stale approval for snapshot `ctx_3e94cb803108`.
+  - The queue now contains exactly one medium-risk review approval, and it correctly targets current snapshot `ctx_49008eabce98`.
+  - Final staging readiness is `ready` with no blockers; company context is fresh, memory conflicts are zero, workflow intents have no blockers/config-required items, the nine-check business smoke passes, services are healthy/running, and recent core/worker logs contain no error, exception, or traceback entries.
+- Evidence:
+  - ERPNext smoke: `/home/projects/cyber-team/dist/erpnext/smoke/cyberteam-erpnext-tool-smoke-20260727T075154Z.json`.
+  - Final business smoke: `/home/projects/cyber-team/dist/business-workflows/business-workflow-smoke-20260727T080039Z.json`.
+  - Current owner review approval: `3f5e863d-e414-4873-a31e-893247f2911e`, source snapshot `ctx_49008eabce98`.
+- Next step:
+  - Commit and push the milestone, require green public GitHub CI, then collect owner-defined business objectives and KPI targets for the now-canonical `HyperAILabs` context.
+
+### 2026-07-27T08:05:15Z — STEP-155 — Closed reconciliation audit idempotency
+- Files/services changed:
+  - Limited superseded-review reconciliation results and audit events to plans, tasks, and approvals actually changed by the current scan.
+  - Added second-run regression coverage and redeployed the final `core`/`worker` image to staging.
+- Commands run:
+  - Complete backend Ruff, Pytest (`246 passed`), compileall, diff-hygiene, and secret-scan checks.
+  - Targeted Compose rebuild/recreate followed by a second unchanged owner-authenticated drift scan and approval-queue inspection.
+- Result:
+  - Repeated unchanged scans are now strict no-ops for historical review cleanup: zero plans, tasks, or approvals are reported as changed and no repetitive invalidation audit entry is emitted.
+  - The canonical hash remains unchanged, the current `HyperAILabs` review approval remains pending, core is healthy, and worker is running.
+- Evidence:
+  - Live repeated scan returned `stale_reviews.plan_count=0`, `task_count=0`, and `approval_count=0`.
+  - Current approval queue contains only `3f5e863d-e414-4873-a31e-893247f2911e` for snapshot `ctx_49008eabce98`.
+- Next step:
+  - Commit and push the completed milestone and require green public GitHub CI.

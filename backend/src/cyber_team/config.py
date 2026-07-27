@@ -161,6 +161,8 @@ class Settings(BaseSettings):
     erpnext_integration_user: str = "cyberteam.integration@example.local"
     erpnext_api_key: str = ""
     erpnext_api_secret: str = ""
+    erpnext_primary_company: str = ""
+    erpnext_context_exclude_fixture_records: bool = True
     erpnext_drift_detection_enabled: bool = False
     erpnext_drift_initial_delay_seconds: int = 300
     erpnext_drift_interval_seconds: int = 3600

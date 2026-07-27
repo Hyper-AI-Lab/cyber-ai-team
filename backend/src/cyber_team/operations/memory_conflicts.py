@@ -320,6 +320,11 @@ class MemoryCanonicalConflictService:
                         now,
                     )
 
+            superseded_cleared = await self._clear_superseded_context_conflicts(
+                session,
+                snapshot=snapshot,
+                now=now,
+            )
             cleared = await self._clear_absent_conflicts(
                 session,
                 snapshot=snapshot,
@@ -332,8 +337,56 @@ class MemoryCanonicalConflictService:
                 "updated": updated,
                 "unchanged": unchanged,
                 "cleared": cleared,
+                "superseded_cleared": superseded_cleared,
                 "conflicts": [self._conflict_to_dict(conflict) for conflict in conflicts],
             }
+
+    async def _clear_superseded_context_conflicts(
+        self,
+        session,
+        *,
+        snapshot: CompanyContextSnapshot,
+        now: datetime,
+    ) -> int:
+        result = await session.execute(
+            select(MemoryCanonicalConflict).where(
+                MemoryCanonicalConflict.canonical_source_type
+                == "erpnext_company_context",
+                MemoryCanonicalConflict.canonical_source_id != snapshot.id,
+                MemoryCanonicalConflict.status.in_(self.ACTIVE_STATUSES),
+            )
+        )
+        cleared = 0
+        for conflict in result.scalars().all():
+            conflict.status = "resolved"
+            conflict.updated_at = now
+            conflict.resolved_at = now
+            note = (
+                "The canonical company context was superseded by snapshot "
+                f"{snapshot.id}; old context memory remains excluded from recall."
+            )
+            conflict.resolution = {
+                **(conflict.resolution or {}),
+                "status": "resolved",
+                "resolution_strategy": "prefer_canonical",
+                "note": note,
+                "actor": "memory_canonical_conflict_detector",
+                "superseded_by_snapshot_id": snapshot.id,
+                "resolved_at": now.isoformat(),
+            }
+            memory = await session.get(MemoryEntry, conflict.memory_id)
+            if memory:
+                memory.metadata_ = self._apply_memory_resolution_metadata(
+                    dict(memory.metadata_ or {}),
+                    conflict,
+                    status="resolved",
+                    resolution_strategy="prefer_canonical",
+                    note=note,
+                    actor="memory_canonical_conflict_detector",
+                    now=now,
+                )
+            cleared += 1
+        return cleared
 
     def _refresh_conflict(
         self,
