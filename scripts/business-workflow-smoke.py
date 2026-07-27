@@ -86,6 +86,30 @@ def write_evidence(payload: dict) -> Path:
     return path
 
 
+def generated_approval_id(result: dict) -> str | None:
+    output = result.get("output")
+    if not isinstance(output, dict):
+        return None
+    approval_id = output.get("approval_id")
+    return str(approval_id) if approval_id else None
+
+
+def reject_generated_approval(api: Api, approval_id: str) -> dict:
+    status, response = api.request(
+        "POST",
+        f"/api/dashboard/approval/{urllib.parse.quote(approval_id, safe='')}/reject",
+        {
+            "note": (
+                "Rejected by the business workflow smoke lifecycle cleanup; "
+                "no external side effect was authorized."
+            )
+        },
+    )
+    if status != 200 or response.get("status") != "rejected":
+        raise RuntimeError(f"Could not reject smoke-generated approval: {status} {response}")
+    return response
+
+
 def main() -> int:
     env_file = Path(os.environ.get("CYBERTEAM_ENV_FILE", ROOT / "deploy/environments/staging.env"))
     load_env(env_file)
@@ -108,6 +132,9 @@ def main() -> int:
         "api_base": api_base,
         "checks": checks,
     }
+    api: Api | None = None
+    smoke_approval_id: str | None = None
+    approval_probe_completed = False
     try:
         api = Api(api_base)
         status, health = api.request("GET", "/health")
@@ -153,9 +180,11 @@ def main() -> int:
                 },
             },
         )
+        approval_probe_completed = True
+        smoke_approval_id = generated_approval_id(blocked)
         blocked_safely = status in {200, 400} and (
-            blocked.get("approval_required")
-            or blocked.get("blocked")
+            (blocked.get("output") or {}).get("approval_required")
+            or (blocked.get("output") or {}).get("blocked")
             or blocked.get("success") is False
             or "approval" in json.dumps(blocked).lower()
         )
@@ -164,6 +193,28 @@ def main() -> int:
     except Exception as exc:
         payload["error"] = str(exc)
     finally:
+        if approval_probe_completed and api:
+            if smoke_approval_id:
+                try:
+                    reject_generated_approval(api, smoke_approval_id)
+                    checks["smoke_approval_cleanup"] = "passed"
+                    payload["approval_cleanup"] = {
+                        "approval_id": smoke_approval_id,
+                        "result": "rejected",
+                    }
+                except Exception as exc:
+                    checks["smoke_approval_cleanup"] = f"failed: {exc}"
+                    payload["status"] = "failed"
+                    existing_error = payload.get("error")
+                    payload["error"] = (
+                        f"{existing_error}; {exc}" if existing_error else str(exc)
+                    )
+            else:
+                checks["smoke_approval_cleanup"] = "passed"
+                payload["approval_cleanup"] = {
+                    "approval_id": None,
+                    "result": "no approval created",
+                }
         payload["completed_at"] = datetime.now(UTC).isoformat()
         path = write_evidence(payload)
         print(f"Business workflow smoke evidence: {path}")

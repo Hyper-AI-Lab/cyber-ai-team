@@ -360,6 +360,22 @@ def get_approval_id(result: dict[str, Any]) -> str:
     return str(approval_id)
 
 
+def assert_invalid_approval(result: dict[str, Any], approval_id: str) -> None:
+    output = result.get("output") or {}
+    assert_true(result.get("success") is False, f"Expected approval rejection: {result}")
+    assert_true(output.get("approval_required") is True, f"Expected approval gate: {result}")
+    assert_true(output.get("approval_invalid") is True, f"Expected invalid approval: {result}")
+    assert_true(
+        output.get("provided_approval_id") == approval_id,
+        f"Unexpected provided approval id: {result}",
+    )
+    assert_true(
+        output.get("new_approval_created") is False,
+        f"Invalid replay created a replacement approval: {result}",
+    )
+    assert_true(not output.get("approval_id"), f"Replacement approval leaked: {result}")
+
+
 def execute_with_approval(
     client: CyberTeamClient,
     tool_name: str,
@@ -373,12 +389,7 @@ def execute_with_approval(
     replay = client.execute_tool(tool_name, {**params, "_approval_id": approval_id})
     assert_true(replay.get("success") is True, f"Tool replay failed: {replay}")
     consumed = client.execute_tool(tool_name, {**params, "_approval_id": approval_id})
-    consumed_approval_id = get_approval_id(consumed)
-    rejection = client.reject(
-        consumed_approval_id,
-        "Rejected by ERPNext smoke after consumed-approval replay check.",
-    )
-    assert_true(rejection.get("status") == "rejected", f"Replay rejection failed: {rejection}")
+    assert_invalid_approval(consumed, approval_id)
     return replay, approval_id, approval, consumed
 
 
@@ -454,11 +465,7 @@ def run_smoke(config: Config) -> dict[str, Any]:
             "_approval_id": mismatch_approval_id,
         },
     )
-    wrong_target_approval_id = get_approval_id(wrong_tool)
-    client.reject(
-        wrong_target_approval_id,
-        "Rejected by ERPNext smoke after wrong-target approval check.",
-    )
+    assert_invalid_approval(wrong_tool, mismatch_approval_id)
     mismatch_task = client.execute_tool(
         "task_create",
         {**mismatch_task_params, "_approval_id": mismatch_approval_id},

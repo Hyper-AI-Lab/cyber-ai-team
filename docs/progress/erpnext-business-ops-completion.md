@@ -4431,3 +4431,57 @@
   - Verified commit: `f690e2c0754c8701df498a89ff28e991fdd46518`.
 - Next step:
   - Push this append-only CI record and verify the final documentation head; the requested operational evidence refresh is otherwise complete.
+
+### 2026-07-27T03:18:46Z — STEP-146 — Removed the business-smoke approval artifact
+- Files/services changed:
+  - No repository source changed in this step; staging approval state was corrected through the owner-authorized API.
+- Commands run:
+  - Owner-authenticated `POST /api/dashboard/approval/7df1045d-3d26-4823-a621-c6363a9260ff/reject` with a test-artifact cleanup note.
+  - Owner-authenticated `GET /api/dashboard/approval-queue?status=pending` verification.
+- Result:
+  - The `send_email` approval created by the July 26 business workflow smoke was rejected without executing the email action.
+  - The staging pending-approval queue now contains zero records.
+- Evidence:
+  - Approval `7df1045d-3d26-4823-a621-c6363a9260ff` returned `status=rejected`; the subsequent queue response returned `pending_count=0`.
+- Next step:
+  - Make explicitly invalid approval replay terminal (without replacement approval creation), add defensive smoke cleanup, and cover both contracts with regression tests.
+
+### 2026-07-27T03:28:23Z — STEP-147 — Hardened approval replay and smoke lifecycle cleanup
+- Files/services changed:
+  - Updated `/home/projects/cyber-team/backend/src/cyber_team/tools/registry.py` so an explicitly invalid, expired, consumed, rejected, or wrong-target approval blocks terminally and never creates a replacement approval.
+  - Added approval lifecycle regression coverage in `/home/projects/cyber-team/backend/tests/test_tool_approval_replay.py` and `/home/projects/cyber-team/backend/tests/test_business_workflow_smoke_script.py`.
+  - Updated `/home/projects/cyber-team/scripts/business-workflow-smoke.py` to capture and reject any approval returned by an older deployment, including on later smoke failure.
+  - Updated `/home/projects/cyber-team/scripts/erpnext-smoke.py` to assert terminal invalid-approval behavior for consumed and wrong-target approvals.
+- Commands run:
+  - Focused Ruff and Pytest checks for the registry and smoke lifecycle (`7 passed`).
+  - `BACKEND_VENV=/home/projects/cyber-team/.venv-quality ./scripts/quality-gate.sh`.
+- Result:
+  - Missing approval still creates one owner request; explicit invalid replay creates no request and performs no side effect.
+  - The full release gate passed: Ruff, `241` backend tests, compileall, Alembic offline SQL, Python dependency audit, frontend build/typecheck, `23` frontend tests, runtime dependency audit, Compose config, operations syntax, secret scan, FOSS/resource policy, and diff hygiene.
+  - No known Python or shipped frontend runtime dependency vulnerabilities were reported.
+- Evidence:
+  - Focused test result: `7 passed`.
+  - Full backend result: `241 passed`; frontend result: `23 passed`; quality gate result: `passed`.
+- Next step:
+  - Deploy the corrected registry to staging and prove business-smoke, ERPNext-smoke, readiness, and approval-queue behavior live.
+
+### 2026-07-27T03:30:39Z — STEP-148 — Deployed and proved terminal invalid-approval behavior on staging
+- Files/services changed:
+  - Rebuilt the shared `cyber-team-core:latest` image and recreated only the staging `core` and `worker` services.
+  - Created fresh business-workflow and ERPNext tool-smoke evidence; no persistent application source changed during verification.
+- Commands run:
+  - `docker compose --env-file deploy/environments/staging.env up -d --build core worker`.
+  - `CYBERTEAM_ENV_FILE=deploy/environments/staging.env python3 scripts/business-workflow-smoke.py`.
+  - `CYBERTEAM_ENV_FILE=deploy/environments/staging.env python3 scripts/erpnext-smoke.py`.
+  - Owner-authenticated approval-queue and forced readiness checks, Compose service inspection, and recent core/worker error-log scan.
+- Result:
+  - The business smoke passed all nine checks; invalid `send_email` approval replay created no replacement approval and required no cleanup record.
+  - The ERPNext smoke passed real Lead, Task, Issue, and Material Request paths plus wrong-target and consumed-approval rejection. Staging records were archived/closed/completed where supported; the Material Request remains an explicitly documented staging draft audit record.
+  - The pending owner approval queue remained empty after both smokes.
+  - Operations readiness is `ready` with zero blockers; core is healthy, worker is running, and recent logs contain no error, exception, or traceback entries.
+- Evidence:
+  - `/home/projects/cyber-team/dist/business-workflows/business-workflow-smoke-20260727T032934Z.json`.
+  - `/home/projects/cyber-team/dist/erpnext/smoke/cyberteam-erpnext-tool-smoke-20260727T033019Z.json`.
+  - Live approval queue returned `pending_count=0`; live readiness returned `status=ready`, `blockers=[]`.
+- Next step:
+  - Commit and push the approval-lifecycle hardening, require green public GitHub CI, then assess live company context for the next business-objective/KPI activation milestone.

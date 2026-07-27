@@ -78,6 +78,41 @@ async def test_tool_execution_requests_approval_before_sensitive_side_effect():
 
 
 @pytest.mark.asyncio
+async def test_invalid_explicit_approval_blocks_without_creating_replacement():
+    registry = ToolRegistry()
+    manager = AsyncMock()
+    manager.approval_is_executable.return_value = False
+    comms = FakeCommsGateway()
+    registry.set_services(comms=comms, agent_manager=manager)
+
+    result = await registry.execute(
+        "send_email",
+        {
+            "to_address": "customer@example.com",
+            "subject": "Should not send",
+            "body": "Invalid approval replay.",
+            "_agent_id": "sales",
+            "_approval_id": "expired-approval",
+        },
+    )
+
+    assert result.success is False
+    assert result.output["approval_required"] is True
+    assert result.output["approval_invalid"] is True
+    assert result.output["provided_approval_id"] == "expired-approval"
+    assert result.output["new_approval_created"] is False
+    assert result.output.get("approval_id") is None
+    assert result.output["target"] == {"type": "tool", "id": "send_email"}
+    assert comms.sent == []
+    manager.approval_is_executable.assert_awaited_once_with(
+        "expired-approval",
+        target_type="tool",
+        target_id="send_email",
+    )
+    manager._request_approval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_tool_execution_does_not_mutate_caller_params():
     registry = ToolRegistry()
     manager = AsyncMock()

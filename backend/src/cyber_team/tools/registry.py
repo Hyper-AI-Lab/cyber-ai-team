@@ -396,7 +396,67 @@ class ToolRegistry:
             )
 
         approval_required = self._approval_required_for(tool)
-        if approval_required and not await self._approval_granted(approval_id, tool_name):
+        approval_granted = not approval_required or await self._approval_granted(
+            approval_id,
+            tool_name,
+        )
+        if approval_required and approval_id and not approval_granted:
+            output = {
+                "approval_required": True,
+                "approval_invalid": True,
+                "provided_approval_id": approval_id,
+                "new_approval_created": False,
+                "tool_name": tool_name,
+                "risk_level": tool.risk_level,
+                "reason": (
+                    "The provided approval is not executable for this tool. It may be missing, "
+                    "expired, rejected, consumed, or issued for a different target. Request a "
+                    "new approval explicitly before retrying."
+                ),
+                "target": {"type": "tool", "id": tool_name},
+                "payload_summary": self._payload_summary(params),
+                "replay_instructions": self._replay_instructions(tool_name, params),
+            }
+            await self._audit_tool_event(
+                tool_name,
+                actor=actor,
+                actor_type=actor_type,
+                outcome="blocked",
+                event_type="tool.approval_invalid",
+                metadata={
+                    "provided_approval_id": approval_id,
+                    "new_approval_created": False,
+                    **readiness,
+                },
+            )
+            self._record_approval_metric("invalid", "blocked", tool.risk_level)
+            self._record_tool_metric(
+                tool_name,
+                "blocked",
+                tool.risk_level,
+                readiness["state"],
+            )
+            await self._record_tool_trace(
+                tool_name,
+                agent_id=agent_id,
+                source_type=source_type,
+                conversation_id=conversation_id,
+                workflow_run_id=workflow_run_id,
+                task_excerpt=f"Execute tool {tool_name}",
+                metadata={
+                    **trace_metadata,
+                    "provided_approval_id": approval_id,
+                    "new_approval_created": False,
+                },
+                errors=["approval_invalid"],
+            )
+            return ToolResult(
+                success=False,
+                output=output,
+                error="Provided approval is not executable for this tool",
+            )
+
+        if approval_required and not approval_granted:
             requested_id = None
             if self._agent_manager:
                 requested_id = await self._agent_manager._request_approval(
