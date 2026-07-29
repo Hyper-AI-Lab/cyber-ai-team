@@ -5081,3 +5081,24 @@
   - `/home/projects/cyber-team/backend/tests/test_readiness_evidence.py`.
 - Next step:
   - Commit, build, scan, and promote rc3; pass the soak preflight and start the uninterrupted 24-hour gate.
+
+### 2026-07-29T09:59:06Z — STEP-182 — Promoted rc3 and started the strict 24-hour staging soak
+- Files/services changed:
+  - Built and promoted immutable `0.3.0-rc3` from commit `3037684ebe9b62ab330f56bec752dabb903e4ff0`.
+  - Started the detached `cyberteam-staging-soak` monitor using the exact running core image, public edge, authenticated readiness, and five-minute sampling.
+- Commands run:
+  - Formal rc3 release gate with full quality checks, both migration rehearsals, isolated Compose smoke, image builds, and Trivy scans.
+  - Staging promotion with a fresh PostgreSQL backup and live Compose smoke.
+  - Thirty-second soak rehearsal followed by the 86,400-second production-like staging soak launch.
+- Result:
+  - Backend: 312 tests passed; frontend: 24 tests passed; dependency, secret, FOSS, Compose, migration, and image-security gates passed.
+  - Live readiness is `ready` with no blockers; alert evidence is fresh and business events have no stale unexplained signals.
+  - The rehearsal passed seven of seven samples. The full soak is running, and its first sample passed with the exact rc3 version/build SHA.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.0-rc3.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.0-rc3-20260729-095633.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.0-rc3-20260729-095427.dump`.
+  - `/home/projects/cyber-team/dist/soak/staging-soak-20260729T095752Z.summary.json`.
+  - `/home/projects/cyber-team/dist/soak/staging-soak-20260729T095839Z.state.json`.
+- Next step:
+  - Push the verified commits, confirm GitHub push/manual CI, and let the uninterrupted 24-hour soak complete before closure.
