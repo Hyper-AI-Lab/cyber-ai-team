@@ -30,6 +30,54 @@ async def test_memory_startup_degrades_when_qdrant_is_unavailable(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_memory_recall_uses_current_qdrant_query_points_api(monkeypatch):
+    class FakeQdrant:
+        def __init__(self):
+            self.calls = []
+
+        def query_points(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(
+                points=[
+                    SimpleNamespace(
+                        id="memory-1",
+                        score=0.91,
+                        payload={
+                            "content": "Evidence-linked operating context",
+                            "memory_type": "semantic",
+                            "namespace": "company:test",
+                            "agent_id": "agent-1",
+                            "importance": 0.8,
+                        },
+                    )
+                ]
+            )
+
+    service = MemoryService()
+    qdrant = FakeQdrant()
+    service._qdrant = qdrant
+
+    async def fake_embed(_text):
+        return [0.1] * memory_module.VECTOR_SIZE
+
+    monkeypatch.setattr(service, "_embed", fake_embed)
+    result = await service.recall(
+        SimpleNamespace(
+            query="operating context",
+            agent_id="agent-1",
+            memory_type="semantic",
+            namespace="company:test",
+            limit=5,
+        )
+    )
+
+    assert result[0]["id"] == "memory-1"
+    assert result[0]["score"] == 0.91
+    assert qdrant.calls[0]["query"][0] == 0.1
+    assert qdrant.calls[0]["limit"] == 5
+
+
+@pytest.mark.asyncio
 async def test_memory_trace_record_and_list_filters_by_agent(monkeypatch):
     engine, session_factory = await build_session_factory()
     monkeypatch.setattr(memory_module, "async_session", session_factory)

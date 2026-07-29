@@ -2,17 +2,16 @@ from datetime import UTC, datetime, timedelta
 from secrets import compare_digest, token_urlsafe
 from threading import Lock
 
+import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from passlib.context import CryptContext
 from pydantic import BaseModel
 
 from cyber_team.config import settings
 
 ALGORITHM = "HS256"
 bearer_scheme = HTTPBearer(auto_error=False)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _websocket_ticket_lock = Lock()
 
 
@@ -28,8 +27,18 @@ _websocket_tickets: dict[str, tuple[Principal, datetime]] = {}
 
 def verify_owner_password(password: str) -> bool:
     if settings.owner_password_hash:
-        return pwd_context.verify(password, settings.owner_password_hash)
+        try:
+            return bcrypt.checkpw(
+                password.encode("utf-8"),
+                settings.owner_password_hash.encode("utf-8"),
+            )
+        except ValueError:
+            return False
     return compare_digest(password, settings.owner_password)
+
+
+def hash_owner_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
 
 
 def create_token(

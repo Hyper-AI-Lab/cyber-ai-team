@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 from sqlalchemy import text
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from temporalio.client import Client
@@ -23,6 +24,7 @@ from cyber_team.api.routes import (
     auth,
     chat,
     comms,
+    company,
     dashboard,
     integrations,
     interop,
@@ -40,6 +42,7 @@ from cyber_team.comms.email_triage import EmailTriageService
 from cyber_team.comms.gateway import CommsGateway
 from cyber_team.comms.inbound_email import InboundEmailService
 from cyber_team.company.context_sync import CompanyContextSyncService
+from cyber_team.company.intelligence import CompanyIntelligenceService
 from cyber_team.config import settings
 from cyber_team.db import async_session, init_db
 from cyber_team.integrations.erpnext import ERPNextClient
@@ -47,20 +50,31 @@ from cyber_team.interop.service import InteropService
 from cyber_team.llm.gateway import LLMGateway
 from cyber_team.memory.service import MemoryService
 from cyber_team.observability.metrics import MetricsService
+from cyber_team.operations.action_policy import ActionPolicyService
 from cyber_team.operations.autonomous import AutonomousOperationsService
+from cyber_team.operations.autonomy_cycle import (
+    AutonomousCompanyCycleService,
+    TemporalAutonomyController,
+)
+from cyber_team.operations.capability_expansion import CapabilityExpansionService
 from cyber_team.operations.executive import ExecutiveCompanyOSService
 from cyber_team.operations.executive_briefing import ExecutiveBriefEmailService
 from cyber_team.operations.governor import OrchestrationGovernorService
 from cyber_team.operations.memory_conflicts import MemoryCanonicalConflictService
 from cyber_team.operations.memory_steward import MemoryStewardService
+from cyber_team.operations.outcomes import OutcomeLearningService
 from cyber_team.operations.owner_attention import OwnerAttentionNotificationService
 from cyber_team.operations.planning import AutonomousPlanningService
 from cyber_team.operations.readiness import ProductionReadinessEvidenceService
+from cyber_team.operations.readiness_v3 import AutonomousCompanyReadinessService
 from cyber_team.operations.retention import RetentionService
+from cyber_team.operations.strategy import CompanyStrategyService
 from cyber_team.operations.supervisor_review import SupervisorReviewService
+from cyber_team.operations.work_portfolio import WorkPortfolioService
 from cyber_team.roles.loader import load_default_roles
 from cyber_team.roles.team_activation import TeamActivationService
 from cyber_team.tools.registry import ToolRegistry
+from cyber_team.workflows.compiler import WorkflowCompilerService
 from cyber_team.workflows.intents import WorkflowIntentService
 from cyber_team.workflows.templates import WorkflowTemplateService
 
@@ -98,14 +112,50 @@ async def lifespan(app: FastAPI):
         audit_service=app.state.audit_service,
     )
     app.state.llm_gateway = LLMGateway()
+    app.state.company_intelligence_service = CompanyIntelligenceService(
+        llm_gateway=app.state.llm_gateway,
+        memory_service=app.state.memory_service,
+        audit_service=app.state.audit_service,
+    )
+    app.state.company_strategy_service = CompanyStrategyService(
+        llm_gateway=app.state.llm_gateway,
+        audit_service=app.state.audit_service,
+    )
     app.state.erpnext = ERPNextClient()
     app.state.tool_registry = ToolRegistry()
+    app.state.action_policy_service = ActionPolicyService(
+        audit_service=app.state.audit_service
+    )
     app.state.agent_manager = AgentManager(
         memory_service=app.state.memory_service,
         audit_service=app.state.audit_service,
         tool_registry=app.state.tool_registry,
         llm_gateway=app.state.llm_gateway,
     )
+    app.state.work_portfolio_service = WorkPortfolioService(
+        agent_manager=app.state.agent_manager,
+        audit_service=app.state.audit_service,
+        company_intelligence_service=app.state.company_intelligence_service,
+        tool_registry=app.state.tool_registry,
+    )
+    app.state.outcome_learning_service = OutcomeLearningService(
+        action_policy_service=app.state.action_policy_service,
+        memory_service=app.state.memory_service,
+        audit_service=app.state.audit_service,
+    )
+    app.state.autonomous_company_cycle_service = AutonomousCompanyCycleService(
+        intelligence_service=app.state.company_intelligence_service,
+        strategy_service=app.state.company_strategy_service,
+        work_portfolio_service=app.state.work_portfolio_service,
+        outcome_learning_service=app.state.outcome_learning_service,
+        action_policy_service=app.state.action_policy_service,
+        audit_service=app.state.audit_service,
+    )
+    app.state.temporal_autonomy_controller = TemporalAutonomyController()
+    app.state.temporal_autonomy_status = {
+        "status": "disabled",
+        "reason": "Temporal company-autonomy scheduling is disabled.",
+    }
     app.state.orchestrator = Orchestrator(
         agent_manager=app.state.agent_manager,
         memory_service=app.state.memory_service,
@@ -113,6 +163,16 @@ async def lifespan(app: FastAPI):
     )
     app.state.workflow_template_service = WorkflowTemplateService(
         orchestrator=app.state.orchestrator,
+    )
+    app.state.workflow_compiler_service = WorkflowCompilerService(
+        tool_registry=app.state.tool_registry,
+        action_policy_service=app.state.action_policy_service,
+        audit_service=app.state.audit_service,
+    )
+    app.state.capability_expansion_service = CapabilityExpansionService(
+        llm_gateway=app.state.llm_gateway,
+        workflow_compiler=app.state.workflow_compiler_service,
+        audit_service=app.state.audit_service,
     )
     app.state.workflow_intent_service = WorkflowIntentService(
         orchestrator=app.state.orchestrator,
@@ -168,6 +228,9 @@ async def lifespan(app: FastAPI):
     app.state.readiness_evidence_service = ProductionReadinessEvidenceService(
         audit_service=app.state.audit_service,
     )
+    app.state.autonomous_company_readiness_service = AutonomousCompanyReadinessService(
+        llm_gateway=app.state.llm_gateway
+    )
     app.state.orchestration_governor_service = OrchestrationGovernorService(
         agent_manager=app.state.agent_manager,
         planning_service=app.state.autonomous_planning_service,
@@ -206,6 +269,7 @@ async def lifespan(app: FastAPI):
         erpnext=app.state.erpnext,
         audit=app.state.audit_service,
         metrics=app.state.metrics_service,
+        action_policy=app.state.action_policy_service,
     )
     app.state.email_triage_service = EmailTriageService(
         inbound_email_service=app.state.inbound_email_service,
@@ -215,14 +279,28 @@ async def lifespan(app: FastAPI):
         metrics_service=app.state.metrics_service,
     )
     await app.state.memory_service.startup()
+    await app.state.company_intelligence_service.ensure_default_sources()
+    await app.state.action_policy_service.ensure_default_policies()
     await load_default_roles()
     await app.state.orchestration_governor_service.ensure_chief_operating_agent()
     await app.state.executive_company_os_service.ensure_observer_agent()
     await app.state.executive_company_os_service.ensure_default_policy()
     await app.state.executive_company_os_service.ensure_default_objectives()
     await app.state.executive_company_os_service.ensure_default_benchmarks()
+    await app.state.work_portfolio_service.ensure_active_agent_mandates()
     await app.state.workflow_template_service.ensure_core_templates()
     await app.state.workflow_template_service.ensure_core_workflows()
+    if settings.company_autonomy_temporal_schedule_enabled:
+        try:
+            app.state.temporal_autonomy_status = (
+                await app.state.temporal_autonomy_controller.ensure()
+            )
+        except Exception as exc:  # noqa: BLE001 - API remains available for recovery.
+            logger.exception("Temporal company-autonomy schedule initialization failed")
+            app.state.temporal_autonomy_status = {
+                "status": "failed",
+                "reason": type(exc).__name__,
+            }
     app.state.autonomous_operations_task = None
     app.state.supervisor_review_task = None
     app.state.memory_steward_task = None
@@ -232,6 +310,7 @@ async def lifespan(app: FastAPI):
     app.state.owner_attention_notification_task = None
     app.state.orchestration_governor_task = None
     app.state.executive_brief_email_task = None
+    app.state.domain_operations_task = None
     app.state.operating_cadence_scheduler_status = _initial_operating_cadence_scheduler_status()
     app.state.owner_attention_notification_status = (
         _initial_owner_attention_notification_status()
@@ -261,9 +340,19 @@ async def lifespan(app: FastAPI):
         app.state.executive_brief_email_task = asyncio.create_task(
             _executive_brief_email_loop(app)
         )
-    if settings.governor_enabled:
+    if (
+        settings.governor_enabled
+        and not settings.company_autonomy_temporal_schedule_enabled
+    ):
         app.state.orchestration_governor_task = asyncio.create_task(
             _orchestration_governor_loop(app)
+        )
+    if (
+        settings.company_autonomy_enabled
+        and not settings.company_autonomy_temporal_schedule_enabled
+    ):
+        app.state.domain_operations_task = asyncio.create_task(
+            _domain_operations_loop(app)
         )
     if settings.autonomous_operations_enabled:
         app.state.autonomous_operations_task = asyncio.create_task(
@@ -291,6 +380,7 @@ async def lifespan(app: FastAPI):
             "owner_attention_notification_task",
             "orchestration_governor_task",
             "executive_brief_email_task",
+            "domain_operations_task",
         ):
             task = getattr(app.state, task_name, None)
             if task:
@@ -300,8 +390,46 @@ async def lifespan(app: FastAPI):
                 except asyncio.CancelledError:
                     pass
     # Shutdown
+    await app.state.authorization_service.close()
     await app.state.memory_service.shutdown()
     await app.state.erpnext.close()
+
+
+async def _domain_operations_loop(app: FastAPI) -> None:
+    """Fallback loop used only when Temporal schedule execution is disabled."""
+    interval = max(60, settings.domain_loop_interval_seconds)
+    while True:
+        try:
+            cycle = await app.state.autonomous_company_cycle_service.run(
+                trigger="in_process_fallback"
+            )
+            await app.state.audit_service.record(
+                event_type="domain_operations.scheduler_run",
+                actor="chief_operating_agent",
+                actor_type="agent",
+                resource_type="business_work_portfolio",
+                action="run_domain_loops",
+                outcome="success",
+                metadata={
+                    "agents": cycle["domain_work"]["agents"],
+                    "processed": cycle["domain_work"]["processed"],
+                    "outcomes_assessed": cycle["outcomes"]["assessed"],
+                },
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - durable evidence captures failures.
+            logger.exception("Domain operations loop failed")
+            await app.state.audit_service.record(
+                event_type="domain_operations.scheduler_run",
+                actor="chief_operating_agent",
+                actor_type="agent",
+                resource_type="business_work_portfolio",
+                action="run_domain_loops",
+                outcome="failed",
+                metadata={"error": type(exc).__name__},
+            )
+        await asyncio.sleep(interval)
 
 
 async def _autonomous_operations_loop(app: FastAPI) -> None:
@@ -439,11 +567,22 @@ def _initial_orchestration_governor_scheduler_status() -> dict:
     )
     return {
         "enabled": enabled,
-        "status": "idle" if enabled else "disabled",
+        "status": (
+            "temporal_managed"
+            if enabled and settings.company_autonomy_temporal_schedule_enabled
+            else ("idle" if enabled else "disabled")
+        ),
         "detail": (
-            "Chief Operating Agent governor is waiting for the next run."
+            "Chief Operating Agent governor is managed by a durable Temporal schedule."
+            if enabled and settings.company_autonomy_temporal_schedule_enabled
+            else "Chief Operating Agent governor is waiting for the next run."
             if enabled
             else "Chief Operating Agent governor is disabled."
+        ),
+        "execution_plane": (
+            "temporal"
+            if enabled and settings.company_autonomy_temporal_schedule_enabled
+            else "api_fallback"
         ),
         "actor": "chief_operating_agent_scheduler",
         "mode": mode,
@@ -871,6 +1010,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
 @app.middleware("http")
 async def metrics_middleware(request: Request, call_next: Callable):
@@ -893,7 +1033,18 @@ async def metrics_middleware(request: Request, call_next: Callable):
 
 # Register routers
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(
+    company.webhook_router,
+    prefix="/api/company/webhooks",
+    tags=["company-webhooks"],
+)
 protected_dependencies = [Depends(get_current_principal)]
+app.include_router(
+    company.router,
+    prefix="/api/company",
+    tags=["company"],
+    dependencies=protected_dependencies,
+)
 app.include_router(
     agents.router,
     prefix="/api/agents",

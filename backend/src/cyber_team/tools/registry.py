@@ -278,6 +278,7 @@ class ToolRegistry:
         workflow_run_id = params.pop("_workflow_run_id", None)
         workflow_node_id = params.pop("_workflow_node_id", None)
         source_type = params.pop("_source_type", "tool_execution")
+        action_envelope = params.pop("_action_envelope", None)
         trace_metadata = {
             "tool_name": tool_name,
             "conversation_id": conversation_id,
@@ -395,7 +396,65 @@ class ToolRegistry:
                 error=readiness["readiness_reason"] or "Tool is not executable",
             )
 
-        approval_required = self._approval_required_for(tool)
+        policy_decision = None
+        if self._action_policy:
+            policy_decision = await self._action_policy.evaluate(
+                self._tool_action_envelope(
+                    tool,
+                    actor=actor,
+                    actor_type=actor_type,
+                    supplied=action_envelope,
+                ),
+                approval_present=bool(approval_id),
+            )
+            trace_metadata["action_policy"] = {
+                key: value
+                for key, value in policy_decision.items()
+                if key != "envelope"
+            }
+            if not policy_decision["allowed"] and not policy_decision["requires_approval"]:
+                reason = ", ".join(policy_decision["reasons"]) or "action_policy_denied"
+                await self._audit_tool_event(
+                    tool_name,
+                    actor=actor,
+                    actor_type=actor_type,
+                    outcome="blocked",
+                    event_type="tool.policy_denied",
+                    metadata={"reason": reason, **readiness},
+                )
+                await self._record_tool_trace(
+                    tool_name,
+                    agent_id=agent_id,
+                    source_type=source_type,
+                    conversation_id=conversation_id,
+                    workflow_run_id=workflow_run_id,
+                    task_excerpt=f"Execute tool {tool_name}",
+                    metadata=trace_metadata,
+                    errors=[reason],
+                )
+                return ToolResult(
+                    success=False,
+                    output={
+                        "policy_blocked": True,
+                        "tool_name": tool_name,
+                        "reasons": policy_decision["reasons"],
+                    },
+                    error=reason,
+                )
+        elif settings.autonomy_side_effect_mode == "policy_gated" and tool.side_effects:
+            return ToolResult(
+                success=False,
+                output={
+                    "policy_blocked": True,
+                    "tool_name": tool_name,
+                    "reasons": ["action_policy_service_unavailable"],
+                },
+                error="Action policy service is unavailable; execution failed closed.",
+            )
+
+        approval_required = self._approval_required_for(tool) or bool(
+            policy_decision and policy_decision["requires_approval"]
+        )
         approval_granted = not approval_required or await self._approval_granted(
             approval_id,
             tool_name,
@@ -2003,6 +2062,7 @@ class ToolRegistry:
     _erpnext_client = None
     _audit = None
     _metrics = None
+    _action_policy = None
 
     def set_services(
         self,
@@ -2012,6 +2072,7 @@ class ToolRegistry:
         erpnext=None,
         audit=None,
         metrics=None,
+        action_policy=None,
     ):
         """Inject service instances for tool execution."""
         self._comms_gateway = comms
@@ -2020,6 +2081,48 @@ class ToolRegistry:
         self._erpnext_client = erpnext
         self._audit = audit
         self._metrics = metrics or getattr(audit, "_metrics", None)
+        self._action_policy = action_policy
+
+    @staticmethod
+    def _tool_action_envelope(
+        tool: ToolDefinition,
+        *,
+        actor: str,
+        actor_type: str,
+        supplied: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        supplied = dict(supplied or {})
+        permanent_classes = {
+            "payment_charge": "payment",
+            "payment_refund": "payment",
+            "approval_resolve": "permission_change",
+        }
+        return {
+            "action_class": supplied.get("action_class")
+            or permanent_classes.get(tool.name)
+            or tool.category,
+            "actor": actor,
+            "actor_type": actor_type,
+            "target_type": "tool",
+            "target_id": tool.name,
+            "expected_effect": supplied.get("expected_effect")
+            or f"Execute registered tool {tool.name}",
+            "evidence_ids": supplied.get("evidence_ids", []),
+            "confidence": supplied.get("confidence", 1.0),
+            "reversible": supplied.get("reversible", not tool.side_effects),
+            "financial_exposure_usd": supplied.get("financial_exposure_usd", 0),
+            "financial_daily_usd": supplied.get("financial_daily_usd", 0),
+            "recipients": supplied.get("recipients", 0),
+            "data_sensitivity": supplied.get("data_sensitivity", "internal"),
+            "external_side_effect": tool.side_effects,
+            "fresh_backup": supplied.get("fresh_backup", not tool.side_effects),
+            "observer_status": supplied.get("observer_status", "agreed"),
+            "benchmark_fresh": supplied.get("benchmark_fresh", True),
+            "memory_coverage_fresh": supplied.get("memory_coverage_fresh", True),
+            "prompt_injection_suspected": supplied.get(
+                "prompt_injection_suspected", False
+            ),
+        }
 
     async def _approval_granted(self, approval_id: str | None, tool_name: str) -> bool:
         if not approval_id or not self._agent_manager:

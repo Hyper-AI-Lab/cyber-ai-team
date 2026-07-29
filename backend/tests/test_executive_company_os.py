@@ -9,6 +9,7 @@ from cyber_team.db.models import (
     Agent,
     ApprovalRequest,
     AutonomousExecutionRecord,
+    CompanyObjectiveRevision,
     OperationGraphNode,
     OrchestrationToolProposal,
     OutsourcingRequest,
@@ -79,6 +80,11 @@ async def executive_session_factory(monkeypatch):
         await connection.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(executive_module, "async_session", factory)
+    monkeypatch.setattr(
+        executive_module.settings,
+        "legacy_governor_rule_proposer_enabled",
+        True,
+    )
     try:
         yield factory
     finally:
@@ -92,6 +98,65 @@ def build_service(snapshot=None, audit=None, memory=None):
         audit_service=audit or FakeAudit(),
         readiness_evidence_service=FakeReadinessEvidence(),
     )
+
+
+def test_legacy_rule_proposer_is_bypassed_when_v3_is_authoritative(monkeypatch):
+    monkeypatch.setattr(
+        executive_module.settings,
+        "legacy_governor_rule_proposer_enabled",
+        False,
+    )
+    service = build_service(
+        snapshot={
+            "memory": {"open_findings": 10},
+            "role_backlog": {"active": 8, "actionable": 8},
+            "role_gap_samples": [{"gap_id": "gap-1", "missing_tools": ["new_tool"]}],
+        }
+    )
+
+    actions = service._propose_actions(
+        {"generated_at": "2026-07-27T00:00:00Z", "governor_snapshot": service._governor.snapshot}
+    )
+
+    assert [item["action_type"] for item in actions] == ["observe_only"]
+    assert actions[0]["source_type"] == "autonomous_company_v3"
+
+
+@pytest.mark.asyncio
+async def test_owner_objective_updates_create_locked_revisions_without_duplicates(
+    executive_session_factory,
+):
+    service = build_service()
+    payload = [
+        {
+            "id": "objective_owner_growth",
+            "title": "Validate sustainable growth",
+            "description": "Use evidence-backed experiments.",
+            "priority": "high",
+            "target": {"validated_segments": 1},
+            "category": "owner_strategy",
+        }
+    ]
+
+    await service.replace_objectives(actor="owner@example.com", objectives=payload)
+    await service.replace_objectives(actor="owner@example.com", objectives=payload)
+    changed = [{**payload[0], "target": {"validated_segments": 2}}]
+    await service.replace_objectives(actor="owner@example.com", objectives=changed)
+
+    async with executive_session_factory() as session:
+        revisions = (
+            await session.execute(
+                select(CompanyObjectiveRevision)
+                .where(
+                    CompanyObjectiveRevision.objective_id == "objective_owner_growth"
+                )
+                .order_by(CompanyObjectiveRevision.revision)
+            )
+        ).scalars().all()
+    assert len(revisions) == 2
+    assert all(item.owner_locked for item in revisions)
+    assert revisions[0].status == "superseded"
+    assert revisions[1].target == {"validated_segments": 2}
 
 
 @pytest.mark.asyncio

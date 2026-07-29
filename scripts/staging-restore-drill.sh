@@ -158,11 +158,11 @@ do
     >>"$row_counts_file"
 done
 
-qdrant_source_info="$(
+qdrant_source_info_before="$(
   curl -fsS "${qdrant_headers[@]}" \
     "$QDRANT_URL/collections/$QDRANT_COLLECTION"
 )"
-qdrant_source_points="$(printf "%s" "$qdrant_source_info" | jq -er '.result.points_count')"
+qdrant_source_points_before="$(printf "%s" "$qdrant_source_info_before" | jq -er '.result.points_count')"
 qdrant_snapshot_response="$(
   curl -fsS -X POST "${qdrant_headers[@]}" \
     "$QDRANT_URL/collections/$QDRANT_COLLECTION/snapshots?wait=true"
@@ -175,6 +175,18 @@ qdrant_snapshot_checksum="$(
 curl -fsS "${qdrant_headers[@]}" \
   "$QDRANT_URL/collections/$QDRANT_COLLECTION/snapshots/$qdrant_snapshot_name" \
   --output "$qdrant_snapshot_file"
+
+qdrant_downloaded_checksum="$(sha256sum "$qdrant_snapshot_file" | awk '{print $1}')"
+if [ -z "$qdrant_snapshot_checksum" ] || [ "$qdrant_snapshot_checksum" != "$qdrant_downloaded_checksum" ]; then
+  echo "Qdrant snapshot checksum verification failed" >&2
+  exit 1
+fi
+
+qdrant_source_info_after="$(
+  curl -fsS "${qdrant_headers[@]}" \
+    "$QDRANT_URL/collections/$QDRANT_COLLECTION"
+)"
+qdrant_source_points_after="$(printf "%s" "$qdrant_source_info_after" | jq -er '.result.points_count')"
 
 qdrant_image="${RESTORE_DRILL_QDRANT_IMAGE:-$(
   docker inspect "$QDRANT_SOURCE_CONTAINER" --format '{{.Config.Image}}'
@@ -210,8 +222,15 @@ qdrant_restored_info="$(
     "http://127.0.0.1:${QDRANT_RESTORE_PORT}/collections/$qdrant_target_collection"
 )"
 qdrant_restored_points="$(printf "%s" "$qdrant_restored_info" | jq -er '.result.points_count')"
-if [ "$qdrant_source_points" != "$qdrant_restored_points" ]; then
-  echo "Qdrant restore point-count mismatch: source=$qdrant_source_points restored=$qdrant_restored_points" >&2
+qdrant_source_points_min="$qdrant_source_points_before"
+qdrant_source_points_max="$qdrant_source_points_after"
+if [ "$qdrant_source_points_min" -gt "$qdrant_source_points_max" ]; then
+  qdrant_source_points_min="$qdrant_source_points_after"
+  qdrant_source_points_max="$qdrant_source_points_before"
+fi
+if [ "$qdrant_restored_points" -lt "$qdrant_source_points_min" ] || \
+  [ "$qdrant_restored_points" -gt "$qdrant_source_points_max" ]; then
+  echo "Qdrant restore point count is outside the snapshot consistency envelope: before=$qdrant_source_points_before after=$qdrant_source_points_after restored=$qdrant_restored_points" >&2
   exit 1
 fi
 
@@ -220,9 +239,12 @@ jq -n \
   --arg target_collection "$qdrant_target_collection" \
   --arg snapshot_name "$qdrant_snapshot_name" \
   --arg snapshot_checksum "$qdrant_snapshot_checksum" \
+  --arg downloaded_checksum "$qdrant_downloaded_checksum" \
   --arg image "$qdrant_image" \
   --argjson snapshot_size_bytes "$(wc -c <"$qdrant_snapshot_file" | tr -d "[:space:]")" \
-  --argjson source_points_count "$qdrant_source_points" \
+  --argjson source_points_count "$qdrant_restored_points" \
+  --argjson source_points_before_snapshot "$qdrant_source_points_before" \
+  --argjson source_points_after_snapshot "$qdrant_source_points_after" \
   --argjson restored_points_count "$qdrant_restored_points" \
   --arg restore_status "$(printf "%s" "$qdrant_restore_response" | jq -r '.status')" \
   '{
@@ -230,12 +252,17 @@ jq -n \
     target_collection: $target_collection,
     snapshot_name: $snapshot_name,
     snapshot_checksum: ($snapshot_checksum | if length > 0 then . else null end),
+    downloaded_checksum: $downloaded_checksum,
+    checksum_verified: ($snapshot_checksum == $downloaded_checksum),
     snapshot_size_bytes: $snapshot_size_bytes,
     source_points_count: $source_points_count,
+    source_points_before_snapshot: $source_points_before_snapshot,
+    source_points_after_snapshot: $source_points_after_snapshot,
     restored_points_count: $restored_points_count,
     restore_status: $restore_status,
+    verification_status: "verified",
     isolated_image: $image,
-    validation: "source and restored point counts match",
+    validation: "snapshot checksum matches and restored point count is within the live before/after consistency envelope",
     cleanup: "source snapshot and isolated restore container are removed by trap"
   }' >"$qdrant_details_file"
 

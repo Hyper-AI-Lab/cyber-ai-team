@@ -1,6 +1,7 @@
 """Autonomous operations routes."""
 
 import asyncio
+import hashlib
 import logging
 import time
 from datetime import UTC, datetime, timedelta
@@ -17,7 +18,7 @@ from cyber_team.operations.readiness import ProductionReadinessEvidenceService
 from cyber_team.operations.tool_readiness_policy import tool_is_required_for_readiness
 
 router = APIRouter()
-READINESS_CACHE_TTL_SECONDS = 5.0
+READINESS_CACHE_TTL_SECONDS = 30.0
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +29,143 @@ def _readiness_refresh_finished(task: asyncio.Task) -> None:
         return
     except Exception:
         logger.exception("Background operations-readiness refresh failed")
+
+
+def _event_reference(event: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not event:
+        return None
+    metadata = event.get("metadata") or {}
+    return {
+        "id": event.get("id"),
+        "event_type": event.get("event_type"),
+        "resource_type": event.get("resource_type"),
+        "resource_id": event.get("resource_id"),
+        "action": event.get("action"),
+        "outcome": event.get("outcome"),
+        "created_at": event.get("created_at"),
+        "control_id": metadata.get("control_id"),
+    }
+
+
+def _run_reference(run: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not run:
+        return None
+    return {
+        key: run.get(key)
+        for key in (
+            "id",
+            "run_id",
+            "status",
+            "mode",
+            "snapshot_hash",
+            "counts",
+            "started_at",
+            "completed_at",
+            "created_at",
+        )
+        if key in run
+    }
+
+
+def _compact_operations_readiness(payload: dict[str, Any]) -> dict[str, Any]:
+    compact = dict(payload)
+
+    cadence = payload.get("executive_cadence") or {}
+    compact_loops = []
+    for loop in cadence.get("loops") or []:
+        history = loop.get("durable_history") or {}
+        compact_loops.append(
+            {
+                key: loop.get(key)
+                for key in (
+                    "loop_id",
+                    "title",
+                    "enabled",
+                    "status",
+                    "detail",
+                    "actor",
+                    "interval_seconds",
+                    "last_started_at",
+                    "last_completed_at",
+                    "next_due_at",
+                    "due",
+                    "cooldown",
+                    "observer_review_required",
+                    "auto_apply_low_risk",
+                )
+                if key in loop
+            }
+        )
+        compact_loops[-1]["durable_history"] = {
+            "event_type": history.get("event_type"),
+            "last_event": _event_reference(history.get("last_event")),
+            "recent_counts": history.get("recent_counts") or {},
+        }
+    compact["executive_cadence"] = {
+        key: cadence.get(key)
+        for key in (
+            "status",
+            "detail",
+            "generated_at",
+            "policy",
+            "counts",
+            "low_risk_remediation",
+            "idempotency",
+        )
+        if key in cadence
+    }
+    compact["executive_cadence"]["loops"] = compact_loops
+
+    for key in ("operating_cadence", "owner_attention"):
+        value = payload.get(key) or {}
+        compact[key] = {
+            field: value.get(field)
+            for field in ("status", "detail", "generated_at", "filters", "counts")
+            if field in value
+        }
+
+    executive = payload.get("executive_autonomy") or {}
+    compact["executive_autonomy"] = {
+        key: executive.get(key)
+        for key in (
+            "status",
+            "blocking",
+            "enabled",
+            "paused",
+            "detail",
+            "resource_policy",
+            "observer",
+            "operation_graph",
+            "benchmark_freshness",
+            "reflection_freshness",
+            "outsourcing",
+        )
+        if key in executive
+    }
+    compact["executive_autonomy"]["latest_run"] = _run_reference(
+        executive.get("latest_run")
+    )
+
+    team_activation = payload.get("team_activation") or {}
+    compact["team_activation"] = {
+        key: team_activation.get(key)
+        for key in ("status", "blocking", "detail", "counts")
+        if key in team_activation
+    }
+    compact["team_activation"]["latest_run"] = _run_reference(
+        team_activation.get("latest_run")
+    )
+
+    controls = payload.get("controls") or {}
+    compact["controls"] = {
+        "recent_evidence_count": controls.get("recent_evidence_count", 0),
+        "recent_evidence": [
+            reference
+            for event in (controls.get("recent_evidence") or [])[:10]
+            if (reference := _event_reference(event)) is not None
+        ],
+    }
+    return compact
 
 
 class AutonomousCycleRequest(BaseModel):
@@ -117,6 +255,51 @@ class ToolProposalApprovalRequest(BaseModel):
 
 class CompanyObjectivesRequest(BaseModel):
     objectives: list[dict[str, Any]] = Field(default_factory=list, min_length=1)
+
+
+class StrategyCycleRequest(BaseModel):
+    company_namespace: str | None = Field(default=None, max_length=200)
+
+
+class DomainOperationsRunRequest(BaseModel):
+    agent_id: str | None = Field(default=None, max_length=64)
+    max_items: int = Field(default=1, ge=1, le=10)
+
+
+class DomainAutonomyControlRequest(BaseModel):
+    state: str = Field(..., pattern="^(active|paused|takeover)$")
+    reason: str = Field(default="", max_length=4000)
+
+
+class BusinessWorkItemCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=240)
+    description: str = Field(default="", max_length=8000)
+    work_type: str = Field(default="owner_instruction", max_length=100)
+    company_namespace: str | None = Field(default=None, max_length=200)
+    assigned_agent_id: str | None = Field(default=None, max_length=64)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    acceptance_criteria: list[str] = Field(default_factory=list, max_length=50)
+    dependencies: list[str] = Field(default_factory=list, max_length=100)
+    priority: str = Field(default="medium", pattern="^(low|medium|high|critical)$")
+    risk_level: str = Field(default="low", pattern="^(low|medium|high|critical)$")
+    idempotency_key: str | None = Field(default=None, max_length=240)
+
+
+class WorkflowSpecificationCreateRequest(BaseModel):
+    spec_key: str = Field(..., min_length=1, max_length=160)
+    title: str = Field(..., min_length=1, max_length=240)
+    specification: dict[str, Any]
+    source_type: str = Field(default="owner_instruction", max_length=80)
+    source_id: str | None = Field(default=None, max_length=200)
+    activate_if_safe: bool = True
+
+
+class WorkflowSpecificationRunRequest(BaseModel):
+    input_data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolProposalSandboxRequest(BaseModel):
+    draft: dict[str, Any] | None = None
 
 
 class AutonomyPolicyRequest(BaseModel):
@@ -824,6 +1007,392 @@ async def update_company_objectives(
     return result
 
 
+@router.post("/strategy/run")
+async def run_company_strategy(
+    data: StrategyCycleRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "run",
+        "company_strategy",
+        context=data.model_dump(),
+    )
+    return await request.app.state.company_strategy_service.run_strategy_cycle(
+        actor=principal.email,
+        company_namespace=data.company_namespace,
+    )
+
+
+@router.get("/strategy/portfolio")
+async def get_company_strategy_portfolio(
+    request: Request,
+    company_namespace: str | None = None,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "company_strategy")
+    return await request.app.state.company_strategy_service.portfolio(
+        company_namespace=company_namespace,
+    )
+
+
+@router.get("/strategy/kpi-revisions")
+async def list_company_kpi_revisions(
+    request: Request,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "kpi_revision")
+    return await request.app.state.company_strategy_service.list_kpi_revisions(
+        limit=limit,
+    )
+
+
+@router.get("/strategy/experiments")
+async def list_company_strategy_experiments(
+    request: Request,
+    company_namespace: str | None = None,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "strategic_experiment")
+    return await request.app.state.company_strategy_service.list_experiments(
+        company_namespace=company_namespace,
+        limit=limit,
+    )
+
+
+@router.get("/agent-mandates")
+async def list_agent_mandates(
+    request: Request,
+    status: str | None = "active",
+    agent_id: str | None = None,
+    limit: int = 200,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "agent_mandate")
+    return {
+        "items": await request.app.state.work_portfolio_service.list_mandates(
+            status=status,
+            agent_id=agent_id,
+            limit=limit,
+        )
+    }
+
+
+@router.post("/agent-mandates/ensure")
+async def ensure_agent_mandates(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "run", "agent_mandate")
+    return await request.app.state.work_portfolio_service.ensure_active_agent_mandates(
+        actor=principal.email
+    )
+
+
+@router.get("/business-events")
+async def list_business_events(
+    request: Request,
+    status: str | None = None,
+    limit: int = 200,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "business_event")
+    return {
+        "items": await request.app.state.work_portfolio_service.list_events(
+            status=status,
+            limit=limit,
+        )
+    }
+
+
+@router.post("/business-events/route")
+async def route_business_events(
+    request: Request,
+    limit: int = 200,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "run", "business_event_router")
+    return await request.app.state.work_portfolio_service.route_pending_events(
+        limit=limit
+    )
+
+
+@router.get("/work-items")
+async def list_business_work_items(
+    request: Request,
+    status: str | None = None,
+    agent_id: str | None = None,
+    limit: int = 200,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "business_work_item")
+    return {
+        "items": await request.app.state.work_portfolio_service.list_work_items(
+            status=status,
+            agent_id=agent_id,
+            limit=limit,
+        )
+    }
+
+
+@router.post("/work-items")
+async def create_business_work_item(
+    data: BusinessWorkItemCreateRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "create",
+        "business_work_item",
+        context={"risk_level": data.risk_level, "work_type": data.work_type},
+    )
+    default_key_payload = (
+        f"{principal.subject}\0{data.work_type}\0{data.title}\0{data.description}"
+    )
+    key = data.idempotency_key or (
+        "owner:" + hashlib.sha256(default_key_payload.encode()).hexdigest()
+    )
+    try:
+        result = await request.app.state.work_portfolio_service.create_work_item(
+            title=data.title,
+            description=data.description,
+            work_type=data.work_type,
+            company_namespace=data.company_namespace or settings.company_namespace,
+            assigned_agent_id=data.assigned_agent_id,
+            payload=data.payload,
+            acceptance_criteria=data.acceptance_criteria,
+            idempotency_key=key,
+            dependencies=data.dependencies,
+            priority=data.priority,
+            risk_level=data.risk_level,
+            created_by=principal.email,
+        )
+        await _signal_company_autonomy(request, result["id"])
+        return result
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/domain-controls")
+async def list_domain_autonomy_controls(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "domain_autonomy_control")
+    return {
+        "items": await request.app.state.work_portfolio_service.list_domain_controls()
+    }
+
+
+@router.put("/domain-controls/{domain}")
+async def update_domain_autonomy_control(
+    domain: str,
+    data: DomainAutonomyControlRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "update",
+        "domain_autonomy_control",
+        domain,
+        context=data.model_dump(),
+    )
+    try:
+        result = await request.app.state.work_portfolio_service.update_domain_control(
+            domain,
+            state=data.state,
+            reason=data.reason,
+            owner=principal.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    _clear_operations_readiness_cache(request)
+    if data.state == "active":
+        await _signal_company_autonomy(request, f"domain-resumed:{domain}")
+    return result
+
+
+@router.post("/company-cycle/run")
+async def run_autonomous_company_cycle(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "run", "autonomous_company_cycle")
+    result = await request.app.state.autonomous_company_cycle_service.run(
+        trigger="owner_manual"
+    )
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.post("/domain-loops/run")
+async def run_domain_operations(
+    data: DomainOperationsRunRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "run",
+        "domain_operations",
+        context=data.model_dump(),
+    )
+    if data.agent_id:
+        return await request.app.state.work_portfolio_service.run_domain_loop(
+            data.agent_id,
+            max_items=data.max_items,
+        )
+    return await request.app.state.work_portfolio_service.run_all_domain_loops(
+        max_items_per_agent=data.max_items
+    )
+
+
+async def _signal_company_autonomy(request: Request, event_id: str) -> None:
+    controller = getattr(request.app.state, "temporal_autonomy_controller", None)
+    if not controller:
+        return
+    try:
+        await controller.signal(event_id)
+    except Exception:  # noqa: BLE001 - scheduled reconciliation remains authoritative.
+        return
+
+
+@router.get("/workflow-specifications")
+async def list_workflow_specifications(
+    request: Request,
+    status: str | None = None,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "workflow_specification")
+    return {
+        "items": await request.app.state.workflow_compiler_service.list_specifications(
+            status=status,
+            limit=limit,
+        )
+    }
+
+
+@router.post("/workflow-specifications")
+async def create_workflow_specification(
+    data: WorkflowSpecificationCreateRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "create",
+        "workflow_specification",
+        context={"source_type": data.source_type},
+    )
+    try:
+        return await request.app.state.workflow_compiler_service.propose(
+            spec_key=data.spec_key,
+            title=data.title,
+            specification=data.specification,
+            source_type=data.source_type,
+            source_id=data.source_id,
+            created_by=principal.email,
+            activate_if_safe=data.activate_if_safe,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/workflow-specifications/{specification_id}/run")
+async def run_workflow_specification(
+    specification_id: str,
+    data: WorkflowSpecificationRunRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "run",
+        "workflow_specification",
+        specification_id,
+    )
+    try:
+        return await request.app.state.workflow_compiler_service.run(
+            specification_id,
+            input_data=data.input_data,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/action-class-policies")
+async def list_action_class_policies(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "action_class_policy")
+    return {"items": await request.app.state.action_policy_service.list_policies()}
+
+
+@router.post("/governor/tool-proposals/{proposal_id}/sandbox")
+async def sandbox_governor_tool_proposal(
+    proposal_id: str,
+    data: ToolProposalSandboxRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "run",
+        "orchestration_tool_sandbox",
+        proposal_id,
+    )
+    try:
+        return await request.app.state.capability_expansion_service.sandbox_tool_proposal(
+            proposal_id,
+            draft=data.draft,
+            actor=principal.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/outcomes")
+async def list_outcome_assessments(
+    request: Request,
+    recommendation: str | None = None,
+    limit: int = 200,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "outcome_assessment")
+    return {
+        "items": await request.app.state.outcome_learning_service.list_assessments(
+            recommendation=recommendation,
+            limit=limit,
+        )
+    }
+
+
+@router.post("/outcomes/assess")
+async def assess_terminal_work(
+    request: Request,
+    limit: int = 200,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "run", "outcome_assessment")
+    return await request.app.state.outcome_learning_service.assess_terminal_work(
+        limit=limit
+    )
+
+
 @router.get("/executive-brief")
 async def get_executive_brief(
     request: Request,
@@ -1038,6 +1607,7 @@ async def instruct_governor(
         owner_instruction=data.instruction,
         observer_review=data.observer_review,
     )
+    await _signal_company_autonomy(request, f"owner-instruction:{result.get('id', 'new')}")
     _clear_operations_readiness_cache(request)
     return result
 
@@ -1638,6 +2208,7 @@ async def scan_operating_cadences(
 async def operations_readiness(
     request: Request,
     refresh: bool = False,
+    include_details: bool = False,
     principal: Principal = Depends(get_current_principal),
 ):
     await require_authorization(
@@ -1654,8 +2225,11 @@ async def operations_readiness(
         and isinstance(cache, dict)
         and isinstance(cache.get("payload"), dict)
     ):
-        if cache.get("expires_at", 0) > now:
-            return cache["payload"]
+        cache_key = "full_payload" if include_details else "payload"
+        if cache.get("expires_at", 0) > now and isinstance(
+            cache.get(cache_key), dict
+        ):
+            return cache[cache_key]
         refresh_task = getattr(
             request.app.state,
             "operations_readiness_refresh_task",
@@ -1666,12 +2240,13 @@ async def operations_readiness(
                 operations_readiness(
                     request=request,
                     refresh=True,
+                    include_details=include_details,
                     principal=principal,
                 )
             )
             refresh_task.add_done_callback(_readiness_refresh_finished)
             request.app.state.operations_readiness_refresh_task = refresh_task
-        return cache["payload"]
+        return cache.get(cache_key) or cache["payload"]
 
     registry = request.app.state.tool_registry
     tools = registry.list_tool_contracts()
@@ -2146,6 +2721,49 @@ async def operations_readiness(
             "outsourcing": {"status": "unavailable", "open_count": 0},
         }
     executive_cadence_status = await _build_executive_cadence_summary(request)
+    autonomous_company_service = getattr(
+        request.app.state,
+        "autonomous_company_readiness_service",
+        None,
+    )
+    if autonomous_company_service:
+        autonomous_company_status = await autonomous_company_service.summary()
+    else:
+        autonomous_company_status = {
+            "status": "unavailable",
+            "blocking": False,
+            "enabled": settings.company_autonomy_enabled,
+            "sections": {},
+            "blockers": [],
+            "detail": "Autonomous company readiness service is not mounted.",
+        }
+    temporal_autonomy = dict(
+        getattr(
+            request.app.state,
+            "temporal_autonomy_status",
+            {"status": "unavailable", "reason": "Temporal status is unavailable."},
+        )
+    )
+    temporal_autonomy["enabled"] = (
+        settings.company_autonomy_temporal_schedule_enabled
+    )
+    temporal_autonomy["blocking"] = bool(
+        settings.company_autonomy_enabled
+        and settings.company_autonomy_temporal_schedule_enabled
+        and temporal_autonomy.get("status") != "ready"
+    )
+    autonomous_company_status.setdefault("sections", {})[
+        "temporal_delivery"
+    ] = temporal_autonomy
+    if temporal_autonomy["blocking"]:
+        autonomous_company_status.setdefault("blockers", []).append(
+            {
+                "area": "temporal_delivery",
+                "reason": temporal_autonomy.get("reason") or "Temporal is not ready.",
+            }
+        )
+        autonomous_company_status["blocking"] = True
+        autonomous_company_status["status"] = "degraded"
 
     production_evidence = await _readiness_evidence_service(request).summary()
 
@@ -2210,6 +2828,13 @@ async def operations_readiness(
         }
         if memory_canonical_conflicts.get("blocking")
         else None,
+        {
+            "area": "autonomous_company",
+            "mode": autonomous_company_status.get("status"),
+            "reason": "Evidence-to-outcome company control plane is not ready.",
+        }
+        if autonomous_company_status.get("blocking")
+        else None,
     ]
     blockers = (
         side_effect_blockers
@@ -2219,7 +2844,7 @@ async def operations_readiness(
         + [blocker for blocker in runtime_blockers if blocker]
     )
     status = "ready" if not blockers else "degraded"
-    payload = {
+    full_payload = {
         "status": status,
         "environment": settings.environment,
         "version": {
@@ -2264,6 +2889,7 @@ async def operations_readiness(
         "governor": governor_status,
         "executive_autonomy": executive_status,
         "executive_cadence": executive_cadence_status,
+        "autonomous_company": autonomous_company_status,
         "resource_policy": executive_status.get("resource_policy"),
         "observer": executive_status.get("observer"),
         "operation_graph": executive_status.get("operation_graph"),
@@ -2292,11 +2918,13 @@ async def operations_readiness(
         },
         "blockers": blockers,
     }
+    payload = _compact_operations_readiness(full_payload)
     request.app.state.operations_readiness_cache = {
         "expires_at": time.monotonic() + READINESS_CACHE_TTL_SECONDS,
         "payload": payload,
+        "full_payload": full_payload,
     }
-    return payload
+    return full_payload if include_details else payload
 
 
 @router.get("/decision-timeline")

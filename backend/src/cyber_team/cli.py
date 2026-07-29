@@ -57,9 +57,9 @@ def status():
 )
 def hash_password(password):
     """Generate a bcrypt hash for OWNER_PASSWORD_HASH."""
-    from cyber_team.api.security import pwd_context
+    from cyber_team.api.security import hash_owner_password
 
-    click.echo(pwd_context.hash(password))
+    click.echo(hash_owner_password(password))
 
 
 @main.command("retention-cleanup")

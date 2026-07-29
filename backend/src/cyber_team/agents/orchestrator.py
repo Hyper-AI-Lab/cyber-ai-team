@@ -2,14 +2,14 @@
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from temporalio.client import Client
 
 from cyber_team.agents.manager import AgentManager
 from cyber_team.clock import utc_now
 from cyber_team.config import settings
 from cyber_team.db import async_session
-from cyber_team.db.models import ApprovalRequest, Workflow, WorkflowRun
+from cyber_team.db.models import Agent, ApprovalRequest, Workflow, WorkflowRun
 from cyber_team.memory.service import MemoryService
 
 
@@ -257,19 +257,35 @@ class Orchestrator:
 
     async def get_kpis(self) -> dict:
         async with async_session() as session:
-            total_agents = len(await self.agent_manager.list_agents())
-            total_workflows = len(await self.list_workflows())
-            pending_approvals = len(await self.agent_manager.get_approval_queue("pending"))
-            running_workflows = len([
-                r for r in (await session.execute(
-                    select(WorkflowRun).where(WorkflowRun.status == "running")
-                )).scalars().all()
-            ])
+            counts = (
+                await session.execute(
+                    select(
+                        select(func.count())
+                        .select_from(Agent)
+                        .scalar_subquery()
+                        .label("total_agents"),
+                        select(func.count())
+                        .select_from(Workflow)
+                        .scalar_subquery()
+                        .label("total_workflows"),
+                        select(func.count())
+                        .select_from(ApprovalRequest)
+                        .where(ApprovalRequest.status == "pending")
+                        .scalar_subquery()
+                        .label("pending_approvals"),
+                        select(func.count())
+                        .select_from(WorkflowRun)
+                        .where(WorkflowRun.status == "running")
+                        .scalar_subquery()
+                        .label("running_workflows"),
+                    )
+                )
+            ).one()
         return {
-            "total_agents": total_agents,
-            "total_workflows": total_workflows,
-            "pending_approvals": pending_approvals,
-            "running_workflows": running_workflows,
+            "total_agents": counts.total_agents,
+            "total_workflows": counts.total_workflows,
+            "pending_approvals": counts.pending_approvals,
+            "running_workflows": counts.running_workflows,
         }
 
     async def get_workflow_visualizations(self) -> list[dict]:

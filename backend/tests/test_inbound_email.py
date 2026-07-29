@@ -89,6 +89,12 @@ def test_fetch_unseen_messages_parses_headers_and_body(monkeypatch):
     message["Message-ID"] = "<message-1@example.com>"
     message["Date"] = "Sun, 07 Jun 2026 10:30:00 +0000"
     message.set_content("Hello Cyber-Team, please help.")
+    message.add_attachment(
+        b'{"request":"pricing"}',
+        maintype="application",
+        subtype="json",
+        filename="request.json",
+    )
     raw = message.as_bytes()
     calls = []
 
@@ -131,6 +137,9 @@ def test_fetch_unseen_messages_parses_headers_and_body(monkeypatch):
     assert parsed.subject == "Need help"
     assert "please help" in parsed.text_body
     assert parsed.snippet == "Hello Cyber-Team, please help."
+    assert parsed.metadata["attachments"][0]["filename"] == "request.json"
+    assert parsed.metadata["attachments"][0]["size_bytes"] == 21
+    assert parsed.metadata["attachments"][0]["extracted_text"] == '{"request":"pricing"}'
 
 
 def test_inbound_email_routes_list_poll_and_update(monkeypatch):

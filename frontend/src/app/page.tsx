@@ -13,9 +13,11 @@ import AuditView from '@/components/AuditView'
 import IntegrationsView from '@/components/IntegrationsView'
 import OperationsView from '@/components/OperationsView'
 import InboxView from '@/components/InboxView'
+import CompanyView from '@/components/CompanyView'
 
 export type ViewName =
   | 'dashboard'
+  | 'company'
   | 'agents'
   | 'memory'
   | 'workflows'
@@ -198,6 +200,8 @@ export default function Home() {
             onNavigate={setActiveView}
           />
         )
+      case 'company':
+        return <CompanyView />
       case 'memory':
         return <MemoryView />
       case 'workflows':

@@ -799,6 +799,152 @@ class ApiClient {
     return this.request('/api/operations/company-objectives');
   }
 
+  async listCompanySources() {
+    return this.request('/api/company/sources');
+  }
+
+  async acquireCompanyEvidence() {
+    return this.request('/api/company/sources/acquire', { method: 'POST' });
+  }
+
+  async researchCompanyEvidence(query: string) {
+    return this.request('/api/company/research', {
+      method: 'POST',
+      body: JSON.stringify({ query }),
+    });
+  }
+
+  async listCompanySignals(filters: { status?: string; limit?: number } = {}) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 100) });
+    if (filters.status) params.set('status', filters.status);
+    return this.request(`/api/company/signals?${params.toString()}`);
+  }
+
+  async listCompanyEvidence(limit: number = 100) {
+    return this.request(`/api/company/evidence?limit=${limit}`);
+  }
+
+  async listCompanyClaims(filters: {
+    state?: string;
+    activeOnly?: boolean;
+    limit?: number;
+  } = {}) {
+    const params = new URLSearchParams({
+      active_only: String(filters.activeOnly ?? true),
+      limit: String(filters.limit ?? 200),
+    });
+    if (filters.state) params.set('state', filters.state);
+    return this.request(`/api/company/claims?${params.toString()}`);
+  }
+
+  async reviseCompanyClaim(claimId: string, value: Record<string, any>, reason: string) {
+    return this.request(`/api/company/claims/${claimId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ value, reason }),
+    });
+  }
+
+  async discoverCompany(options: Record<string, any> = {}) {
+    return this.request('/api/company/discover', {
+      method: 'POST',
+      body: JSON.stringify({
+        acquire: true,
+        activate_if_ready: true,
+        ...options,
+      }),
+    });
+  }
+
+  async getLivingCompanyModel() {
+    return this.request('/api/company/model');
+  }
+
+  async listCompanyModelRevisions(limit: number = 50) {
+    return this.request(`/api/company/model/revisions?limit=${limit}`);
+  }
+
+  async runCompanyStrategy(companyNamespace?: string) {
+    return this.request('/api/operations/strategy/run', {
+      method: 'POST',
+      body: JSON.stringify({ company_namespace: companyNamespace ?? null }),
+    });
+  }
+
+  async getCompanyStrategyPortfolio(companyNamespace?: string) {
+    const params = new URLSearchParams();
+    if (companyNamespace) params.set('company_namespace', companyNamespace);
+    const query = params.toString();
+    return this.request(`/api/operations/strategy/portfolio${query ? `?${query}` : ''}`);
+  }
+
+  async listCompanyKpiRevisions(limit: number = 100) {
+    return this.request(`/api/operations/strategy/kpi-revisions?limit=${limit}`);
+  }
+
+  async listCompanyStrategyExperiments(companyNamespace?: string, limit: number = 100) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (companyNamespace) params.set('company_namespace', companyNamespace);
+    return this.request(`/api/operations/strategy/experiments?${params.toString()}`);
+  }
+
+  async listAgentMandates(filters: { status?: string; agentId?: string; limit?: number } = {}) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 200) });
+    if (filters.status) params.set('status', filters.status);
+    if (filters.agentId) params.set('agent_id', filters.agentId);
+    return this.request(`/api/operations/agent-mandates?${params.toString()}`);
+  }
+
+  async listBusinessEvents(filters: { status?: string; limit?: number } = {}) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 200) });
+    if (filters.status) params.set('status', filters.status);
+    return this.request(`/api/operations/business-events?${params.toString()}`);
+  }
+
+  async listBusinessWorkItems(filters: {
+    status?: string;
+    agentId?: string;
+    limit?: number;
+  } = {}) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 200) });
+    if (filters.status) params.set('status', filters.status);
+    if (filters.agentId) params.set('agent_id', filters.agentId);
+    return this.request(`/api/operations/work-items?${params.toString()}`);
+  }
+
+  async listDomainAutonomyControls() {
+    return this.request('/api/operations/domain-controls');
+  }
+
+  async updateDomainAutonomyControl(domain: string, state: string, reason: string = '') {
+    return this.request(`/api/operations/domain-controls/${domain}`, {
+      method: 'PUT',
+      body: JSON.stringify({ state, reason }),
+    });
+  }
+
+  async runAutonomousCompanyCycle() {
+    return this.request('/api/operations/company-cycle/run', { method: 'POST' });
+  }
+
+  async listWorkflowSpecifications(filters: { status?: string; limit?: number } = {}) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 100) });
+    if (filters.status) params.set('status', filters.status);
+    return this.request(`/api/operations/workflow-specifications?${params.toString()}`);
+  }
+
+  async listOutcomeAssessments(filters: {
+    recommendation?: string;
+    limit?: number;
+  } = {}) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 200) });
+    if (filters.recommendation) params.set('recommendation', filters.recommendation);
+    return this.request(`/api/operations/outcomes?${params.toString()}`);
+  }
+
+  async listActionClassPolicies() {
+    return this.request('/api/operations/action-class-policies');
+  }
+
   async updateCompanyObjectives(objectives: any[]) {
     return this.request('/api/operations/company-objectives', {
       method: 'PUT',

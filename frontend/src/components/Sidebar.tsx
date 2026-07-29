@@ -16,6 +16,7 @@ import {
   Zap,
   LogOut,
   PlugZap,
+  Building2,
 } from 'lucide-react'
 
 interface SidebarProps {
@@ -27,6 +28,7 @@ interface SidebarProps {
 
 const navItems: { view: ViewName; label: string; icon: React.ElementType }[] = [
   { view: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { view: 'company', label: 'Company', icon: Building2 },
   { view: 'agents', label: 'Agents', icon: Bot },
   { view: 'memory', label: 'Memory', icon: Brain },
   { view: 'workflows', label: 'Workflows', icon: GitBranch },
@@ -38,7 +40,7 @@ const navItems: { view: ViewName; label: string; icon: React.ElementType }[] = [
   { view: 'audit', label: 'Audit Trail', icon: ScrollText },
 ]
 
-const appVersion = process.env.NEXT_PUBLIC_APP_VERSION || '0.1.0'
+const appVersion = process.env.NEXT_PUBLIC_APP_VERSION || '0.3.0-rc1'
 const buildSha = process.env.NEXT_PUBLIC_BUILD_SHA || ''
 
 export default function Sidebar({

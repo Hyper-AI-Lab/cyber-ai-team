@@ -69,9 +69,12 @@ The script starts an isolated PostgreSQL 16 container, restores the custom-forma
 backup, and verifies Alembic state and key table row counts. It also creates and
 downloads a snapshot of the live `cyberteam_memory` Qdrant collection, restores that
 snapshot into a disposable Qdrant container running the exact deployed image, and
-verifies that source and restored point counts match. The source snapshot, downloaded
-temporary file, and both disposable containers are removed by the cleanup trap. The
-script writes combined JSON evidence to:
+verifies the downloaded SHA-256 checksum and restore health. It records live point
+counts immediately before and after snapshot creation and requires the restored count
+to fall within that consistency envelope, so concurrent memory writes cannot create a
+false failure. The source snapshot, downloaded temporary file, and both disposable
+containers are removed by the cleanup trap. The script writes combined JSON evidence
+to:
 
 ```text
 dist/restore-drills/staging/staging-restore-drill-YYYYMMDDTHHMMSSZ.json

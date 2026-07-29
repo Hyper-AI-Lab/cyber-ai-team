@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+INVENTORY_PATH = ROOT / "config" / "foss-resource-inventory.json"
 ALLOWED_LICENSE_MARKERS = {
     "apache",
     "bsd",
@@ -48,9 +49,10 @@ PAID_RESOURCE_MARKERS = {
 def main() -> int:
     failures: list[str] = []
     warnings: list[str] = []
-    _check_python_requirements(failures)
-    _check_node_lock(failures, warnings)
-    _check_docker_images(failures, warnings)
+    inventory = _load_inventory(failures)
+    _check_python_requirements(failures, inventory)
+    _check_node_lock(failures, warnings, inventory)
+    _check_docker_images(failures, warnings, inventory)
     _check_static_tool_proposals(failures)
     if warnings:
         print("Resource policy warnings:")
@@ -65,8 +67,30 @@ def main() -> int:
     return 0
 
 
-def _check_python_requirements(failures: list[str]) -> None:
+def _load_inventory(failures: list[str]) -> dict:
+    if not INVENTORY_PATH.exists():
+        failures.append(f"{INVENTORY_PATH} is missing.")
+        return {}
+    data = json.loads(INVENTORY_PATH.read_text())
+    if data.get("policy") != "foss_only":
+        failures.append("Resource inventory must declare policy=foss_only.")
+    defaults = data.get("defaults") or {}
+    for field in ("cost_model", "self_hostable", "data_sharing_risk"):
+        if field not in defaults:
+            failures.append(f"Resource inventory defaults omit `{field}`.")
+    return data
+
+
+def _normalise_package(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _check_python_requirements(failures: list[str], inventory: dict) -> None:
     requirements = ROOT / "backend" / "requirements.txt"
+    reviewed = {
+        _normalise_package(name): license_name
+        for name, license_name in (inventory.get("python") or {}).items()
+    }
     for lineno, raw_line in enumerate(requirements.read_text().splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -77,14 +101,32 @@ def _check_python_requirements(failures: list[str]) -> None:
                 f"{requirements}:{lineno} uses a direct URL dependency; declare "
                 "license and self-hostability before use."
             )
+        name = re.split(r"[<>=!~\[]", line, maxsplit=1)[0]
+        license_name = reviewed.get(_normalise_package(name))
+        if not license_name:
+            failures.append(
+                f"{requirements}:{lineno} package `{name}` has no reviewed license "
+                f"in {INVENTORY_PATH}."
+            )
+        elif any(marker in license_name.lower() for marker in DENIED_LICENSE_MARKERS):
+            failures.append(f"{name} declares denied license `{license_name}`.")
 
 
-def _check_node_lock(failures: list[str], warnings: list[str]) -> None:
+def _check_node_lock(failures: list[str], warnings: list[str], inventory: dict) -> None:
     package_lock = ROOT / "frontend" / "package-lock.json"
     if not package_lock.exists():
         failures.append("frontend/package-lock.json is missing.")
         return
     data = json.loads(package_lock.read_text())
+    root_package = (data.get("packages") or {}).get("") or {}
+    direct = set(root_package.get("dependencies") or {}) | set(
+        root_package.get("devDependencies") or {}
+    )
+    reviewed = set((inventory.get("node") or {}).keys())
+    for name in sorted(direct - reviewed):
+        failures.append(
+            f"Direct Node dependency `{name}` has no reviewed license in {INVENTORY_PATH}."
+        )
     packages = data.get("packages", {})
     for name, package in packages.items():
         if not name or name == "":
@@ -99,12 +141,13 @@ def _check_node_lock(failures: list[str], warnings: list[str]) -> None:
             warnings.append(f"{name} declares unreviewed license `{license_value}`.")
 
 
-def _check_docker_images(failures: list[str], warnings: list[str]) -> None:
+def _check_docker_images(failures: list[str], warnings: list[str], inventory: dict) -> None:
     files = [
         ROOT / "backend" / "Dockerfile",
         ROOT / "frontend" / "Dockerfile",
         ROOT / "docker-compose.yml",
     ]
+    reviewed = inventory.get("docker") or []
     for path in files:
         if not path.exists():
             continue
@@ -113,6 +156,22 @@ def _check_docker_images(failures: list[str], warnings: list[str]) -> None:
             image = _image_from_line(stripped)
             if not image:
                 continue
+            expanded = re.sub(r"\$\{[^:}]+:-([^}]+)\}", r"\1", image)
+            match = next(
+                (item for item in reviewed if item.get("match") in expanded),
+                None,
+            )
+            if not match:
+                failures.append(
+                    f"{path}:{lineno} image `{image}` has no reviewed license/resource "
+                    f"entry in {INVENTORY_PATH}."
+                )
+                continue
+            for field in ("license", "purpose"):
+                if not match.get(field):
+                    failures.append(
+                        f"Docker inventory entry `{match.get('match')}` omits `{field}`."
+                    )
             if image.endswith(":latest"):
                 warnings.append(f"{path}:{lineno} uses floating latest image `{image}`.")
             if "docker.io/" in image and "frappe/erpnext" not in image:

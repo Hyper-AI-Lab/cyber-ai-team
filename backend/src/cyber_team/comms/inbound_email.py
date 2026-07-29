@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import imaplib
 import logging
 import re
@@ -413,6 +414,7 @@ class InboundEmailService:
         to_addresses = InboundEmailService._addresses(message.get_all("To", []))
         cc_addresses = InboundEmailService._addresses(message.get_all("Cc", []))
         text_body, html_body = InboundEmailService._extract_bodies(message)
+        attachments = InboundEmailService._extract_attachments(message)
         snippet = InboundEmailService._make_snippet(text_body or html_body or "")
         received_at = InboundEmailService._parse_date(message.get("Date"))
         return ParsedInboundEmail(
@@ -433,8 +435,43 @@ class InboundEmailService:
                 "raw_from": message.get("From"),
                 "raw_to": message.get("To"),
                 "raw_cc": message.get("Cc"),
+                "attachments": attachments,
             },
         )
+
+    @staticmethod
+    def _extract_attachments(message: Message) -> list[dict[str, Any]]:
+        attachments: list[dict[str, Any]] = []
+        for part in message.walk():
+            if part.get_content_disposition() != "attachment":
+                continue
+            payload = part.get_payload(decode=True) or b""
+            size = len(payload)
+            item: dict[str, Any] = {
+                "filename": InboundEmailService._decode_header(part.get_filename())[:500],
+                "content_type": part.get_content_type(),
+                "size_bytes": size,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "truncated": size > settings.inbound_email_max_attachment_bytes,
+            }
+            if (
+                size <= settings.inbound_email_max_attachment_bytes
+                and part.get_content_type()
+                in {
+                    "text/plain",
+                    "text/csv",
+                    "text/markdown",
+                    "application/json",
+                    "application/xml",
+                }
+            ):
+                charset = part.get_content_charset() or "utf-8"
+                item["extracted_text"] = payload.decode(
+                    charset,
+                    errors="replace",
+                )[:20_000]
+            attachments.append(item)
+        return attachments
 
     @staticmethod
     def _decode_header(value: str | None) -> str:

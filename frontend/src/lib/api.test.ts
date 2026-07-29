@@ -985,4 +985,42 @@ describe('ApiClient', () => {
       'http://api.test/api/interop/a2a/agent-cards',
     )
   })
+
+  it('manages autonomous company intelligence and domain controls', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'signal-1' }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ domain: 'finance' }] }))
+      .mockResolvedValueOnce(jsonResponse({ domain: 'finance', state: 'takeover' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'completed' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+    client.setTokens('access-1')
+
+    await client.researchCompanyEvidence('Acme public offerings')
+    await client.listDomainAutonomyControls()
+    await client.updateDomainAutonomyControl(
+      'finance',
+      'takeover',
+      'Owner is reviewing the books.',
+    )
+    await client.runAutonomousCompanyCycle()
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/company/research')
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({
+      query: 'Acme public offerings',
+    })
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/operations/domain-controls',
+    )
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/operations/domain-controls/finance',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toEqual({
+      state: 'takeover',
+      reason: 'Owner is reviewing the books.',
+    })
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      'http://api.test/api/operations/company-cycle/run',
+    )
+  })
 })

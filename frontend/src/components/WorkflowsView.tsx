@@ -29,18 +29,21 @@ export default function WorkflowsView() {
   const [intentGroups, setIntentGroups] = useState<any[]>([])
   const [generatingIntents, setGeneratingIntents] = useState(false)
   const [intentAction, setIntentAction] = useState<string | null>(null)
+  const [specifications, setSpecifications] = useState<any[]>([])
 
   const loadWorkflows = useCallback(async () => {
     try {
-      const [res, templateList, intentSummary] = await Promise.all([
+      const [res, templateList, intentSummary, specificationList] = await Promise.all([
         api.listWorkflows(),
         api.listWorkflowTemplates({ status: 'active', isCore: true }),
         api.listWorkflowIntents({ status: 'proposed,instantiated,blocked', limit: 100 }),
+        api.listWorkflowSpecifications({ limit: 100 }),
       ])
       setWorkflows(res)
       setTemplates(templateList)
       setIntents(intentSummary.items || [])
       setIntentGroups(intentSummary.groups || [])
+      setSpecifications(specificationList.items || specificationList || [])
     } catch (e) {
       console.error('Failed to load workflows:', e)
     } finally {
@@ -201,6 +204,20 @@ export default function WorkflowsView() {
         <h2 className="text-2xl font-bold">Workflows</h2>
         <p className="text-slate-400 mt-1">Design, execute, and monitor durable company automation workflows</p>
       </div>
+
+      <section className="border-y border-slate-800 py-5">
+        <div className="flex items-center gap-2"><GitBranch className="h-5 w-5 text-cyan-300" /><h3 className="text-lg font-semibold text-white">Compiled Specifications</h3><span className="text-xs text-slate-500">{specifications.length} immutable versions</span></div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {specifications.slice(0, 9).map((specification: any) => (
+            <article key={specification.id} className="rounded-md border border-slate-800 bg-slate-900/60 p-4">
+              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h4 className="truncate font-medium text-slate-200">{specification.title}</h4><p className="mt-1 truncate text-xs text-slate-500">{specification.spec_key} · v{specification.version}</p></div>{statusBadge(specification.status)}</div>
+              <p className="mt-3 text-xs text-slate-400">{specification.risk_level} risk · {specification.specification?.steps?.length || 0} steps · {specification.source_type}</p>
+              {specification.sandbox_result?.errors?.length > 0 && <p className="mt-2 text-xs text-red-300">{specification.sandbox_result.errors[0]}</p>}
+            </article>
+          ))}
+          {!specifications.length && <div className="col-span-full py-8 text-center text-sm text-slate-500">No declarative workflow has passed compiler review yet.</div>}
+        </div>
+      </section>
 
       <div className="card border-slate-700 bg-slate-900/70">
         <div className="flex flex-wrap items-start justify-between gap-4">

@@ -1,4 +1,4 @@
-"""LLM Gateway — LiteLLM with Mistral as default provider."""
+"""Provider-neutral LiteLLM gateway with zero-spend and local fallback policy."""
 
 import asyncio
 import json
@@ -22,7 +22,10 @@ class LLMCircuitOpenError(RuntimeError):
 
 class LLMGateway:
     def __init__(self):
-        self._default_model = "mistral/mistral-large-latest"
+        self._provider = settings.llm_provider.strip() or "mistral"
+        self._default_model = settings.llm_default_model.strip() or (
+            "mistral/mistral-large-latest"
+        )
         self._conversation_history: OrderedDict[str, list[dict]] = OrderedDict()
         self._max_conversations = max(1, settings.llm_history_max_conversations)
         self._max_messages = max(2, settings.llm_history_max_messages)
@@ -56,6 +59,16 @@ class LLMGateway:
         max_tokens: int = 4096,
     ) -> str:
         model = model or self._default_model
+        route = self._primary_route(model)
+        if not route["local"] and not settings.llm_external_inference_allowed:
+            if settings.llm_local_fallback_enabled:
+                route = self._local_route()
+                model = route["model"]
+            else:
+                raise RuntimeError(
+                    "External LLM inference is blocked by the zero-spend policy. "
+                    "Confirm a zero-cost provider or enable the local fallback."
+                )
 
         messages = [{"role": "system", "content": system_prompt}]
 
@@ -65,14 +78,30 @@ class LLMGateway:
             messages.extend(history[-self._max_messages:])
 
         messages.append({"role": "user", "content": user_message})
+        if route["local"]:
+            messages = self._prepare_local_messages(messages)
+            max_tokens = min(max_tokens, max(64, settings.llm_local_max_tokens))
 
-        self._ensure_provider_available()
+        try:
+            self._ensure_provider_available()
+        except LLMCircuitOpenError:
+            if not route["local"] and settings.llm_local_fallback_enabled:
+                return await self._invoke_local_fallback(
+                    messages=messages,
+                    agent_id=agent_id,
+                    conversation_id=conversation_id,
+                    user_message=user_message,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    trigger="circuit_open",
+                )
+            raise
         import litellm
-
-        litellm.api_key = settings.mistral_api_key
         metadata = {
             "generation_name": f"{agent_id}-completion",
-            "tags": [agent_id, settings.environment],
+            "tags": [agent_id, settings.environment, route["provider"]],
+            "provider": route["provider"],
+            "model": model,
         }
         if conversation_id:
             metadata["trace_id"] = conversation_id
@@ -82,32 +111,42 @@ class LLMGateway:
         last_error: Exception | None = None
         for attempt in range(attempts):
             try:
+                request = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "metadata": metadata,
+                }
+                if route["api_key"]:
+                    request["api_key"] = route["api_key"]
+                if route["api_base"]:
+                    request["api_base"] = route["api_base"]
                 response = await asyncio.wait_for(
-                    litellm.acompletion(
-                        model=model,
-                        messages=messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        metadata=metadata,
+                    litellm.acompletion(**request),
+                    timeout=max(
+                        1.0,
+                        settings.llm_local_timeout_seconds
+                        if route["local"]
+                        else settings.llm_provider_timeout_seconds,
                     ),
-                    timeout=max(1.0, settings.llm_provider_timeout_seconds),
                 )
                 result = response.choices[0].message.content
-                self._record_provider_success()
+                self._record_provider_success(route=route)
                 if conversation_id:
                     self._append_history(conversation_id, user_message, result)
                 logger.info(
                     "LLM invoke: agent=%s, model=%s, tokens=%s",
                     agent_id,
                     model,
-                    response.usage.total_tokens,
+                    getattr(getattr(response, "usage", None), "total_tokens", None),
                 )
                 return result
             except Exception as exc:
                 last_error = exc
                 category = classify_llm_exception(exc)
                 if attempt >= attempts - 1 or not llm_error_is_retryable(category):
-                    self._record_provider_failure(category)
+                    self._record_provider_failure(category, route=route)
                     logger.error(
                         "LLM invoke failed: agent=%s category=%s attempt=%s/%s",
                         agent_id,
@@ -115,6 +154,20 @@ class LLMGateway:
                         attempt + 1,
                         attempts,
                     )
+                    if (
+                        not route["local"]
+                        and settings.llm_local_fallback_enabled
+                        and llm_error_is_retryable(category)
+                    ):
+                        return await self._invoke_local_fallback(
+                            messages=messages,
+                            agent_id=agent_id,
+                            conversation_id=conversation_id,
+                            user_message=user_message,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            trigger=category,
+                        )
                     raise
                 backoff = max(0.0, settings.llm_retry_backoff_seconds) * (2**attempt)
                 logger.warning(
@@ -128,6 +181,84 @@ class LLMGateway:
                     await asyncio.sleep(backoff)
         raise last_error or RuntimeError("LLM provider invocation failed")
 
+    async def _invoke_local_fallback(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        agent_id: str,
+        conversation_id: str | None,
+        user_message: str,
+        temperature: float,
+        max_tokens: int,
+        trigger: str,
+    ) -> str:
+        """Invoke the retained local open model after a retryable hosted failure."""
+        import litellm
+
+        route = self._local_route()
+        local_messages = self._prepare_local_messages(messages)
+        metadata = {
+            "generation_name": f"{agent_id}-completion-local-fallback",
+            "tags": [agent_id, settings.environment, route["provider"], "fallback"],
+            "provider": route["provider"],
+            "model": route["model"],
+            "fallback_trigger": trigger,
+        }
+        if conversation_id:
+            metadata["trace_id"] = conversation_id
+            metadata["session_id"] = conversation_id
+        request = {
+            "model": route["model"],
+            "messages": local_messages,
+            "temperature": temperature,
+            "max_tokens": min(max_tokens, max(64, settings.llm_local_max_tokens)),
+            "metadata": metadata,
+            "api_base": route["api_base"],
+        }
+        if route["api_key"]:
+            request["api_key"] = route["api_key"]
+        logger.warning(
+            "Routing LLM invoke to local fallback: agent=%s trigger=%s",
+            agent_id,
+            trigger,
+        )
+        try:
+            response = await asyncio.wait_for(
+                litellm.acompletion(**request),
+                timeout=max(1.0, settings.llm_local_timeout_seconds),
+            )
+        except Exception as exc:
+            category = classify_llm_exception(exc)
+            self._record_provider_failure(category, route=route)
+            logger.error(
+                "Local LLM fallback failed: agent=%s category=%s",
+                agent_id,
+                category,
+            )
+            raise
+        result = response.choices[0].message.content
+        self._record_provider_success(route=route)
+        if conversation_id:
+            self._append_history(conversation_id, user_message, result)
+        logger.info(
+            "Local LLM fallback succeeded: agent=%s model=%s tokens=%s",
+            agent_id,
+            route["model"],
+            getattr(getattr(response, "usage", None), "total_tokens", None),
+        )
+        return result
+
+    @staticmethod
+    def _prepare_local_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+        local_messages = [dict(message) for message in messages]
+        if local_messages and "/no_think" not in str(
+            local_messages[-1].get("content") or ""
+        ):
+            local_messages[-1]["content"] = (
+                str(local_messages[-1].get("content") or "") + "\n/no_think"
+            )
+        return local_messages
+
     async def validate_provider(self, *, force: bool = False) -> dict:
         now = utc_now()
         if (
@@ -138,14 +269,42 @@ class LLMGateway:
         ):
             return self._merge_runtime_status(self._last_validation_result, now)
 
-        if not settings.mistral_api_key:
+        route = self._primary_route(self._default_model)
+        zero_cost_blocked = not route["local"] and not settings.llm_external_inference_allowed
+        if zero_cost_blocked and settings.llm_local_fallback_enabled:
+            route = self._local_route()
+            zero_cost_blocked = False
+
+        if zero_cost_blocked:
             result = {
-                "provider": "mistral",
+                "provider": route["provider"],
+                "model": route["model"],
+                "configured": bool(route["api_key"]),
+                "mode": "configuration_required",
+                "status": "zero_cost_confirmation_required",
+                "blocking": True,
+                "detail": (
+                    "Hosted inference is blocked until zero-cost use is explicitly "
+                    "confirmed or a positive owner-approved spend limit is configured."
+                ),
+                "hosted": True,
+                "zero_cost_confirmed": False,
+                "last_checked_at": now.isoformat(),
+            }
+            self._last_validation_result = result
+            self._last_validation_at = now
+            return self._merge_runtime_status(result, now)
+
+        if not route["local"] and not route["api_key"]:
+            result = {
+                "provider": route["provider"],
+                "model": route["model"],
                 "configured": False,
                 "mode": "configuration_required",
                 "status": "configuration_required",
                 "blocking": True,
-                "detail": "MISTRAL_API_KEY is required for agent LLM execution.",
+                "detail": "An API key is required for the selected hosted LLM provider.",
+                "hosted": True,
                 "last_checked_at": now.isoformat(),
             }
             self._last_validation_result = result
@@ -154,23 +313,30 @@ class LLMGateway:
 
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(
-                    "https://api.mistral.ai/v1/models",
-                    headers={"Authorization": f"Bearer {settings.mistral_api_key}"},
-                )
+                response = await client.get(route["models_url"], headers=route["headers"])
             if response.status_code == 200:
                 result = {
-                    "provider": "mistral",
+                    "provider": route["provider"],
+                    "model": route["model"],
                     "configured": True,
                     "mode": "live",
                     "status": "live",
                     "blocking": False,
-                    "detail": "Mistral API credentials validated successfully.",
+                    "detail": (
+                        "Local open-model inference is reachable."
+                        if route["local"]
+                        else "Hosted LLM credentials and zero-spend policy validated."
+                    ),
+                    "hosted": not route["local"],
+                    "zero_cost_confirmed": (
+                        True if route["local"] else settings.llm_external_zero_cost_confirmed
+                    ),
                     "last_checked_at": now.isoformat(),
                 }
             elif response.status_code in {401, 403}:
                 result = {
-                    "provider": "mistral",
+                    "provider": route["provider"],
+                    "model": route["model"],
                     "configured": True,
                     "mode": "configuration_required",
                     "status": "configuration_required",
@@ -180,7 +346,8 @@ class LLMGateway:
                 }
             else:
                 result = {
-                    "provider": "mistral",
+                    "provider": route["provider"],
+                    "model": route["model"],
                     "configured": True,
                     "mode": "unavailable",
                     "status": "unavailable",
@@ -193,7 +360,8 @@ class LLMGateway:
                 }
         except Exception as exc:  # noqa: BLE001 - validation must return safe status.
             result = {
-                "provider": "mistral",
+                "provider": route["provider"],
+                "model": route["model"],
                 "configured": True,
                 "mode": "unavailable",
                 "status": "unavailable",
@@ -229,6 +397,8 @@ class LLMGateway:
         elif last.get("outcome") == "success":
             detail = "The latest LLM completion succeeded."
         return {
+            "provider": self._provider,
+            "model": self._default_model,
             "status": status,
             "blocking": blocking,
             "detail": detail,
@@ -248,16 +418,18 @@ class LLMGateway:
                 "LLM provider circuit breaker is open; retry after the cooldown."
             )
 
-    def _record_provider_success(self) -> None:
+    def _record_provider_success(self, *, route: dict | None = None) -> None:
         self._consecutive_failures = 0
         self._circuit_open_until = 0.0
         self._last_invocation_result = {
             "outcome": "success",
             "category": None,
             "at": utc_now().isoformat(),
+            "provider": (route or {}).get("provider", self._provider),
+            "model": (route or {}).get("model", self._default_model),
         }
 
-    def _record_provider_failure(self, category: str) -> None:
+    def _record_provider_failure(self, category: str, *, route: dict | None = None) -> None:
         self._consecutive_failures += 1
         threshold = max(1, settings.llm_circuit_breaker_failure_threshold)
         if (
@@ -272,6 +444,42 @@ class LLMGateway:
             "outcome": "failed",
             "category": category,
             "at": utc_now().isoformat(),
+            "provider": (route or {}).get("provider", self._provider),
+            "model": (route or {}).get("model", self._default_model),
+        }
+
+    def _primary_route(self, model: str) -> dict:
+        local = settings.llm_provider_is_local
+        api_base = settings.llm_api_base.strip()
+        if local and not api_base:
+            api_base = settings.llm_local_api_base.strip()
+        models_url = (
+            f"{api_base.rstrip('/')}/models"
+            if api_base
+            else "https://api.mistral.ai/v1/models"
+        )
+        api_key = settings.llm_effective_api_key
+        return {
+            "provider": self._provider,
+            "model": model,
+            "api_base": api_base,
+            "api_key": api_key,
+            "models_url": models_url,
+            "headers": ({"Authorization": f"Bearer {api_key}"} if api_key else {}),
+            "local": local,
+        }
+
+    def _local_route(self) -> dict:
+        api_base = settings.llm_local_api_base.strip()
+        api_key = settings.llm_local_api_key.strip()
+        return {
+            "provider": "llama_cpp",
+            "model": settings.llm_local_model.strip() or "local/open-model",
+            "api_base": api_base,
+            "api_key": api_key,
+            "models_url": f"{api_base.rstrip('/')}/models",
+            "headers": ({"Authorization": f"Bearer {api_key}"} if api_key else {}),
+            "local": True,
         }
 
     def _merge_runtime_status(self, result: dict, now) -> dict:

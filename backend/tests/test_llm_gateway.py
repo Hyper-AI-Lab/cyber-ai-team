@@ -29,6 +29,7 @@ def test_llm_history_is_bounded(monkeypatch):
 @pytest.mark.asyncio
 async def test_validate_provider_reports_live_mistral(monkeypatch):
     monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)
 
     class FakeResponse:
         status_code = 200
@@ -59,6 +60,7 @@ async def test_validate_provider_reports_live_mistral(monkeypatch):
 @pytest.mark.asyncio
 async def test_validate_provider_reports_rejected_mistral_credentials(monkeypatch):
     monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)
 
     class FakeResponse:
         status_code = 401
@@ -87,6 +89,7 @@ async def test_validate_provider_reports_rejected_mistral_credentials(monkeypatc
 @pytest.mark.asyncio
 async def test_invoke_retries_rate_limit_then_records_recovery(monkeypatch):
     monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)
     monkeypatch.setattr(settings, "llm_retry_attempts", 2)
     monkeypatch.setattr(settings, "llm_retry_backoff_seconds", 0)
     monkeypatch.setattr(settings, "llm_provider_timeout_seconds", 1)
@@ -123,6 +126,7 @@ async def test_invoke_retries_rate_limit_then_records_recovery(monkeypatch):
 @pytest.mark.asyncio
 async def test_invoke_opens_circuit_after_repeated_rate_limits(monkeypatch):
     monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)
     monkeypatch.setattr(settings, "llm_retry_attempts", 1)
     monkeypatch.setattr(settings, "llm_circuit_breaker_failure_threshold", 2)
     monkeypatch.setattr(settings, "llm_circuit_breaker_cooldown_seconds", 60)
@@ -155,3 +159,125 @@ async def test_invoke_opens_circuit_after_repeated_rate_limits(monkeypatch):
     assert status["status"] == "rate_limited"
     assert status["blocking"] is True
     assert status["circuit_open"] is True
+
+
+@pytest.mark.asyncio
+async def test_hosted_inference_is_blocked_without_zero_cost_confirmation(monkeypatch):
+    monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", False)
+    monkeypatch.setattr(settings, "llm_external_spend_limit_usd", 0.0)
+    monkeypatch.setattr(settings, "llm_local_fallback_enabled", False)
+
+    gateway = LLMGateway()
+    status = await gateway.validate_provider(force=True)
+
+    assert status["mode"] == "configuration_required"
+    assert status["status"] == "zero_cost_confirmation_required"
+    assert status["blocking"] is True
+    with pytest.raises(RuntimeError, match="zero-spend policy"):
+        await gateway.invoke("System", "Task", agent_id="ops")
+
+
+@pytest.mark.asyncio
+async def test_zero_spend_policy_routes_to_local_fallback(monkeypatch):
+    monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", False)
+    monkeypatch.setattr(settings, "llm_external_spend_limit_usd", 0.0)
+    monkeypatch.setattr(settings, "llm_local_fallback_enabled", True)
+    monkeypatch.setattr(settings, "llm_local_api_base", "http://llama:8080/v1")
+    monkeypatch.setattr(settings, "llm_local_model", "local/test-open-model")
+    monkeypatch.setattr(settings, "llm_local_api_key", "")
+    seen = {}
+
+    async def fake_completion(**kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Local result."))],
+            usage=SimpleNamespace(total_tokens=8),
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=fake_completion),
+    )
+
+    result = await LLMGateway().invoke("System", "Task", agent_id="ops")
+
+    assert result == "Local result."
+    assert seen["model"] == "local/test-open-model"
+    assert seen["api_base"] == "http://llama:8080/v1"
+    assert "api_key" not in seen
+
+
+@pytest.mark.asyncio
+async def test_retryable_hosted_failure_routes_to_local_fallback(monkeypatch):
+    monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)
+    monkeypatch.setattr(settings, "llm_local_fallback_enabled", True)
+    monkeypatch.setattr(settings, "llm_local_api_base", "http://llama:8080/v1")
+    monkeypatch.setattr(settings, "llm_local_model", "local/test-open-model")
+    monkeypatch.setattr(settings, "llm_local_api_key", "local-test-key")
+    monkeypatch.setattr(settings, "llm_local_max_tokens", 256)
+    monkeypatch.setattr(settings, "llm_retry_attempts", 1)
+    monkeypatch.setattr(settings, "llm_local_timeout_seconds", 1)
+    seen = []
+
+    class RateLimitError(Exception):
+        pass
+
+    async def fake_completion(**kwargs):
+        seen.append(kwargs)
+        if kwargs["model"].startswith("mistral/"):
+            raise RateLimitError("rate limit exceeded")
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Local recovery."))],
+            usage=SimpleNamespace(total_tokens=7),
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=fake_completion),
+    )
+
+    gateway = LLMGateway()
+    result = await gateway.invoke("System", "Task", agent_id="ops")
+
+    assert result == "Local recovery."
+    assert [call["model"] for call in seen] == [
+        "mistral/mistral-large-latest",
+        "local/test-open-model",
+    ]
+    assert seen[1]["api_key"] == "local-test-key"
+    assert seen[1]["max_tokens"] == 256
+    assert seen[1]["messages"][-1]["content"].endswith("/no_think")
+    assert gateway.runtime_status()["last_invocation"]["provider"] == "llama_cpp"
+
+
+@pytest.mark.asyncio
+async def test_non_retryable_hosted_failure_does_not_use_local_fallback(monkeypatch):
+    monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)
+    monkeypatch.setattr(settings, "llm_local_fallback_enabled", True)
+    monkeypatch.setattr(settings, "llm_retry_attempts", 1)
+    calls = 0
+
+    class AuthenticationError(Exception):
+        status_code = 401
+
+    async def fake_completion(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise AuthenticationError("unauthorized")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=fake_completion),
+    )
+
+    with pytest.raises(AuthenticationError):
+        await LLMGateway().invoke("System", "Task", agent_id="ops")
+
+    assert calls == 1

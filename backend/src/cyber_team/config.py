@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # App
     app_name: str = "Cyber-Team"
-    app_version: str = "0.1.0"
+    app_version: str = "0.3.0-rc1"
     build_sha: str = "local"
     environment: str = "development"
     log_level: str = "INFO"
@@ -52,9 +52,11 @@ class Settings(BaseSettings):
     governor_enabled: bool = True
     governor_initial_delay_seconds: int = 180
     governor_interval_seconds: int = 3600
+    governor_temporal_schedule_id: str = "cyberteam-executive-governor-v1"
     governor_auto_apply_low_risk: bool = True
     governor_max_actions_per_cycle: int = 10
     governor_tool_creation_mode: str = "sandbox_draft"
+    legacy_governor_rule_proposer_enabled: bool = False
     autonomy_resource_policy: str = "foss_only"
     governor_autonomy_mode: str = "aggressive_threshold"
     governor_min_confidence: float = 0.72
@@ -102,6 +104,46 @@ class Settings(BaseSettings):
     # Mistral / LLM
     mistral_api_key: str = ""
     litellm_log: str = "INFO"
+    llm_provider: str = "mistral"
+    llm_default_model: str = "mistral/mistral-large-latest"
+    llm_fast_model: str = ""
+    llm_critic_model: str = ""
+    llm_api_base: str = ""
+    llm_api_key: str = ""
+    llm_external_zero_cost_confirmed: bool = False
+    llm_external_spend_limit_usd: float = 0.0
+    llm_local_fallback_enabled: bool = False
+    llm_local_api_base: str = "http://llama-cpp:8080/v1"
+    llm_local_model: str = "openai/ggml-org/Qwen3-1.7B-GGUF:Q4_K_M"
+    llm_local_api_key: str = ""
+    llm_local_timeout_seconds: float = 180.0
+    llm_local_max_tokens: int = 1024
+    searxng_enabled: bool = False
+    searxng_url: str = "http://searxng:8080"
+    company_research_queries_per_cycle: int = 3
+    company_autonomy_enabled: bool = True
+    company_namespace: str = "company:default"
+    company_source_batch_size: int = 100
+    company_documents_root: str = "/app"
+    company_document_allowlist: str = (
+        "README.md,request/request.txt,docs/architecture/autonomous-company-os.md"
+    )
+    company_website_allowlist: str = ""
+    company_model_min_provenance_coverage: float = 0.6
+    company_model_min_confidence: float = 0.72
+    company_discovery_interval_seconds: int = 3600
+    strategy_review_interval_seconds: int = 86400
+    domain_loop_interval_seconds: int = 900
+    company_autonomy_temporal_schedule_enabled: bool = False
+    company_autonomy_schedule_id: str = "cyberteam-autonomous-company-cycle-v3"
+    company_autonomy_signal_workflow_id: str = "cyberteam-autonomous-company-signals-v3"
+    action_policy_shadow_days: int = 7
+    action_policy_min_validated_cases: int = 10
+    action_policy_min_evaluator_score: float = 0.8
+    tool_sandbox_enabled: bool = False
+    tool_sandbox_image: str = "cyber-team-core:latest"
+    tool_sandbox_timeout_seconds: int = 120
+    tool_sandbox_artifact_root: str = ""
     llm_history_max_conversations: int = 100
     llm_history_max_messages: int = 20
     llm_retry_attempts: int = 3
@@ -161,6 +203,7 @@ class Settings(BaseSettings):
     erpnext_integration_user: str = "cyberteam.integration@example.local"
     erpnext_api_key: str = ""
     erpnext_api_secret: str = ""
+    erpnext_webhook_secret: str = ""
     erpnext_primary_company: str = ""
     erpnext_context_exclude_fixture_records: bool = True
     erpnext_drift_detection_enabled: bool = False
@@ -218,6 +261,7 @@ class Settings(BaseSettings):
     inbound_email_address: str = ""
     inbound_email_poll_interval_seconds: int = 60
     inbound_email_max_messages_per_poll: int = 20
+    inbound_email_max_attachment_bytes: int = 5_242_880
     inbound_email_mark_seen: bool = False
 
     # Langfuse
@@ -265,6 +309,22 @@ class Settings(BaseSettings):
         }
 
     @property
+    def company_document_allowlist_items(self) -> list[str]:
+        return [
+            item.strip()
+            for item in self.company_document_allowlist.split(",")
+            if item.strip()
+        ]
+
+    @property
+    def company_website_allowlist_items(self) -> list[str]:
+        return [
+            item.strip()
+            for item in self.company_website_allowlist.split(",")
+            if item.strip()
+        ]
+
+    @property
     def erpnext_configured(self) -> bool:
         return bool(self.erpnext_url and self.erpnext_api_key and self.erpnext_api_secret)
 
@@ -275,6 +335,27 @@ class Settings(BaseSettings):
             and self.github_repository
             and self.github_default_workflow
             and self.github_default_ref
+        )
+
+    @property
+    def llm_effective_api_key(self) -> str:
+        return self.llm_api_key or self.mistral_api_key
+
+    @property
+    def llm_provider_is_local(self) -> bool:
+        return self.llm_provider.strip().lower() in {
+            "local",
+            "llama_cpp",
+            "llama-cpp",
+            "openai_compatible_local",
+        }
+
+    @property
+    def llm_external_inference_allowed(self) -> bool:
+        return (
+            self.llm_provider_is_local
+            or self.llm_external_zero_cost_confirmed
+            or self.llm_external_spend_limit_usd > 0
         )
 
     def validate_runtime_config(self) -> None:
@@ -290,6 +371,9 @@ class Settings(BaseSettings):
             "AUTONOMY_RESOURCE_POLICY": self.autonomy_resource_policy != "foss_only",
             "GOVERNOR_AUTONOMY_MODE": self.governor_autonomy_mode
             != "aggressive_threshold",
+            "LEGACY_GOVERNOR_RULE_PROPOSER_ENABLED": (
+                self.legacy_governor_rule_proposer_enabled
+            ),
             "OBSERVER_ENABLED": not self.observer_enabled,
             "OBSERVER_REVIEW_REQUIRED": not self.observer_review_required,
             "REQUIRE_LIVE_TOOL_EXECUTORS": not self.require_live_tool_executors,

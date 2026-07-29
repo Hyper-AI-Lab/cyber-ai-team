@@ -3,7 +3,12 @@ from unittest.mock import AsyncMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from cyber_team.api.routes.operations import router as operations_router
+from cyber_team.api.routes.operations import (
+    _compact_operations_readiness,
+)
+from cyber_team.api.routes.operations import (
+    router as operations_router,
+)
 from cyber_team.api.security import Principal, get_current_principal
 from cyber_team.clock import utc_now
 
@@ -15,6 +20,74 @@ def owner_principal():
         role="owner",
         token_type="access",
     )
+
+
+def test_readiness_compaction_preserves_summary_and_omits_embedded_backlogs():
+    payload = {
+        "status": "ready",
+        "executive_cadence": {
+            "status": "ready",
+            "counts": {"loops": 1},
+            "loops": [
+                {
+                    "loop_id": "chief_operating_agent",
+                    "title": "Governor",
+                    "status": "temporal_managed",
+                    "runtime": {"large": "payload"},
+                    "durable_history": {
+                        "recent_counts": {"success": 2},
+                        "last_event": {
+                            "id": "event-1",
+                            "event_type": "governor.run",
+                            "metadata": {"private_detail": "omitted"},
+                        },
+                        "recent_events": [{"large": "payload"}],
+                    },
+                }
+            ],
+            "recent_executive_runs": [{"large": "payload"}],
+        },
+        "operating_cadence": {
+            "status": "ready",
+            "counts": {"cadences": 3},
+            "items": [{"large": "payload"}],
+        },
+        "owner_attention": {
+            "status": "ready",
+            "counts": {"active": 2},
+            "items": [{"large": "payload"}],
+        },
+        "executive_autonomy": {
+            "status": "ready",
+            "latest_run": {"run_id": "run-1", "operating_snapshot": {"large": True}},
+        },
+        "team_activation": {
+            "status": "ready",
+            "latest_run": {"id": "activation-1", "results": [{"large": True}]},
+        },
+        "controls": {
+            "recent_evidence_count": 1,
+            "recent_evidence": [
+                {
+                    "id": "evidence-1",
+                    "event_type": "control.evidence",
+                    "metadata": {"control_id": "restore.drill", "large": "payload"},
+                }
+            ],
+        },
+    }
+
+    compact = _compact_operations_readiness(payload)
+
+    assert compact["status"] == "ready"
+    assert compact["executive_cadence"]["counts"] == {"loops": 1}
+    assert "recent_executive_runs" not in compact["executive_cadence"]
+    assert "runtime" not in compact["executive_cadence"]["loops"][0]
+    assert "items" not in compact["operating_cadence"]
+    assert "items" not in compact["owner_attention"]
+    assert compact["executive_autonomy"]["latest_run"] == {"run_id": "run-1"}
+    assert compact["controls"]["recent_evidence"][0]["control_id"] == "restore.drill"
+    assert payload["operating_cadence"]["items"]
 
 
 def test_run_autonomous_cycle_endpoint(monkeypatch):

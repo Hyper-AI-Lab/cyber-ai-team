@@ -5,6 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from cyber_team.api.rate_limit import enforce_rate_limit
 from cyber_team.api.security import (
@@ -49,47 +50,51 @@ async def login(req: LoginRequest, request: Request):
         settings.rate_limit_login_per_minute,
     )
     audit = getattr(request.app.state, "audit_service", None)
-    if req.email == settings.owner_email and verify_owner_password(req.password):
+    password_matches = False
+    if req.email == settings.owner_email:
+        password_matches = await run_in_threadpool(verify_owner_password, req.password)
+    if password_matches:
         if audit:
-            await audit.record(
-                event_type="auth.login",
-                actor=req.email,
-                actor_type="user",
-                resource_type="session",
-                action="login",
-                outcome="success",
-            )
-            await audit.record_control_evidence(
-                control_id="auth.login",
-                control_area="soc2_access_control",
-                actor=req.email,
-                outcome="success",
-                evidence={"event": "owner_login"},
-            )
+            await _record_login_evidence(audit, req.email, "success")
         return TokenResponse(
             access_token=create_owner_access_token(),
             refresh_token=create_owner_refresh_token(),
         )
     if audit:
-        await audit.record(
-            event_type="auth.login",
-            actor=req.email,
-            actor_type="user",
-            resource_type="session",
-            action="login",
-            outcome="failed",
-        )
-        await audit.record_control_evidence(
-            control_id="auth.login",
-            control_area="soc2_access_control",
-            actor=req.email,
-            outcome="failed",
-            evidence={"event": "owner_login"},
-        )
+        await _record_login_evidence(audit, req.email, "failed")
     metrics = getattr(request.app.state, "metrics_service", None)
     if metrics:
         metrics.record_auth_failure("login", "invalid_credentials")
     raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
+async def _record_login_evidence(audit, email: str, outcome: str) -> None:
+    await audit.record_batch(
+        [
+            {
+                "event_type": "auth.login",
+                "actor": email,
+                "actor_type": "user",
+                "resource_type": "session",
+                "action": "login",
+                "outcome": outcome,
+            },
+            {
+                "event_type": "control.evidence",
+                "actor": email,
+                "actor_type": "system",
+                "resource_type": "control",
+                "resource_id": "auth.login",
+                "action": "soc2_access_control",
+                "outcome": outcome,
+                "metadata": {
+                    "control_id": "auth.login",
+                    "control_area": "soc2_access_control",
+                    "evidence": {"event": "owner_login"},
+                },
+            },
+        ]
+    )
 
 
 @router.post("/refresh", response_model=TokenResponse)

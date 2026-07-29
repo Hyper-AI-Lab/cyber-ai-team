@@ -1,5 +1,8 @@
 """Dashboard routes — KPIs, agent status, approval queues."""
 
+import asyncio
+import logging
+import time
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
@@ -9,13 +12,47 @@ from cyber_team.api.security import Principal, get_current_principal
 from cyber_team.config import settings
 
 router = APIRouter()
+DASHBOARD_KPI_CACHE_TTL_SECONDS = 5.0
+logger = logging.getLogger(__name__)
+
+
+def _dashboard_refresh_finished(task: asyncio.Task) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.exception("Background dashboard KPI refresh failed")
+
+
+async def _refresh_dashboard_kpis(request: Request) -> dict:
+    payload = await request.app.state.orchestrator.get_kpis()
+    request.app.state.dashboard_kpi_cache = {
+        "expires_at": time.monotonic() + DASHBOARD_KPI_CACHE_TTL_SECONDS,
+        "payload": payload,
+    }
+    return payload
 
 
 @router.get("/kpis")
 async def get_kpis(request: Request, principal: Principal = Depends(get_current_principal)):
     await require_authorization(request, principal, "read", "dashboard")
-    orchestrator = request.app.state.orchestrator
-    return await orchestrator.get_kpis()
+    cache = getattr(request.app.state, "dashboard_kpi_cache", None)
+    now = time.monotonic()
+    if isinstance(cache, dict) and isinstance(cache.get("payload"), dict):
+        if cache.get("expires_at", 0) > now:
+            return cache["payload"]
+        refresh_task = getattr(
+            request.app.state,
+            "dashboard_kpi_refresh_task",
+            None,
+        )
+        if not refresh_task or refresh_task.done():
+            refresh_task = asyncio.create_task(_refresh_dashboard_kpis(request))
+            refresh_task.add_done_callback(_dashboard_refresh_finished)
+            request.app.state.dashboard_kpi_refresh_task = refresh_task
+        return cache["payload"]
+    return await _refresh_dashboard_kpis(request)
 
 
 @router.get("/agent-status")

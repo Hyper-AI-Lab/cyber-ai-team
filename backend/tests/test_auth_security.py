@@ -2,6 +2,7 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
+from cyber_team.api.routes import auth as auth_routes
 from cyber_team.api.routes.auth import router as auth_router
 from cyber_team.api.security import (
     Principal,
@@ -9,7 +10,9 @@ from cyber_team.api.security import (
     create_owner_access_token,
     decode_token,
     get_current_principal,
+    hash_owner_password,
     require_owner,
+    verify_owner_password,
 )
 from cyber_team.config import settings
 
@@ -46,6 +49,37 @@ def test_login_success_returns_access_and_refresh_tokens(auth_client):
     assert data["token_type"] == "bearer"
     assert decode_token(data["access_token"], expected_type="access").role == "owner"
     assert decode_token(data["refresh_token"], expected_type="refresh").role == "owner"
+
+
+def test_login_offloads_password_verification(auth_client, monkeypatch):
+    calls = []
+
+    async def run_in_threadpool(function, *args):
+        calls.append((function, args))
+        return function(*args)
+
+    monkeypatch.setattr(auth_routes, "run_in_threadpool", run_in_threadpool)
+
+    response = auth_client.post(
+        "/api/auth/login",
+        json={"email": "owner@example.com", "password": "correct-password"},
+    )
+
+    assert response.status_code == 200
+    assert calls == [(auth_routes.verify_owner_password, ("correct-password",))]
+
+
+def test_owner_password_hash_round_trip(monkeypatch):
+    monkeypatch.setattr(settings, "owner_password_hash", hash_owner_password("strong-password"))
+
+    assert verify_owner_password("strong-password") is True
+    assert verify_owner_password("wrong-password") is False
+
+
+def test_owner_password_rejects_malformed_hash(monkeypatch):
+    monkeypatch.setattr(settings, "owner_password_hash", "not-a-bcrypt-hash")
+
+    assert verify_owner_password("strong-password") is False
 
 
 def test_login_rejects_invalid_credentials(auth_client):

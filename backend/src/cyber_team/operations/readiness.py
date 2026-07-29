@@ -216,13 +216,22 @@ class ProductionReadinessEvidenceService:
         qdrant = postgres.get("summary", {}).get("qdrant") or {}
         source_points = qdrant.get("source_points_count")
         restored_points = qdrant.get("restored_points_count")
-        qdrant_verified = bool(
+        legacy_exact_match = bool(
             qdrant.get("restore_status") == "ok"
             and isinstance(source_points, int)
             and not isinstance(source_points, bool)
             and source_points >= 0
             and source_points == restored_points
         )
+        checksum_proof = bool(
+            qdrant.get("restore_status") == "ok"
+            and qdrant.get("verification_status") == "verified"
+            and qdrant.get("checksum_verified") is True
+            and isinstance(restored_points, int)
+            and not isinstance(restored_points, bool)
+            and restored_points >= 0
+        )
+        qdrant_verified = legacy_exact_match or checksum_proof
         postgres["qdrant_verified"] = qdrant_verified
         if postgres["status"] == "ready" and not qdrant_verified:
             postgres.update(

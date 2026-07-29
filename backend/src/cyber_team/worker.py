@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from temporalio import activity, workflow
 from temporalio.client import Client
+from temporalio.common import RetryPolicy
 from temporalio.worker import Worker
 
 logger = logging.getLogger(__name__)
@@ -27,8 +28,19 @@ async def activity_services():
     """Build the service graph activities need outside the FastAPI lifespan."""
     from cyber_team.audit.service import AuditService
     from cyber_team.comms.gateway import CommsGateway
+    from cyber_team.company.intelligence import CompanyIntelligenceService
     from cyber_team.integrations.erpnext import ERPNextClient
     from cyber_team.observability.metrics import MetricsService
+    from cyber_team.operations.action_policy import ActionPolicyService
+    from cyber_team.operations.autonomy_cycle import AutonomousCompanyCycleService
+    from cyber_team.operations.executive import ExecutiveCompanyOSService
+    from cyber_team.operations.governor import OrchestrationGovernorService
+    from cyber_team.operations.memory_steward import MemoryStewardService
+    from cyber_team.operations.outcomes import OutcomeLearningService
+    from cyber_team.operations.planning import AutonomousPlanningService
+    from cyber_team.operations.readiness import ProductionReadinessEvidenceService
+    from cyber_team.operations.strategy import CompanyStrategyService
+    from cyber_team.operations.work_portfolio import WorkPortfolioService
     from cyber_team.tools.registry import ToolRegistry
 
     metrics = MetricsService()
@@ -37,6 +49,7 @@ async def activity_services():
     comms = CommsGateway(metrics_service=metrics)
     erpnext = ERPNextClient()
     registry = ToolRegistry()
+    action_policy = ActionPolicyService(audit_service=audit)
     manager = AgentManager(
         memory_service=memory,
         audit_service=audit,
@@ -50,6 +63,66 @@ async def activity_services():
         erpnext=erpnext,
         audit=audit,
         metrics=metrics,
+        action_policy=action_policy,
+    )
+    intelligence = CompanyIntelligenceService(
+        llm_gateway=worker_llm_gateway,
+        memory_service=memory,
+        audit_service=audit,
+    )
+    strategy = CompanyStrategyService(
+        llm_gateway=worker_llm_gateway,
+        audit_service=audit,
+    )
+    work_portfolio = WorkPortfolioService(
+        agent_manager=manager,
+        audit_service=audit,
+        company_intelligence_service=intelligence,
+        tool_registry=registry,
+    )
+    outcomes = OutcomeLearningService(
+        action_policy_service=action_policy,
+        memory_service=memory,
+        audit_service=audit,
+    )
+    autonomy_cycle = AutonomousCompanyCycleService(
+        intelligence_service=intelligence,
+        strategy_service=strategy,
+        work_portfolio_service=work_portfolio,
+        outcome_learning_service=outcomes,
+        action_policy_service=action_policy,
+        audit_service=audit,
+    )
+    memory_steward = MemoryStewardService(
+        audit_service=audit,
+        memory_service=memory,
+        agent_manager=manager,
+    )
+    planning = AutonomousPlanningService(
+        agent_manager=manager,
+        memory_steward_service=memory_steward,
+        tool_registry=registry,
+        audit_service=audit,
+    )
+    readiness = ProductionReadinessEvidenceService(audit_service=audit)
+    governor = OrchestrationGovernorService(
+        agent_manager=manager,
+        planning_service=planning,
+        memory_steward_service=memory_steward,
+        tool_registry=registry,
+        audit_service=audit,
+        readiness_evidence_service=readiness,
+        comms_gateway=comms,
+        erpnext=erpnext,
+    )
+    executive = ExecutiveCompanyOSService(
+        governor_service=governor,
+        agent_manager=manager,
+        memory_service=memory,
+        audit_service=audit,
+        tool_registry=registry,
+        planning_service=planning,
+        readiness_evidence_service=readiness,
     )
     await memory.startup()
     try:
@@ -61,6 +134,8 @@ async def activity_services():
             "registry": registry,
             "manager": manager,
             "metrics": metrics,
+            "autonomy_cycle": autonomy_cycle,
+            "executive": executive,
         }
     finally:
         await memory.shutdown()
@@ -164,6 +239,7 @@ async def execute_tool_activity(
     tool_args: dict,
     workflow_run_id: str | None = None,
     workflow_node_id: str | None = None,
+    action_envelope: dict | None = None,
 ) -> dict:
     async with activity_services() as services:
         tool_args = dict(tool_args or {})
@@ -173,6 +249,7 @@ async def execute_tool_activity(
             "_workflow_run_id": workflow_run_id,
             "_workflow_node_id": workflow_node_id,
             "_source_type": "workflow_tool_activity",
+            "_action_envelope": action_envelope or {},
         })
         result = await services["registry"].execute(tool_name, tool_args)
         return result.model_dump()
@@ -237,7 +314,100 @@ async def update_workflow_run_db_activity(
             run_obj.error = error
         if status in ("completed", "failed", "rejected"):
             run_obj.completed_at = utc_now()
-        await session.commit()
+            await session.commit()
+
+
+@activity.defn
+async def run_autonomous_company_cycle_activity(payload: dict) -> dict:
+    async with activity_services() as services:
+        return await services["autonomy_cycle"].run(
+            trigger=str(payload.get("trigger") or "temporal"),
+            event_ids=list(payload.get("event_ids") or []),
+        )
+
+
+@activity.defn
+async def run_executive_governor_activity(payload: dict) -> dict:
+    async with activity_services() as services:
+        return await services["executive"].run_executive_cycle(
+            actor=str(payload.get("actor") or "chief_operating_agent_scheduler"),
+            dry_run=bool(payload.get("dry_run", False)),
+            auto_apply_low_risk=payload.get("auto_apply_low_risk"),
+            max_actions=payload.get("max_actions"),
+            force_reflection=bool(payload.get("force_reflection", False)),
+            force_benchmark_refresh=bool(
+                payload.get("force_benchmark_refresh", False)
+            ),
+            owner_instruction=payload.get("owner_instruction"),
+            observer_review=bool(payload.get("observer_review", True)),
+            synthetic_large_impact=bool(
+                payload.get("synthetic_large_impact", False)
+            ),
+        )
+
+
+@workflow.defn
+class AutonomousCompanyCycleWorkflow:
+    @workflow.run
+    async def run(self, payload: dict) -> dict:
+        return await workflow.execute_activity(
+            run_autonomous_company_cycle_activity,
+            payload,
+            start_to_close_timeout=timedelta(minutes=40),
+            retry_policy=RetryPolicy(
+                initial_interval=timedelta(seconds=10),
+                maximum_interval=timedelta(minutes=5),
+                maximum_attempts=3,
+            ),
+        )
+
+
+@workflow.defn
+class ExecutiveGovernorWorkflow:
+    @workflow.run
+    async def run(self, payload: dict) -> dict:
+        return await workflow.execute_activity(
+            run_executive_governor_activity,
+            payload,
+            start_to_close_timeout=timedelta(minutes=40),
+            retry_policy=RetryPolicy(
+                initial_interval=timedelta(seconds=10),
+                maximum_interval=timedelta(minutes=5),
+                maximum_attempts=3,
+            ),
+        )
+
+
+@workflow.defn
+class AutonomousCompanySignalWorkflow:
+    def __init__(self) -> None:
+        self._event_ids: list[str] = []
+        self._cycles = 0
+
+    @workflow.signal
+    async def business_event_received(self, event_id: str) -> None:
+        if event_id not in self._event_ids and len(self._event_ids) < 200:
+            self._event_ids.append(event_id)
+
+    @workflow.run
+    async def run(self, config: dict) -> None:
+        while True:
+            await workflow.wait_condition(lambda: bool(self._event_ids))
+            event_ids = list(self._event_ids)
+            self._event_ids.clear()
+            await workflow.execute_activity(
+                run_autonomous_company_cycle_activity,
+                {"trigger": "business_event_signal", "event_ids": event_ids},
+                start_to_close_timeout=timedelta(minutes=40),
+                retry_policy=RetryPolicy(
+                    initial_interval=timedelta(seconds=10),
+                    maximum_interval=timedelta(minutes=5),
+                    maximum_attempts=3,
+                ),
+            )
+            self._cycles += 1
+            if self._cycles >= 100:
+                workflow.continue_as_new(config)
 
 
 @workflow.defn
@@ -515,6 +685,286 @@ class DynamicGraphWorkflow:
         return state
 
 
+@workflow.defn
+class GenericSpecificationWorkflow:
+    """Execute one immutable validated specification with deterministic control flow."""
+
+    def __init__(self) -> None:
+        self._approval_status: str | None = None
+
+    @workflow.signal
+    def approval_signal(self, status: str) -> None:
+        self._approval_status = status
+
+    @workflow.run
+    async def run(self, specification: dict, input_data: dict, run_id: str) -> dict:
+        steps = {item["id"]: item for item in specification.get("steps", [])}
+        if not steps:
+            raise ValueError("Workflow specification has no steps")
+        compensation_only = {
+            step.get("compensation_step_id")
+            for step in steps.values()
+            if step.get("compensation_step_id")
+        }
+        executable_steps = set(steps) - compensation_only
+        state = dict(input_data)
+        completed: set[str] = set()
+        executed: list[str] = []
+        try:
+            while len(completed) < len(executable_steps):
+                ready = sorted(
+                    step_id
+                    for step_id, step in steps.items()
+                    if step_id in executable_steps
+                    and step_id not in completed
+                    and (
+                        set(step.get("depends_on") or []) - compensation_only
+                    ).issubset(completed)
+                )
+                if not ready:
+                    raise ValueError("Workflow specification dependency deadlock")
+                for step_id in ready:
+                    step = steps[step_id]
+                    await workflow.execute_activity(
+                        update_workflow_run_db_activity,
+                        args=[run_id, "running", step_id, state],
+                        start_to_close_timeout=timedelta(seconds=15),
+                    )
+                    result = await self._execute_step(step, state, run_id)
+                    state[f"{step_id}_output"] = result
+                    completed.add(step_id)
+                    executed.append(step_id)
+        except Exception as exc:
+            compensation = await self._compensate(
+                executed, steps, state, run_id
+            )
+            state["compensation"] = compensation
+            await workflow.execute_activity(
+                update_workflow_run_db_activity,
+                args=[run_id, "failed", "", state, None, type(exc).__name__],
+                start_to_close_timeout=timedelta(seconds=15),
+            )
+            raise
+        failures = self._acceptance_failures(
+            specification.get("acceptance_tests") or [], state
+        )
+        if failures:
+            state["acceptance_failures"] = failures
+            await workflow.execute_activity(
+                update_workflow_run_db_activity,
+                args=[run_id, "failed", "acceptance", state, None, "acceptance_failed"],
+                start_to_close_timeout=timedelta(seconds=15),
+            )
+            raise ValueError("Workflow acceptance tests failed")
+        await workflow.execute_activity(
+            update_workflow_run_db_activity,
+            args=[run_id, "completed", "", state, state],
+            start_to_close_timeout=timedelta(seconds=15),
+        )
+        return state
+
+    async def _execute_step(self, step: dict, state: dict, run_id: str):
+        step_id = step["id"]
+        retry = step.get("retry") or {}
+        retry_policy = RetryPolicy(
+            maximum_attempts=int(retry.get("max_attempts", 3)),
+            initial_interval=timedelta(
+                seconds=int(retry.get("initial_interval_seconds", 2))
+            ),
+            backoff_coefficient=float(retry.get("backoff_coefficient", 2.0)),
+            maximum_interval=timedelta(
+                seconds=int(retry.get("maximum_interval_seconds", 60))
+            ),
+        )
+        timeout = timedelta(seconds=int(step.get("timeout_seconds", 300)))
+        if step["type"] == "agent":
+            task = self._format(step.get("task_template", ""), state)
+            return await workflow.execute_activity(
+                invoke_agent_activity,
+                args=[step["agent_id"], task, run_id, step_id],
+                start_to_close_timeout=timeout,
+                retry_policy=retry_policy,
+            )
+        if step["type"] == "tool":
+            args = self._format_value(step.get("args_template") or {}, state)
+            approval_id = state.get(f"{step_id}_approval_id")
+            if approval_id:
+                args["_approval_id"] = approval_id
+            result = await workflow.execute_activity(
+                execute_tool_activity,
+                args=[
+                    step["tool_name"],
+                    args,
+                    run_id,
+                    step_id,
+                    step.get("action_envelope") or {},
+                ],
+                start_to_close_timeout=timeout,
+                retry_policy=retry_policy,
+            )
+            output = result.get("output") or {}
+            requested = output.get("approval_id")
+            if output.get("approval_required") and requested:
+                state[f"{step_id}_approval_id"] = requested
+                await self._wait_for_approval(
+                    requested, "tool", step["tool_name"], run_id, step_id, state
+                )
+                args["_approval_id"] = requested
+                result = await workflow.execute_activity(
+                    execute_tool_activity,
+                    args=[
+                        step["tool_name"],
+                        args,
+                        run_id,
+                        step_id,
+                        step.get("action_envelope") or {},
+                    ],
+                    start_to_close_timeout=timeout,
+                    retry_policy=retry_policy,
+                )
+            if not result.get("success"):
+                raise ValueError(f"Tool step {step_id} failed")
+            return result
+        if step["type"] == "memory":
+            args = self._format_value(step.get("args_template") or {}, state)
+            return await workflow.execute_activity(
+                remember_activity,
+                args=[
+                    args["agent_id"],
+                    args.get("memory_type", "episodic"),
+                    args["namespace"],
+                    args["content"],
+                    run_id,
+                    step_id,
+                ],
+                start_to_close_timeout=timeout,
+                retry_policy=retry_policy,
+            )
+        if step["type"] == "approval":
+            envelope = step.get("action_envelope") or {}
+            approval_id = await workflow.execute_activity(
+                request_approval_activity,
+                args=[
+                    step.get("agent_id") or "chief_operating_agent",
+                    envelope.get("action_class", "workflow_step"),
+                    envelope.get("expected_effect", f"Approve workflow step {step_id}"),
+                    {"action_envelope": envelope},
+                    step.get("risk_level", "medium"),
+                    "workflow_run",
+                    run_id,
+                ],
+                start_to_close_timeout=timedelta(seconds=30),
+            )
+            await self._wait_for_approval(
+                approval_id, "workflow_run", run_id, run_id, step_id, state
+            )
+            return {"approval_id": approval_id, "consumed": True}
+        if step["type"] == "decision":
+            args = step.get("args_template") or {}
+            key = args.get("state_key")
+            return {
+                "value": state.get(key),
+                "equals": state.get(key) == args.get("equals"),
+            }
+        raise ValueError(f"Unsupported step type {step['type']}")
+
+    async def _wait_for_approval(
+        self,
+        approval_id: str,
+        target_type: str,
+        target_id: str,
+        run_id: str,
+        step_id: str,
+        state: dict,
+    ) -> None:
+        state[f"{step_id}_approval_id"] = approval_id
+        await workflow.execute_activity(
+            update_workflow_run_db_activity,
+            args=[run_id, "waiting_approval", step_id, state],
+            start_to_close_timeout=timedelta(seconds=15),
+        )
+        self._approval_status = None
+        await workflow.wait_condition(lambda: self._approval_status is not None)
+        if self._approval_status != "approved":
+            raise ValueError(f"Approval {approval_id} was rejected")
+        executable = await workflow.execute_activity(
+            approval_is_executable_activity,
+            args=[approval_id, target_type, target_id],
+            start_to_close_timeout=timedelta(seconds=15),
+        )
+        if not executable:
+            raise ValueError(f"Approval {approval_id} is not executable")
+        if target_type == "workflow_run":
+            await workflow.execute_activity(
+                consume_approval_activity,
+                args=[approval_id, "workflow", target_type, target_id],
+                start_to_close_timeout=timedelta(seconds=15),
+            )
+
+    async def _compensate(
+        self,
+        executed: list[str],
+        steps: dict[str, dict],
+        state: dict,
+        run_id: str,
+    ) -> list[dict]:
+        results = []
+        for step_id in reversed(executed):
+            compensation_id = steps[step_id].get("compensation_step_id")
+            compensation = steps.get(compensation_id) if compensation_id else None
+            if not compensation or compensation.get("type") != "tool":
+                continue
+            args = self._format_value(
+                compensation.get("args_template") or {}, state
+            )
+            result = await workflow.execute_activity(
+                execute_tool_activity,
+                args=[
+                    compensation["tool_name"],
+                    args,
+                    run_id,
+                    compensation_id,
+                    compensation.get("action_envelope") or {},
+                ],
+                start_to_close_timeout=timedelta(
+                    seconds=int(compensation.get("timeout_seconds", 300))
+                ),
+            )
+            results.append({"step_id": compensation_id, "result": result})
+        return results
+
+    @staticmethod
+    def _acceptance_failures(tests: list[dict], state: dict) -> list[str]:
+        failures = []
+        for index, test in enumerate(tests):
+            kind = test.get("type")
+            key = test.get("state_key")
+            if kind == "state_key_exists" and key not in state:
+                failures.append(f"test_{index}:missing:{key}")
+            elif kind == "equals" and state.get(key) != test.get("expected"):
+                failures.append(f"test_{index}:not_equal:{key}")
+            elif kind not in {"state_key_exists", "equals"}:
+                failures.append(f"test_{index}:unsupported:{kind}")
+        return failures
+
+    @classmethod
+    def _format_value(cls, value, state):
+        if isinstance(value, str):
+            return cls._format(value, state)
+        if isinstance(value, dict):
+            return {key: cls._format_value(item, state) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls._format_value(item, state) for item in value]
+        return value
+
+    @staticmethod
+    def _format(value: str, state: dict) -> str:
+        try:
+            return value.format(**state)
+        except (KeyError, ValueError):
+            return value
+
+
 async def run_worker():
     client = await Client.connect(
         settings.temporal_url,
@@ -528,6 +978,10 @@ async def run_worker():
             SalesOutreachWorkflow,
             CustomerSupportWorkflow,
             DynamicGraphWorkflow,
+            GenericSpecificationWorkflow,
+            AutonomousCompanyCycleWorkflow,
+            ExecutiveGovernorWorkflow,
+            AutonomousCompanySignalWorkflow,
         ],
         activities=[
             invoke_agent_activity,
@@ -537,6 +991,8 @@ async def run_worker():
             consume_approval_activity,
             approval_is_executable_activity,
             update_workflow_run_db_activity,
+            run_autonomous_company_cycle_activity,
+            run_executive_governor_activity,
         ],
     )
     logger.info("Starting Temporal worker...")

@@ -1,3 +1,6 @@
+import hashlib
+import json
+import time
 from typing import Any
 
 import httpx
@@ -17,13 +20,23 @@ class AuthorizationDecision(BaseModel):
 
 
 class AuthorizationService:
+    ALLOWED_READ_AUDIT_TTL_SECONDS = 60.0
+
     def __init__(
         self,
         audit_service: AuditService | None = None,
         metrics_service: MetricsService | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ):
         self._audit = audit_service
         self._metrics = metrics_service
+        self._http_client = http_client or httpx.AsyncClient(timeout=2.0)
+        self._owns_http_client = http_client is None
+        self._allowed_read_audits: dict[str, float] = {}
+
+    async def close(self) -> None:
+        if self._owns_http_client:
+            await self._http_client.aclose()
 
     async def authorize(
         self,
@@ -38,7 +51,14 @@ class AuthorizationService:
         decision = await self._opa_decision(principal, action, resource_type, resource_id, context)
         if decision is None:
             decision = self._local_decision(principal, action, resource_type, resource_id, context)
-        if audit and self._audit:
+        if audit and self._audit and self._should_record_audit(
+            decision=decision,
+            principal=principal,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            context=context,
+        ):
             actor_type = "agent" if principal.role == "agent" else "user"
             await self._audit.record(
                 event_type="authorization.allowed" if decision.allowed else "authorization.denied",
@@ -86,15 +106,13 @@ class AuthorizationService:
             }
         }
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{settings.opa_api_url}/v1/data/cyberteam/authz/allow",
-                    json=payload,
-                    timeout=2.0,
-                )
-                if response.status_code != 200:
-                    return None
-                result = response.json().get("result")
+            response = await self._http_client.post(
+                f"{settings.opa_api_url}/v1/data/cyberteam/authz/allow",
+                json=payload,
+            )
+            if response.status_code != 200:
+                return None
+            result = response.json().get("result")
         except Exception:
             return None
         if result is None:
@@ -105,6 +123,44 @@ class AuthorizationService:
             source="opa",
             policy="cyberteam.authz.allow",
         )
+
+    def _should_record_audit(
+        self,
+        *,
+        decision: AuthorizationDecision,
+        principal: Principal,
+        action: str,
+        resource_type: str,
+        resource_id: str | None,
+        context: dict[str, Any],
+    ) -> bool:
+        if not decision.allowed or action != "read":
+            return True
+        now = time.monotonic()
+        safe_context = self._safe_context(context)
+        digest = hashlib.sha256(
+            json.dumps(safe_context, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        key = ":".join(
+            (
+                principal.subject,
+                action,
+                resource_type,
+                resource_id or "",
+                decision.source,
+                digest,
+            )
+        )
+        if self._allowed_read_audits.get(key, 0) > now:
+            return False
+        self._allowed_read_audits[key] = now + self.ALLOWED_READ_AUDIT_TTL_SECONDS
+        if len(self._allowed_read_audits) > 10_000:
+            self._allowed_read_audits = {
+                item_key: expires_at
+                for item_key, expires_at in self._allowed_read_audits.items()
+                if expires_at > now
+            }
+        return True
 
     def _local_decision(
         self,

@@ -21,6 +21,7 @@ from cyber_team.db.models import (
     AutonomousExecutionRecord,
     AutonomyPolicy,
     CompanyObjective,
+    CompanyObjectiveRevision,
     ExecutiveBenchmarkDefinition,
     ExecutiveBenchmarkResult,
     ExecutiveReflection,
@@ -408,18 +409,107 @@ class ExecutiveCompanyOSService:
                     for key, value in payload.items():
                         setattr(objective, key, value)
                 else:
-                    session.add(
-                        CompanyObjective(
-                            id=objective_id,
-                            created_by=actor,
-                            created_at=now + timedelta(microseconds=index),
-                            **payload,
-                        )
+                    objective = CompanyObjective(
+                        id=objective_id,
+                        created_by=actor,
+                        created_at=now + timedelta(microseconds=index),
+                        **payload,
                     )
+                    session.add(objective)
+                    await session.flush()
+                latest_revision = (
+                    await session.execute(
+                        select(CompanyObjectiveRevision)
+                        .where(CompanyObjectiveRevision.objective_id == objective_id)
+                        .order_by(CompanyObjectiveRevision.revision.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                revision_content = {
+                    "title": payload["title"],
+                    "description": payload["description"],
+                    "status": payload["status"],
+                    "priority": payload["priority"],
+                    "target": payload["target"],
+                    "category": str(item.get("category") or "owner_strategy")[:100],
+                }
+                latest_content = (
+                    {
+                        "title": latest_revision.title,
+                        "description": latest_revision.description,
+                        "status": latest_revision.status,
+                        "priority": latest_revision.priority,
+                        "target": latest_revision.target,
+                        "category": latest_revision.category,
+                    }
+                    if latest_revision
+                    else None
+                )
+                if latest_content != revision_content or not latest_revision.owner_locked:
+                    revision = CompanyObjectiveRevision(
+                        id=f"objrev_{uuid.uuid4().hex}",
+                        objective_id=objective_id,
+                        revision=(latest_revision.revision + 1) if latest_revision else 1,
+                        status=payload["status"],
+                        title=payload["title"],
+                        description=payload["description"],
+                        category=revision_content["category"],
+                        priority=payload["priority"],
+                        target=payload["target"],
+                        rationale="Owner-locked objective revision.",
+                        evidence_ids=item.get("evidence_ids") or [],
+                        confidence=1.0,
+                        owner_locked=True,
+                        supersedes_id=latest_revision.id if latest_revision else None,
+                        created_by=actor,
+                        activated_at=now,
+                    )
+                    if latest_revision and latest_revision.status in {"active", "probation"}:
+                        latest_revision.status = "superseded"
+                    session.add(revision)
             for objective_id, objective in current.items():
                 if objective_id not in seen:
                     objective.status = "archived"
                     objective.updated_at = now
+                    latest_revision = (
+                        await session.execute(
+                            select(CompanyObjectiveRevision)
+                            .where(CompanyObjectiveRevision.objective_id == objective_id)
+                            .order_by(CompanyObjectiveRevision.revision.desc())
+                            .limit(1)
+                        )
+                    ).scalar_one_or_none()
+                    if not latest_revision or latest_revision.status != "archived":
+                        session.add(
+                            CompanyObjectiveRevision(
+                                id=f"objrev_{uuid.uuid4().hex}",
+                                objective_id=objective_id,
+                                revision=(latest_revision.revision + 1)
+                                if latest_revision
+                                else 1,
+                                status="archived",
+                                title=objective.title,
+                                description=objective.description,
+                                category=(
+                                    latest_revision.category
+                                    if latest_revision
+                                    else "owner_strategy"
+                                ),
+                                priority=objective.priority,
+                                target=objective.target,
+                                rationale="Owner-locked archival revision.",
+                                evidence_ids=(
+                                    latest_revision.evidence_ids
+                                    if latest_revision
+                                    else []
+                                ),
+                                confidence=1.0,
+                                owner_locked=True,
+                                supersedes_id=latest_revision.id if latest_revision else None,
+                                created_by=actor,
+                                activated_at=now,
+                            )
+                        )
             await session.commit()
         await self._record_audit(
             event_type="executive_objectives.updated",
@@ -1386,6 +1476,25 @@ class ExecutiveCompanyOSService:
                     payload={"external_write": True},
                 )
             )
+        if not settings.legacy_governor_rule_proposer_enabled:
+            if not actions:
+                actions.append(
+                    self._action_spec(
+                        action_type="observe_only",
+                        title="Record evidence-backed operating state",
+                        summary=(
+                            "Autonomous Company Operations v3 owns proactive work "
+                            "generation. The legacy rule proposer is disabled."
+                        ),
+                        risk_level="low",
+                        confidence=1.0,
+                        impact={"financial_usd": 0, "recipients": 0},
+                        source_type="autonomous_company_v3",
+                        source_id=snapshot.get("generated_at"),
+                        payload={"legacy_rule_proposer": "disabled"},
+                    )
+                )
+            return actions
         governor = snapshot.get("governor_snapshot") or {}
         memory = governor.get("memory") or {}
         if int(memory.get("open_findings") or 0) > 0:

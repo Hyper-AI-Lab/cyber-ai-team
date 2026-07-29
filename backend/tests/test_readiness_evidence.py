@@ -153,6 +153,49 @@ async def test_readiness_rejects_qdrant_proof_without_point_counts(
 
 
 @pytest.mark.asyncio
+async def test_readiness_accepts_checksum_verified_concurrent_qdrant_snapshot(
+    tmp_path,
+    monkeypatch,
+):
+    now = datetime.now(UTC).isoformat()
+    artifacts = {
+        "dist/restore-drills/staging/staging-restore-drill-now.json": {
+            "status": "passed",
+            "finished_at": now,
+            "qdrant": {
+                "restore_status": "ok",
+                "verification_status": "verified",
+                "checksum_verified": True,
+                "source_points_count": 568,
+                "source_points_before_snapshot": 567,
+                "source_points_after_snapshot": 568,
+                "restored_points_count": 568,
+            },
+        },
+        "dist/erpnext/restore-drills/erpnext-restore-drill-now.json": {
+            "status": "passed",
+            "finished_at": now,
+        },
+    }
+    for relative_path, payload in artifacts.items():
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        "cyber_team.operations.readiness.settings.environment",
+        "staging",
+    )
+
+    summary = await ProductionReadinessEvidenceService(
+        audit_service=FakeAudit(),
+        root_dir=tmp_path,
+    ).summary()
+
+    assert summary["backup_restore"]["status"] == "ready"
+    assert summary["backup_restore"]["postgres_qdrant"]["qdrant_verified"] is True
+
+
+@pytest.mark.asyncio
 async def test_readiness_evidence_uses_configured_root(tmp_path, monkeypatch):
     now = datetime.now(UTC).isoformat()
     path = tmp_path / "dist/load-tests/load-smoke-20260623T000000Z.json"

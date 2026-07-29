@@ -154,13 +154,24 @@ class MemoryService:
                 if conditions:
                     qdrant_filter = Filter(must=conditions)
 
-                hits = await asyncio.to_thread(
-                    self._qdrant.search,
-                    collection_name=COLLECTION_NAME,
-                    query_vector=query_vector,
-                    query_filter=qdrant_filter,
-                    limit=data.limit,
-                )
+                query_points = getattr(self._qdrant, "query_points", None)
+                if query_points:
+                    response = await asyncio.to_thread(
+                        query_points,
+                        collection_name=COLLECTION_NAME,
+                        query=query_vector,
+                        query_filter=qdrant_filter,
+                        limit=data.limit,
+                    )
+                    hits = response.points
+                else:
+                    hits = await asyncio.to_thread(
+                        self._qdrant.search,
+                        collection_name=COLLECTION_NAME,
+                        query_vector=query_vector,
+                        query_filter=qdrant_filter,
+                        limit=data.limit,
+                    )
                 for hit in hits:
                     results.append({
                         "id": str(hit.id),

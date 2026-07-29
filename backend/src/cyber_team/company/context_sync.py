@@ -117,6 +117,17 @@ LIST_DOCTYPES: dict[str, list[str]] = {
         "company",
     ],
     "Item": ["name", "item_name", "item_group", "stock_uom", "disabled", "is_stock_item"],
+    "File": [
+        "name",
+        "file_name",
+        "file_url",
+        "is_private",
+        "attached_to_doctype",
+        "attached_to_name",
+        "file_size",
+        "creation",
+        "modified",
+    ],
 }
 
 COMPANY_SCOPED_DOCTYPES = {
@@ -1202,11 +1213,11 @@ class CompanyContextSyncService:
         profile = {
             "name": company_name,
             "company_name": company_name,
-            "industry": "Business operations managed in ERPNext",
-            "stage": "operational",
-            "product": ", ".join(item_names[:6]) or "ERPNext-backed business operations",
-            "target_customers": ", ".join(customer_names[:8]) or "Customers tracked in ERPNext",
-            "channels": "email, ERPNext CRM, projects, support tickets, procurement",
+            "industry": None,
+            "stage": None,
+            "product": ", ".join(item_names[:6]) or None,
+            "target_customers": ", ".join(customer_names[:8]) or None,
+            "channels": [],
             "goals": self._derived_goals(
                 projects=project_names,
                 open_tasks=open_tasks,
@@ -1233,6 +1244,24 @@ class CompanyContextSyncService:
                 "open_task_count": len(open_tasks),
                 "open_issue_count": len(open_issues),
             },
+            "epistemic_status": {
+                "industry": "unknown",
+                "stage": "unknown",
+                "product": "inferred" if item_names else "unknown",
+                "target_customers": "inferred" if customer_names else "unknown",
+                "channels": "unknown",
+            },
+            "unknown_fields": [
+                field
+                for field, value in {
+                    "industry": None,
+                    "stage": None,
+                    "product": item_names,
+                    "target_customers": customer_names,
+                    "channels": [],
+                }.items()
+                if not value
+            ],
         }
         return profile
 

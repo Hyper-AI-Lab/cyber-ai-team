@@ -4626,3 +4626,385 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30248631660`.
 - Next step:
   - Collect owner-defined business objectives, KPI targets, and risk-threshold confirmation for autonomous business activation under the canonical `HyperAILabs` context.
+
+### 2026-07-27T11:56:28Z — STEP-157 — Established the Autonomous Company Operations v3 contract
+- Files/services changed:
+  - Expanded `/home/projects/cyber-team/docs/architecture/autonomous-company-os.md` from the v2 Governor model into an evidence-to-outcome company autonomy contract.
+  - No runtime service changed in this step.
+- Commands run:
+  - Inspected the original request, existing architecture, current Governor, planning, role, workflow, memory, API, UI, deployment, and test surfaces.
+  - Reviewed current primary guidance for durable specialist graphs, reflection, AI risk management, excessive agency, signed ERPNext webhooks, local open-model inference, and self-hosted search.
+- Result:
+  - The source-of-truth architecture now requires autonomous company discovery, epistemic claim states, versioned strategy and KPIs, proactive domain mandates, signal accounting, declarative workflows, deterministic authority enforcement, outcome learning, and explicit completion criteria.
+  - The contract explicitly prohibits owner-authored strategy as the default, generic company facts, fake success, active agents without mandates, and untracked actions.
+- Evidence:
+  - `/home/projects/cyber-team/docs/architecture/autonomous-company-os.md`.
+- Next step:
+  - Make inference provider/model selection configurable and add zero-cost FOSS local/research profiles without enabling heavy images before host storage preflight passes.
+
+### 2026-07-27T12:11:22Z — STEP-158 — Added zero-spend inference and research foundation
+- Files/services changed:
+  - Added provider-neutral hosted/local routing and zero-spend enforcement in `/home/projects/cyber-team/backend/src/cyber_team/llm/gateway.py` and `/home/projects/cyber-team/backend/src/cyber_team/config.py`.
+  - Added optional pinned `local-ai` llama.cpp and `research` SearXNG Compose profiles, environment contracts, a host resource preflight, and a reproducible control-task model benchmark harness.
+  - Added focused gateway tests for hosted-spend blocking and local fallback routing.
+- Commands run:
+  - Reclaimed Docker build cache after confirming the host was at 95% disk utilization.
+  - `scripts/autonomy-resource-preflight.sh`.
+  - `PYTHONPATH=src ../.venv-quality/bin/ruff check src/cyber_team/config.py src/cyber_team/llm/gateway.py tests/test_llm_gateway.py`.
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest -q tests/test_llm_gateway.py`.
+  - `docker compose --profile local-ai --profile research config --quiet`.
+- Result:
+  - The preflight passes with 20 GiB disk free and 4 GiB memory available; optional heavyweight services remain opt-in.
+  - Seven focused gateway tests pass. Hosted inference fails closed unless zero-cost use is explicitly confirmed; configured local fallback remains available through an OpenAI-compatible endpoint.
+  - Local model selection is now evidence-driven through `/home/projects/cyber-team/scripts/benchmark-local-model.py`; no paid model upgrade or automatic spend path exists.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_llm_gateway.py`.
+  - `/home/projects/cyber-team/scripts/autonomy-resource-preflight.sh`.
+  - `/home/projects/cyber-team/scripts/benchmark-local-model.py`.
+- Next step:
+  - Add the epistemic company-intelligence, mandate, work, workflow-specification, action-policy, and outcome persistence schema using an additive Alembic migration.
+
+### 2026-07-27T12:31:00Z — STEP-159 — Added and rehearsed the v3 control-plane schema
+- Files/services changed:
+  - Added SQLAlchemy models for company sources, signals, evidence, epistemic claims, company-model revisions, objective/KPI revisions, experiments, mandates, business events/work/dependencies, workflow specifications, outcomes, and action-class policy.
+  - Added additive Alembic revision `0015_autonomous_company_ops_v3`, including non-destructive backfill of existing technical objectives and KPIs as `system_operations` revision 1 records.
+- Commands run:
+  - Ruff and compile checks for the model and migration surfaces.
+  - Full Alembic offline SQL generation through revision `0015`.
+  - `BACKEND_VENV=/home/projects/cyber-team/.venv-quality ./scripts/migration-rehearsal.sh` against a disposable PostgreSQL 16 container, including the representative production-shaped seed pass.
+- Result:
+  - Offline SQL generation produced 1,731 lines without error.
+  - Fresh, legacy pre-Alembic, and representative seeded migration paths all reached the single v3 head successfully; live staging data was not touched.
+  - Historical objective/KPI records are preserved and receive immutable revision records rather than being overwritten.
+- Evidence:
+  - `/home/projects/cyber-team/backend/alembic/versions/0015_autonomous_company_ops_v3.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/db/models.py`.
+  - `/tmp/cyber-team-v3-migration.sql`.
+- Next step:
+  - Implement idempotent evidence acquisition, injection quarantine, claim lifecycle, and evidence-backed company discovery with no generic company assertions.
+
+### 2026-07-27T13:05:00Z — STEP-160 — Implemented epistemic evidence acquisition and company discovery
+- Files/services changed:
+  - Added `/home/projects/cyber-team/backend/src/cyber_team/company/intelligence.py`, company intelligence APIs, signed ERPNext webhook ingestion, source cursors, IMAP attachment metadata/extraction, allowlisted repository/website acquisition, internal audit/memory acquisition, SearXNG research ingestion, claim conflict handling, owner-locked claim revisions, Observer model review, and memory indexing.
+  - Removed generic ERPNext assertions for industry, operating stage, products, customers, and channels; absent information is now represented as explicit unknowns.
+  - Added configuration/env contracts and safe read-only document mounts for the allowlisted repository evidence adapter.
+- Commands run:
+  - Ruff and compile checks across company intelligence, API, IMAP, ERPNext context, and configuration surfaces.
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest -q tests/test_company_intelligence.py tests/test_inbound_email.py tests/test_api_company.py tests/test_company_context_sync.py`.
+  - `docker compose --profile local-ai --profile research config --quiet` and `git diff --check`.
+- Result:
+  - Twenty-one focused tests pass.
+  - Signals are idempotent and each is accepted, quarantined/escalated, or left pending for deterministic processing; suspected injection text cannot become claims or actions.
+  - Company-model activation now requires schema validity, provenance coverage, confidence, no unresolved claim dispute, and a durable Observer agreement; missing business facts remain unknown.
+  - Owner corrections create immutable locked claim revisions and supersede prior claims without destructive replacement.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_company_intelligence.py`.
+  - `/home/projects/cyber-team/backend/tests/test_inbound_email.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/api/routes/company.py`.
+- Next step:
+  - Implement evidence-derived objective/KPI/experiment revisions, safe KPI formula evaluation, and portfolio ranking with bounded probation updates.
+
+### 2026-07-27T13:42:00Z — STEP-161 — Implemented autonomous strategy, KPI DSL, and probationary experiments
+- Files/services changed:
+  - Added `/home/projects/cyber-team/backend/src/cyber_team/operations/strategy.py` with evidence-derived objective/KPI/experiment proposals, strict proposal validation, Observer review, 30-day probation, 20% target-change bounds, KPI observations, and auditable portfolio ranking.
+  - Added a safe arithmetic KPI DSL using parsed AST nodes and allowlisted measurement bindings; Python, SQL, attributes, subscripts, arbitrary calls, and unbound metrics are rejected.
+  - Changed the existing owner objective update path to create immutable owner-locked revisions while preserving its legacy projection/API response.
+  - Added strategy portfolio, KPI revision, experiment, and strategy-cycle APIs.
+- Commands run:
+  - Ruff checks across strategy, executive, company intelligence, API, and tests.
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest -q tests/test_company_intelligence.py tests/test_company_strategy.py tests/test_executive_company_os.py tests/test_api_company.py tests/test_api_operations.py`.
+  - `git diff --check`.
+- Result:
+  - Forty-five focused tests pass.
+  - Strategy generation is idempotent, evidence-linked, Observer-reviewed, and probationary; the deterministic zero-spend fallback creates discovery work rather than invented business claims.
+  - ERPNext operational counts/statuses now enter the strategy measurement plane as verified claims, preserving provenance.
+  - Singular claims retain conflict detection while collection-valued facts no longer create false disputes.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_company_strategy.py`.
+  - `/home/projects/cyber-team/backend/tests/test_executive_company_os.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/strategy.py`.
+- Next step:
+  - Create versioned mandates for every active agent and implement the append-only business event/work portfolio with dependencies, leases, terminal signal accounting, and the universal proactive role loop.
+
+### 2026-07-27T13:08:51Z — STEP-162 — Implemented mandates and the business work portfolio
+- Files/services changed:
+  - Added `/home/projects/cyber-team/backend/src/cyber_team/operations/work_portfolio.py` with versioned active-agent mandates, business-event disposition, work dependencies, leases, advisory role execution, and missing-role escalation.
+  - Wired mandate creation and the periodic domain operations loop into application startup and added authenticated mandate, event, work-item, and domain-loop APIs.
+  - Strengthened company-signal processing so quarantined evidence never creates claims, but still becomes a redacted escalation event with a durable disposition.
+- Commands run:
+  - Ruff and Python compile checks across the work portfolio, company intelligence, API startup/routes, and tests.
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest -q tests/test_work_portfolio.py tests/test_company_intelligence.py tests/test_company_strategy.py`.
+- Result:
+  - Eighteen focused tests pass.
+  - Every active agent receives an idempotent versioned mandate; events are accepted, deduplicated, deferred with a role gap, escalated, or closed with an explicit no-action reason.
+  - Dependency-blocked work becomes leaseable when predecessors complete, stale leases can be reclaimed under row locking, and role loops only record internal advisory outcomes with external side effects disabled.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/work_portfolio.py`.
+- Next step:
+  - Implement immutable declarative workflow specifications, sandbox validation, deterministic Temporal execution, and fail-closed action-envelope policy evaluation.
+
+### 2026-07-27T13:25:34Z — STEP-163 — Implemented workflow compilation and fail-closed action policy
+- Files/services changed:
+  - Added `/home/projects/cyber-team/backend/src/cyber_team/workflows/compiler.py` with typed immutable workflow specifications, active-agent/tool checks, cycle detection, no-side-effect sandbox validation, Observer review, idempotent activation, and owner-authorized APIs.
+  - Added `GenericSpecificationWorkflow` to the Temporal worker with deterministic dependency execution, bounded retry policies, durable approval waits, acceptance tests, and reverse-order compensation.
+  - Added `/home/projects/cyber-team/backend/src/cyber_team/operations/action_policy.py` and `/home/projects/cyber-team/policies/action.rego`; tool execution now evaluates complete action envelopes and fails closed in `policy_gated` mode if policy evaluation is unavailable.
+- Commands run:
+  - Ruff, compile, and focused Pytest checks across the compiler, Temporal worker, tool registry, approvals, work portfolio, and policy service.
+  - Parsed all policies and evaluated allowed/gated sample envelopes with the pinned OPA Docker image.
+- Result:
+  - Thirty-two focused tests pass.
+  - Safe advisory specifications activate once; side-effectful specifications stop at owner approval; cyclic specifications are blocked; approval replay/target matching remains owned by the existing registry.
+  - OPA returns a total decision object for both allow and deny branches, and unavailable OPA produces an explicit fail-closed denial rather than a local allow fallback.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_action_policy_and_workflow_compiler.py`.
+  - `/home/projects/cyber-team/policies/action.rego`.
+- Next step:
+  - Implement evidence-linked outcome assessments, automatic probation adaptation, operation-graph reflection, circuit breaking, and FOSS-constrained outsourcing for repeated failures.
+
+### 2026-07-27T13:25:34Z — STEP-164 — Implemented outcome learning and failure remediation
+- Files/services changed:
+  - Added `/home/projects/cyber-team/backend/src/cyber_team/operations/outcomes.py` with idempotent terminal-work assessment, expected/actual comparison, evaluator scoring, guardrail detection, policy validation evidence, workflow review transitions, executive reflection, memory indexing, and operation-graph edges.
+  - Integrated learning into the periodic domain loop and added authenticated outcome APIs.
+  - Added repeated-failure circuit handling that creates one redacted, FOSS-only, no-secret outsourcing request instead of repeating unsupported work indefinitely.
+- Commands run:
+  - Ruff checks and `PYTHONPATH=src ../.venv-quality/bin/pytest -q tests/test_outcome_learning.py tests/test_action_policy_and_workflow_compiler.py tests/test_work_portfolio.py`.
+- Result:
+  - Fourteen focused tests pass.
+  - Successful work continues, weak/failing work is revised or stopped, unauthorized side effects force rollback and a high-severity policy finding, and repeated failures open one deduplicated outsourcing lifecycle.
+  - Outcome reflections are indexed into executive memory and linked from work to assessment in the operation graph.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_outcome_learning.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/outcomes.py`.
+- Next step:
+  - Complete the safe role/skill/tool expansion pipeline, readiness aggregation, and Owner Console Company/Executive views for the new v3 control plane.
+
+### 2026-07-27T15:09:36Z — STEP-165 — Completed safe capability expansion artifacts
+- Files/services changed:
+  - Added `/home/projects/cyber-team/backend/src/cyber_team/operations/capability_expansion.py` and its owner-authorized sandbox API.
+  - Added `/home/projects/cyber-team/scripts/materialize-tool-proposal.sh` for explicit host-side creation of review branches from passed sandbox artifacts.
+- Commands run:
+  - Focused capability-expansion Pytest and Ruff checks.
+  - Shell syntax and diff-hygiene checks for the materialization script.
+- Result:
+  - Code-backed proposals are statically inspected, run in a no-network/no-secret/read-only constrained container, emit an SPDX SBOM and patch, and never activate runtime code.
+  - A passed proposal can become a reviewable `codex/tool-proposal-*` branch only through an explicit clean-worktree owner operation; the script does not stage, commit, push, deploy, or activate it.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_capability_expansion.py`.
+- Next step:
+  - Make business-event delivery transactional and run autonomy through durable Temporal schedules and signals.
+
+### 2026-07-27T15:09:36Z — STEP-166 — Added transactional event delivery and durable autonomy control
+- Files/services changed:
+  - Extended migration `0015` and SQLAlchemy models with transactional business-event outbox deliveries, append-only dispositions, and per-domain autonomy controls.
+  - Added `/home/projects/cyber-team/backend/src/cyber_team/operations/autonomy_cycle.py` and Temporal scheduled/signal workflows and activities in the worker.
+  - Updated work routing with row locks, keyset-safe dispositions, bounded follow-up generation, mandate-based tool authority, and domain pause/takeover handling.
+- Commands run:
+  - Focused work-portfolio, autonomy-cycle, action-policy, workflow-compiler, and import checks.
+- Result:
+  - Each event is durably delivered and receives an accepted, duplicate, deferred, escalated, or no-action disposition.
+  - The full v3 cycle can run hourly and react to source signals through Temporal; startup retains an explicit in-process fallback only when Temporal scheduling is disabled.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
+  - `/home/projects/cyber-team/backend/tests/test_autonomy_cycle.py`.
+- Next step:
+  - Convert untrusted source evidence into provenance-bound claims without allowing external instructions to become actions.
+
+### 2026-07-27T15:09:36Z — STEP-167 — Completed autonomous evidence extraction and public research
+- Files/services changed:
+  - Extended company intelligence with strict-schema LLM extraction for allowlisted documents, email, web, and SearXNG evidence; trust-capped claims; quarantine-before-inference; and bounded research of critical unknowns.
+  - Added keyset source cursors, ERPNext File metadata, source-success freshness, and a manual research API.
+- Commands run:
+  - Focused company-intelligence, source, API, context-sync, and injection-quarantine tests.
+- Result:
+  - External text remains untrusted evidence and can only create allowlisted inferred/hypothesis claims with exact provenance and capped confidence.
+  - Injection-like evidence is quarantined before any LLM invocation and still receives a redacted event/disposition trail.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_company_intelligence.py`.
+  - `/home/projects/cyber-team/backend/tests/test_api_company.py`.
+- Next step:
+  - Surface the living model, authority controls, work portfolio, workflow compiler, and outcome plane in the owner console.
+
+### 2026-07-27T15:09:36Z — STEP-168 — Completed the v3 owner-console control surfaces
+- Files/services changed:
+  - Added `/home/projects/cyber-team/frontend/src/components/CompanyView.tsx` for evidence, claims, living model, strategy, revision history, and immutable owner corrections.
+  - Added `/home/projects/cyber-team/frontend/src/components/operations/AutonomousCompanyPanel.tsx` for company-cycle control, Temporal/outbox health, domain pause/resume/takeover, work, mandates, events, specifications, and outcomes.
+  - Extended Agents and Workflows views with mandate and immutable specification status.
+- Commands run:
+  - Dockerized Node 20 frontend tests, typecheck, and production build.
+- Result:
+  - Twenty-four frontend tests pass; TypeScript and the Next.js production build pass.
+  - The owner can inspect and control the autonomy plane without raw IDs or hidden state, while locked corrections preserve revision history.
+- Evidence:
+  - `/home/projects/cyber-team/frontend/src/lib/api.test.ts`.
+  - `/home/projects/cyber-team/frontend/src/components/operations/AutonomousCompanyPanel.tsx`.
+- Next step:
+  - Remove silent rule-only strategy behavior, disable the legacy proposer by default, and strengthen FOSS resource evidence.
+
+### 2026-07-27T15:09:36Z — STEP-169 — Closed legacy proposer and resource-policy gaps
+- Files/services changed:
+  - Strategy generation now blocks visibly when structured LLM advisory is absent, fails, or violates schema/provenance instead of silently substituting rule-generated business strategy.
+  - Disabled the v2 rule-only Governor proposer by default behind `LEGACY_GOVERNOR_RULE_PROPOSER_ENABLED`; v3 work generation is authoritative and the old path remains emergency rollback only.
+  - Added `/home/projects/cyber-team/config/foss-resource-inventory.json` and strengthened `/home/projects/cyber-team/scripts/resource-policy-check.py` to require reviewed licenses for every direct Python/Node dependency and Docker image.
+  - Added `--no-mmproj` to local text-model inference to avoid downloading an unused vision projector.
+- Commands run:
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest -q tests/test_company_strategy.py tests/test_executive_company_os.py tests/test_capability_expansion.py`.
+  - Focused Ruff, `scripts/resource-policy-check.py`, shell syntax, and `git diff --check`.
+  - `scripts/autonomy-resource-preflight.sh` and startup of the isolated pinned llama.cpp benchmark profile.
+- Result:
+  - Twenty-nine focused tests pass and Ruff/resource-policy checks are clean.
+  - Business strategy cannot be fabricated during provider failure; existing owner instructions and synthetic safety proofs remain available through the legacy cockpit without enabling its heuristic proposer.
+  - Resource preflight passed at 20 GiB free disk and 4 GiB available memory; the first local-model benchmark download is in progress.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_company_strategy.py`.
+  - `/home/projects/cyber-team/config/foss-resource-inventory.json`.
+- Next step:
+  - Complete both local-model benchmarks, select one fallback, validate SearXNG, then run the full repository and migration gates.
+
+### 2026-07-29T02:58:03Z — STEP-170 — Selected and isolated the FOSS inference and research fallbacks
+- Files/services changed:
+  - Made LiteLLM provider/model routing configurable and added pinned `llama.cpp` and SearXNG Compose profiles with loopback-only published ports.
+  - Selected `Qwen/Qwen3-4B-GGUF:Q4_K_M` as the retained local CPU fallback and removed the rejected Ministral model cache.
+  - Moved SearXNG from the default Compose project into `cyberteam-staging` so the API and worker resolve it on the staging network.
+- Commands run:
+  - `scripts/autonomy-resource-preflight.sh`.
+  - `scripts/benchmark-local-model.py` against Qwen3-4B and Ministral-3-3B through the pinned llama.cpp server.
+  - JSON SearXNG probes through `127.0.0.1:18081` and from the staging core container through `http://searxng:8080`.
+- Result:
+  - Both local models passed three strict-schema cases; Qwen was retained with the lower mean latency (50,864 ms versus 57,083 ms).
+  - The local model container is stopped and the retained Docker cache is approximately 2.3 GiB; hosted Mistral remains primary while zero-spend policy permits it.
+  - SearXNG returned 20 results in the live probe and remains a private, self-hosted research source; individual upstream rate limits are surfaced rather than treated as fabricated success.
+- Evidence:
+  - `/home/projects/cyber-team/dist/local-model-benchmarks/`.
+  - `cyberteam-staging-searxng` on `cyberteam-staging-network`.
+- Next step:
+  - Complete repository, migration, package, backup, and immutable-image gates before staging deployment.
+
+### 2026-07-29T02:58:03Z — STEP-171 — Completed v3 release-candidate quality, backup, and image gates
+- Files/services changed:
+  - Added `/home/projects/cyber-team/backend/.dockerignore` so generated local package metadata and test/build caches cannot enter release images.
+  - Added an explicit `--activate-policy-gated` switch to the idempotent staging autonomy configurator; shadow deployment leaves the current mode unchanged.
+  - Built `cyber-team-core:v0.2.0-rc1` and `cyber-team-ui:v0.2.0-rc1` with version/build metadata.
+- Commands run:
+  - Full backend Pytest, Ruff, compileall, Alembic offline SQL and fresh/legacy/representative PostgreSQL migration rehearsal.
+  - Frontend Vitest, `npx tsc --noEmit`, and production Next.js build.
+  - Python dependency audit, secret scan, FOSS/resource-policy check, Compose config, and diff-hygiene checks.
+  - Fresh PostgreSQL custom-format dump with `pg_restore --list` validation and `scripts/erpnext-backup.sh`.
+  - Release-image import, `pip check`, Alembic-head, and production-only npm audit checks.
+- Result:
+  - Backend: 294 tests passed; Ruff, compile, migrations, and Python dependency audit passed.
+  - Frontend: 24 tests passed, TypeScript passed, production build passed, and production dependency audit reported zero vulnerabilities.
+  - The backend image contains no stale `egg-info`, has no broken requirements, imports API/worker modules, and exposes Alembic head `0015_autonomous_company_ops_v3`.
+  - Fresh backup artifacts were created before container replacement.
+- Evidence:
+  - `/home/projects/cyber-team/backups/staging/cyberteam-v0.2.0-predeploy-20260729T024050Z.dump`.
+  - `/home/projects/cyber-team/backups/erpnext/staging/20260729T024205Z/backup-manifest.json`.
+  - `/home/projects/cyber-team/dist/erpnext/backups/erpnext-backup-20260729T024205Z.json`.
+- Next step:
+  - Deploy the release candidate in manual-only shadow mode, apply migration `0015`, and run live acceptance proofs.
+
+### 2026-07-29T06:39:31Z — STEP-172 — Deployed and exercised the v3 shadow control plane
+- Files/services changed:
+  - Deployed migration `0015_autonomous_company_ops_v3` and the release-candidate API, worker, UI, OPA, Temporal, SearXNG, ERPNext, PostgreSQL, Redis, and Qdrant services in staging shadow mode.
+  - Hardened strategy validation, work-item authorization, generated-workflow polling, and live staging service wiring discovered by the acceptance suite.
+- Commands run:
+  - Repeated `scripts/autonomous-company-v3-smoke.py` while resolving concrete acceptance failures.
+  - `scripts/business-workflow-smoke.py`, `scripts/erpnext-smoke.py`, and live health/readiness probes.
+- Result:
+  - The final v3 smoke passed company-model synthesis, evidence-driven strategy, multiple domain loops, active mandates, outcome learning, prompt-injection quarantine, generated workflow activation/execution, role/capability lifecycle, and the large-impact owner gate.
+  - Cyber-Team business workflow and real ERPNext tool smokes passed without fake-success paths or unapproved external mutation.
+- Evidence:
+  - `/home/projects/cyber-team/dist/autonomous-company-v3/autonomous-company-v3-smoke-20260729T040727Z.json`.
+  - `/home/projects/cyber-team/dist/business-workflows/business-workflow-smoke-20260729T045921Z.json`.
+  - `/home/projects/cyber-team/dist/erpnext/smoke/cyberteam-erpnext-tool-smoke-20260729T045957Z.json`.
+- Next step:
+  - Prove zero-spend local inference failover against an actual generated workflow.
+
+### 2026-07-29T06:39:31Z — STEP-173 — Proved isolated local inference failover
+- Files/services changed:
+  - Retained a smaller Qwen3 1.7B Q4_K_M staging fallback after live resource measurements showed it was a better operational fit for the shared CPU host than the initial 4B candidate.
+  - Kept hosted Mistral as the zero-owner-spend primary route and configured local fallback for provider rate limiting or availability failure.
+- Commands run:
+  - `scripts/benchmark-local-model.py` against the private loopback llama.cpp endpoint.
+  - Forced a hosted-provider rate-limit path, invoked the local fallback, and ran a generated Temporal workflow to completion.
+- Result:
+  - Strict structured-output benchmark cases passed on the retained local model.
+  - A generated workflow completed through the local fallback path, proving that provider degradation does not become fabricated success or an untracked failure.
+- Evidence:
+  - `/home/projects/cyber-team/dist/local-model-benchmarks/qwen3-1.7b-q4km-staging-20260729.json`.
+- Next step:
+  - Refresh restore, alert, and business-operation evidence before performance acceptance.
+
+### 2026-07-29T06:39:31Z — STEP-174 — Refreshed restore and operational evidence
+- Files/services changed:
+  - Hardened `scripts/staging-restore-drill.sh` with Qdrant snapshot SHA-256 verification and a source-consistency count envelope so concurrent post-snapshot writes cannot create false drill failures.
+  - Updated readiness evaluation and the backup/restore runbook for checksum-backed evidence.
+- Commands run:
+  - Isolated PostgreSQL/Qdrant staging restore drill.
+  - Isolated ERPNext MariaDB/sites restore drill.
+  - Owner-authorized real alert-email proof and refreshed Cyber-Team/ERPNext business smokes.
+- Result:
+  - Both restore drills passed from current backup artifacts without altering live databases.
+  - The required email alert channel recorded fresh delivery evidence; business and ERPNext integration smokes remained green.
+- Evidence:
+  - `/home/projects/cyber-team/dist/restore-drills/staging/staging-restore-drill-20260729T050640Z.json`.
+  - `/home/projects/cyber-team/dist/erpnext/restore-drills/erpnext-restore-drill-20260729T050803Z.json`.
+  - Control-evidence record `6e2731af-0e62-4b07-834b-eb0e5299ef94`.
+- Next step:
+  - Remove in-process executive scheduling and expensive owner-console request paths exposed by load testing.
+
+### 2026-07-29T06:39:31Z — STEP-175 — Isolated autonomous execution and hardened owner-console latency
+- Files/services changed:
+  - Moved scheduled executive Governor runs from the API process into durable `ExecutiveGovernorWorkflow` Temporal executions while retaining an explicit fallback only when Temporal scheduling is disabled.
+  - Added schedule reconciliation for both executive Governor and autonomous-company-cycle workflows; disabled the inherited API health check on the worker.
+  - Collapsed dashboard KPI reads into one aggregate query, added bounded caches, reused the OPA HTTP client, batched auth evidence writes, and deduplicated only identical successful read audits.
+  - Compacted the default operations-readiness payload, retained full details behind `include_details=true`, and enabled gzip responses.
+- Commands run:
+  - Targeted authorization, dashboard, readiness, Temporal-controller, and API regression suites.
+  - Live Temporal schedule inspection and a manually triggered executive Governor workflow.
+  - Repeated conservative k6 diagnostics with thresholds left unchanged.
+- Result:
+  - Both autonomy schedules are owned by Temporal and the live executive workflow completed outside the API process.
+  - Default readiness payload fell from approximately 729 KB to 47 KB before compression and approximately 10 KB over the public edge.
+  - Health, dashboard, and readiness endpoints all fell below the 750 ms p95 gate; the remaining concurrent-login bottleneck was isolated to synchronous bcrypt verification.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_authorization_service.py`.
+  - `/home/projects/cyber-team/backend/tests/test_api_dashboard.py`.
+  - `/home/projects/cyber-team/backend/tests/test_api_operations.py`.
+- Next step:
+  - Offload password verification from the async event loop and rerun the unchanged five-minute load gate.
+
+### 2026-07-29T06:39:31Z — STEP-176 — Passed the conservative staging load gate
+- Files/services changed:
+  - Updated the login route to run CPU-bound bcrypt verification in the application thread pool instead of blocking the async event loop.
+  - Added an authentication regression test proving the offload boundary.
+- Commands run:
+  - Targeted auth, authorization, and dashboard tests; Ruff and compile checks.
+  - Five-user, five-minute Dockerized k6 gate against the public staging API with health, login, dashboard, and readiness coverage.
+- Result:
+  - Thirteen targeted tests passed.
+  - Load gate passed with zero request failures, zero HTTP 5xx responses, and 100% checks.
+  - Endpoint p95 values: health 77.91 ms, login 167.74 ms, dashboard 100.44 ms, readiness 148.75 ms; all remain below the unchanged 750 ms limit.
+- Evidence:
+  - `/home/projects/cyber-team/dist/load-tests/load-smoke-20260729T063410Z.json`.
+  - `/home/projects/cyber-team/backend/tests/test_auth_security.py`.
+- Next step:
+  - Run the complete repository release gates against the accumulated v3 and operational-hardening changes.
+
+### 2026-07-29T06:55:00Z — STEP-177 — Passed repository and migration release gates
+- Files/services changed:
+  - Replaced the legacy Passlib wrapper with direct FOSS `bcrypt` verification/hashing while preserving existing bcrypt hashes and the password-hash CLI.
+  - Aligned backend, frontend, Compose, environment examples, and staging configuration on release candidate `0.3.0-rc1`.
+- Commands run:
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_MIGRATION_REHEARSAL=1 ./scripts/quality-gate.sh`.
+  - Focused authentication round-trip/malformed-hash tests, Ruff, resource-policy scan, and diff-hygiene checks after the bcrypt migration.
+- Result:
+  - Backend: 308 tests passed; Ruff, compileall, Alembic offline SQL, and Python dependency audit passed.
+  - Frontend: 24 tests passed; TypeScript, production build, and runtime dependency audit passed with zero reported vulnerabilities.
+  - Compose, shell/dashboard syntax, secret scan, FOSS/resource policy, legacy pre-Alembic migration, representative seeded migration, and diff hygiene all passed.
+  - The application no longer imports Passlib or its deprecated Python `crypt` compatibility path; malformed stored hashes fail closed.
+- Evidence:
+  - `/tmp/cyberteam-v3-quality-gate.log` on the staging host.
+  - `/home/projects/cyber-team/backend/tests/test_auth_security.py`.
+- Next step:
+  - Commit the verified release candidate, build immutable images with exact commit metadata, and deploy them through the staging promotion workflow.

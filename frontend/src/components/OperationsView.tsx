@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '@/lib/api'
+import AutonomousCompanyPanel from '@/components/operations/AutonomousCompanyPanel'
 import {
   Activity,
   AlertTriangle,
@@ -1124,6 +1125,15 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
           </div>
         )}
       </section>
+
+      <AutonomousCompanyPanel
+        readiness={readiness}
+        onChanged={async () => {
+          await loadReadiness()
+          await loadExecutive()
+          await onRefresh()
+        }}
+      />
 
       <section className="card">
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">

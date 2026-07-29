@@ -46,6 +46,7 @@ export default function AgentsView({ agents, onRefresh, onNavigate }: AgentsView
   const [teamActivation, setTeamActivation] = useState<any | null>(null)
   const [activatingTeam, setActivatingTeam] = useState(false)
   const [agentGrantCounts, setAgentGrantCounts] = useState<Record<string, any>>({})
+  const [agentMandates, setAgentMandates] = useState<Record<string, any>>({})
 
   // 2. Custom Role Provisioning State
   const [roleFamily, setRoleFamily] = useState('engineering')
@@ -182,6 +183,19 @@ export default function AgentsView({ agents, onRefresh, onNavigate }: AgentsView
     return () => {
       cancelled = true
     }
+  }, [agents])
+
+  useEffect(() => {
+    let cancelled = false
+    api.listAgentMandates({ status: 'active', limit: 500 })
+      .then((response: any) => {
+        if (!cancelled) {
+          const items = response.items || response || []
+          setAgentMandates(Object.fromEntries(items.map((item: any) => [item.agent_id, item])))
+        }
+      })
+      .catch(() => { if (!cancelled) setAgentMandates({}) })
+    return () => { cancelled = true }
   }, [agents])
 
   const handleSupervisorReview = async () => {
@@ -1345,6 +1359,14 @@ export default function AgentsView({ agents, onRefresh, onNavigate }: AgentsView
                   </span>
                 </span>
               </div>
+              {agentMandates[agent.id] ? (
+                <div className="mt-3 rounded-md border border-slate-700 bg-slate-900/50 px-3 py-2 text-xs text-slate-400">
+                  <div className="flex items-center justify-between gap-3"><span className="flex items-center gap-1.5"><CalendarClock className="h-3.5 w-3.5 text-cyan-300" />Mandate v{agentMandates[agent.id].version}</span><span className="text-emerald-300">active</span></div>
+                  <p className="mt-1 truncate">{agentMandates[agent.id].objective_ids?.length || 0} objectives · every {agentMandates[agent.id].cadence?.interval_seconds || '-'}s</p>
+                </div>
+              ) : (
+                <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">Mandate has not been issued.</div>
+              )}
 
               <button
                 onClick={() => setInvokeAgentId(agent.id)}

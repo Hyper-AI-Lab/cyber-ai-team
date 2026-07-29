@@ -17,9 +17,12 @@ services:
       - OPA_API_URL=http://opa:8181
       - ERPNEXT_URL=http://erpnext-frontend:8080
       - OPENFGA_API_URL=http://openfga:8080
-      - APP_VERSION=${APP_VERSION:-0.1.0}
+      - APP_VERSION=${APP_VERSION:-0.3.0-rc1}
       - BUILD_SHA=${BUILD_SHA:-local}
       - READINESS_EVIDENCE_ROOT=/app/evidence
+      - LLM_LOCAL_API_BASE=http://llama-cpp:8080/v1
+      - SEARXNG_URL=http://searxng:8080
+      - COMPANY_DOCUMENTS_ROOT=/company-documents
     depends_on:
       postgres:
         condition: service_healthy
@@ -34,6 +37,9 @@ services:
     volumes:
       - core-data:/app/data
       - ${READINESS_EVIDENCE_HOST_DIR:-./dist}:/app/evidence/dist:ro
+      - ./README.md:/company-documents/README.md:ro
+      - ./request:/company-documents/request:ro
+      - ./docs:/company-documents/docs:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -63,8 +69,10 @@ services:
       - TEMPORAL_HOST=temporal
       - OPA_API_URL=http://opa:8181
       - ERPNEXT_URL=http://erpnext-frontend:8080
-      - APP_VERSION=${APP_VERSION:-0.1.0}
+      - APP_VERSION=${APP_VERSION:-0.3.0-rc1}
       - BUILD_SHA=${BUILD_SHA:-local}
+      - LLM_LOCAL_API_BASE=http://llama-cpp:8080/v1
+      - SEARXNG_URL=http://searxng:8080
     depends_on:
       postgres:
         condition: service_healthy
@@ -72,6 +80,8 @@ services:
         condition: service_started
     volumes:
       - core-data:/app/data
+    healthcheck:
+      disable: true
     restart: unless-stopped
     logging:
       driver: json-file
@@ -88,7 +98,7 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
         NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
-        NEXT_PUBLIC_APP_VERSION: ${APP_VERSION:-0.1.0}
+        NEXT_PUBLIC_APP_VERSION: ${APP_VERSION:-0.3.0-rc1}
         NEXT_PUBLIC_BUILD_SHA: ${BUILD_SHA:-local}
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-ui
     ports:
@@ -96,7 +106,7 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
       - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
-      - NEXT_PUBLIC_APP_VERSION=${APP_VERSION:-0.1.0}
+      - NEXT_PUBLIC_APP_VERSION=${APP_VERSION:-0.3.0-rc1}
       - NEXT_PUBLIC_BUILD_SHA=${BUILD_SHA:-local}
     depends_on:
       core:
@@ -343,6 +353,66 @@ services:
       - alertmanager-data:/alertmanager
     restart: unless-stopped
 
+  # ─── Optional FOSS Local AI / Research ────────────────────────────
+  llama-cpp:
+    image: ghcr.io/ggml-org/llama.cpp@sha256:a576442ad3649c0b5ea74e20ad29a17c121117f32607cfe59ff27cc38066f874
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-llama-cpp
+    profiles: ["local-ai"]
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --ctx-size
+      - "8192"
+      - --threads
+      - "4"
+      - --threads-batch
+      - "4"
+      - --parallel
+      - "1"
+      - --api-key
+      - ${LLM_LOCAL_API_KEY:-local-development-only}
+      - --hf-repo
+      - ${LLM_LOCAL_MODEL_REPO:-ggml-org/Qwen3-1.7B-GGUF:Q4_K_M}
+      - --no-mmproj
+    ports:
+      - "${LLM_LOCAL_BIND_ADDRESS:-127.0.0.1}:${LLM_LOCAL_PUBLISHED_PORT:-18080}:8080"
+    volumes:
+      - local-model-cache:/root/.cache
+    restart: unless-stopped
+    mem_limit: 5g
+
+  searxng:
+    image: searxng/searxng@sha256:d0aaeb14880e6e92bde1518fcc7261e995783367d63d95203383607bef9c6516
+    container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-searxng
+    profiles: ["research"]
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-replace-with-random-searxng-secret}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        cat > /etc/searxng/settings.yml <<EOF
+        use_default_settings: true
+        search:
+          formats:
+            - html
+            - json
+        server:
+          secret_key: "$${SEARXNG_SECRET}"
+          bind_address: "0.0.0.0"
+          port: 8080
+          limiter: false
+          image_proxy: false
+        EOF
+        exec /usr/local/searxng/entrypoint.sh
+    ports:
+      - "${SEARXNG_BIND_ADDRESS:-127.0.0.1}:${SEARXNG_PUBLISHED_PORT:-18081}:8080"
+    volumes:
+      - searxng-data:/etc/searxng
+    restart: unless-stopped
+
   # ─── ERPNext / Frappe System of Record ────────────────────────────
   erpnext-mariadb:
     image: mariadb:10.11
@@ -561,6 +631,10 @@ volumes:
   asterisk-config:
   asterisk-spool:
   jasmin-data:
+  local-model-cache:
+    name: ${LOCAL_MODEL_CACHE_VOLUME:-cyber-team_local-model-cache}
+    external: true
+  searxng-data:
 
 networks:
   default:

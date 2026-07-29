@@ -22,24 +22,47 @@ class AuditService:
         outcome: str = "success",
         metadata: dict | None = None,
     ) -> dict:
-        event_id = str(uuid.uuid4())
+        events = await self.record_batch(
+            [
+                {
+                    "event_type": event_type,
+                    "actor": actor,
+                    "actor_type": actor_type,
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                    "action": action,
+                    "outcome": outcome,
+                    "metadata": metadata,
+                }
+            ]
+        )
+        return events[0]
+
+    async def record_batch(self, entries: list[dict]) -> list[dict]:
+        """Append related audit events atomically in one database transaction."""
+        if not entries:
+            return []
+        events = []
         async with async_session() as session:
-            event = AuditEvent(
-                id=event_id,
-                event_type=event_type,
-                actor=actor,
-                actor_type=actor_type,
-                resource_type=resource_type,
-                resource_id=resource_id,
-                action=action,
-                outcome=outcome,
-                metadata_=metadata or {},
-            )
-            session.add(event)
+            for entry in entries:
+                event = AuditEvent(
+                    id=str(uuid.uuid4()),
+                    event_type=entry["event_type"],
+                    actor=entry.get("actor", "system"),
+                    actor_type=entry.get("actor_type", "system"),
+                    resource_type=entry.get("resource_type"),
+                    resource_id=entry.get("resource_id"),
+                    action=entry.get("action"),
+                    outcome=entry.get("outcome", "success"),
+                    metadata_=entry.get("metadata") or {},
+                )
+                session.add(event)
+                events.append(event)
             await session.commit()
-            if self._metrics:
-                self._metrics.record_audit_event(event_type, outcome)
-            return self._event_to_dict(event)
+        if self._metrics:
+            for event in events:
+                self._metrics.record_audit_event(event.event_type, event.outcome)
+        return [self._event_to_dict(event) for event in events]
 
     async def record_control_evidence(
         self,

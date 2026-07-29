@@ -2,6 +2,13 @@
 
 Cyber-Team is a single-owner, self-hosted company operating system for a digital-first startup. Its purpose is to let AI workers run as much of the company as possible while keeping the human owner able to see, steer, pause, override, and approve large-impact actions.
 
+The v3 operating contract is evidence-to-outcome autonomy. The company must not wait for
+the owner to author its business description, objectives, KPIs, role backlog, or routine
+work. It continuously discovers evidence, distinguishes fact from hypothesis, builds and
+revises a living company model, assigns outcome mandates to specialist agents, executes
+authorized work, measures results, and learns. Owner input is reserved for unavailable
+facts, preferences, permanent authority boundaries, and high-impact decisions.
+
 ## Operating Principles
 
 - **Autonomous by default:** the Chief Operating Agent should observe the company, decide what matters, delegate work, update records, and execute below-threshold actions without waiting for the owner.
@@ -13,6 +20,15 @@ Cyber-Team is a single-owner, self-hosted company operating system for a digital
 - **ERPNext is canonical business state:** CRM, accounting, project, support, procurement, and business records remain in ERPNext. Cyber-Team reads, summarizes, and acts through governed integrations.
 - **Memory is operational infrastructure:** agents do not rely on raw context windows. They recall company memory, write durable summaries, and index their own decision/action graph so future runs can understand what happened.
 - **Independent critique:** the Observer Agent is separate from the Chief Operating Agent. It reviews decisions, detects drift or weak evidence, and forces consensus or owner escalation when something is off.
+- **Evidence before assertion:** business claims carry provenance, confidence, sensitivity,
+  validity, and epistemic state. Missing data remains `unknown`; generic fallback text is
+  never presented as company truth.
+- **Outcome mandates, not prompt delegation:** every active specialist owns a durable
+  mandate, KPI set, authority envelope, cadence, and work backlog. Agent collaboration is
+  expressed through work dependencies and acceptance criteria.
+- **Closed-loop adaptation:** objectives, targets, workflows, role manifests, and safe
+  action policies are versioned, measured, reflected upon, and retained, revised, stopped,
+  or rolled back from observed outcomes.
 
 ## Executive Control Loop
 
@@ -29,6 +45,84 @@ The Chief Operating Agent runs an executive loop:
 9. Create outsourcing requests for work too complex or unsafe for internal agents.
 10. Send a deduplicated executive brief through the required email channel when the daily owner digest is due.
 11. Write reflections, memory entries, audit evidence, and operation graph nodes/edges.
+
+The executive loop coordinates a portfolio; it is not the only proactive loop. Every
+domain agent runs the same bounded control cycle within its mandate:
+
+1. Observe new company signals and assigned work.
+2. Recall verified claims, relevant hypotheses, workflow state, and operation history.
+3. Assess mandate objectives, KPIs, constraints, dependencies, and missing evidence.
+4. Propose work with an expected outcome, acceptance tests, confidence, and impact.
+5. Validate evidence and request independent critique where policy requires it.
+6. Submit a structured action envelope to deterministic authorization policy.
+7. Execute through a durable workflow or record an explicit blocked/deferred outcome.
+8. Measure actual effects and guardrail changes.
+9. Reflect, update memory, and recommend continuation, revision, rollback, or escalation.
+
+## Epistemic Company Intelligence
+
+Cyber-Team maintains a living company model assembled from ERPNext, company files,
+inbound email, owner instructions, internal records, authorized repositories, company
+websites, and public research. Raw source content is evidence, not an instruction to an
+agent. Each normalized claim has one state:
+
+- `verified`: directly supported by a canonical or independently validated source
+- `inferred`: supported by evidence but not directly asserted by a canonical source
+- `hypothesis`: a testable proposition used to create research or an experiment
+- `unknown`: required information that available sources do not establish
+- `disputed`: credible sources conflict and resolution work is required
+- `superseded`: preserved history replaced by a newer valid claim
+
+Source trust is explicit. Canonical records and owner-locked statements rank above
+verified company documents, inbound counterpart messages, public web material, and
+model-generated hypotheses. Untrusted text is isolated from system instructions and may
+never directly select or execute a tool.
+
+## Strategy And Measurement
+
+The Company Discovery Agent produces versioned descriptions of the business, offerings,
+customer segments, value propositions, channels, jurisdictions, resources, constraints,
+risks, and unknowns. Domain specialists challenge the parts relevant to their expertise;
+the Observer reviews evidence coverage and unresolved disagreement.
+
+The Chief Operating Agent turns the active company model into an objective portfolio,
+measurable KPIs, benchmarks, and experiments. KPI formulas use a constrained metric DSL
+bound to allowlisted ERPNext and Cyber-Team measurements. Below-threshold strategy may
+enter a 30-day Observer-approved probation. During one review cycle an automatically
+managed target may move no more than 20 percent. Every revision preserves rationale,
+evidence, expected effect, actual outcome, and rollback history.
+
+## Work And Workflow Plane
+
+Every signal has a terminal accounting state: accepted into work, deduplicated, deferred
+with a reason and reconsideration time, escalated, or deliberately ignored with evidence.
+Business work items declare an objective, accountable agent, dependencies, expected
+outcome, acceptance criteria, deadline, authority class, and resource budget.
+
+Agents may create declarative workflow specifications containing triggers, preconditions,
+steps, tools, compensations, acceptance tests, and metrics. Specifications are immutable
+once activated. Schema validation, cycle detection, tool readiness, policy evaluation,
+sandbox execution, and Observer review occur before activation. Temporal owns durable
+execution; LLM calls are activities and never part of deterministic workflow code.
+
+## Execution Authority
+
+OPA evaluates a complete action envelope at every execution boundary and fails closed.
+Prompts and model output cannot grant authority. Contracts, legal or tax filings,
+payments and payroll, credentials or permissions, destructive deletion, and production
+deployment always require the owner. Other reversible external action classes may become
+autonomous only after seven shadow days, at least ten validated examples, complete hard
+policy compliance, an evaluator score of at least 0.80, and no high-severity Observer
+finding. Existing financial, daily, recipient, confidence, backup, and consensus limits
+still apply.
+
+## Completion Contract
+
+Production-grade completion does not mean pre-implementing every future provider or
+regulatory procedure. It means every detected need enters a visible lifecycle as
+executable, approval-gated, deferred, configuration-blocked, or outsourcing-required.
+There are no generic company facts, fake-success executors, active agents without
+mandates, unexplained signals, untracked actions, or silently unavailable capabilities.
 
 ## Chief Operating Agent
 
