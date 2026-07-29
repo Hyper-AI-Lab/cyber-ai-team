@@ -31,9 +31,10 @@ def load_env(path: Path) -> None:
 
 
 class Api:
-    def __init__(self, base: str):
+    def __init__(self, base: str, *, timeout_seconds: float):
         self.base = base.rstrip("/")
         self.token = ""
+        self.timeout_seconds = timeout_seconds
 
     def request(
         self,
@@ -59,7 +60,7 @@ class Api:
             headers=request_headers,
         )
         try:
-            with urllib.request.urlopen(request, timeout=180) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 content = response.read().decode()
                 return response.status, json.loads(content) if content else {}
         except urllib.error.HTTPError as exc:
@@ -103,7 +104,8 @@ def main() -> int:
     api = Api(
         os.environ.get("API_BASE")
         or os.environ.get("NEXT_PUBLIC_API_URL")
-        or "https://cyberteam.hyperailab.com"
+        or "https://cyberteam.hyperailab.com",
+        timeout_seconds=float(os.environ.get("V3_SMOKE_REQUEST_TIMEOUT_SECONDS", "600")),
     )
     owner_email = os.environ.get("OWNER_EMAIL", "")
     owner_password = os.environ.get("OWNER_PASSWORD", "")

@@ -371,6 +371,10 @@ services:
       - "4"
       - --parallel
       - "1"
+      - --reasoning
+      - ${LLM_LOCAL_REASONING_MODE:-off}
+      - --reasoning-budget
+      - ${LLM_LOCAL_REASONING_BUDGET:-0}
       - --api-key
       - ${LLM_LOCAL_API_KEY:-local-development-only}
       - --hf-repo

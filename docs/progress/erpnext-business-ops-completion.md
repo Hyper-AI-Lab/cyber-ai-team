@@ -5008,3 +5008,55 @@
   - `/home/projects/cyber-team/backend/tests/test_auth_security.py`.
 - Next step:
   - Commit the verified release candidate, build immutable images with exact commit metadata, and deploy them through the staging promotion workflow.
+
+### 2026-07-29T08:29:55Z — STEP-178 — Built and promoted the immutable v3 release candidate
+- Files/services changed:
+  - Committed the Autonomous Company Operations v3 implementation as `9e4af1d795c4e40261c7788a72718a4aba643bf8`.
+  - Built and scanned immutable `cyber-team-core:0.3.0-rc1` and `cyber-team-ui:0.3.0-rc1` images, then promoted them to staging after a fresh PostgreSQL backup.
+- Commands run:
+  - Final release gate, exact-image Compose smoke, Trivy image scans, staging promotion, migration-head verification, and public health checks.
+- Result:
+  - Both image scans and the exact-image Compose smoke passed.
+  - Staging reports application version `0.3.0-rc1`, the exact feature commit SHA, and Alembic head `0015_autonomous_company_ops_v3`.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.0-rc1.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.0-rc1-20260729-074149.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.0-rc1-20260729-074011.dump`.
+- Next step:
+  - Run immutable live acceptance and promote staging side effects from manual-only to policy-gated shadow operation.
+
+### 2026-07-29T08:29:55Z — STEP-179 — Completed immutable live acceptance and policy-gated shadow promotion
+- Files/services changed:
+  - Disabled local Qwen reasoning output for deterministic structured fallback responses and increased the v3 smoke request timeout for conservative CPU inference.
+  - Promoted staging from `manual_only` to `policy_gated`; permanent gates remain enforced and reversible communications/ERPNext action classes remain in shadow probation.
+- Commands run:
+  - Local-model strict-schema benchmark, full 17-check v3 smoke, Cyber-Team business workflow smoke, ERPNext tool smoke, policy activation, and post-policy smoke reruns.
+- Result:
+  - The optimized local model passed all cases with 40.47-second mean latency.
+  - All 17 v3 acceptance checks passed; both business workflow and ERPNext smokes passed before and after policy promotion.
+  - Operations readiness reported `ready` with no blockers; no external action class auto-promoted.
+- Evidence:
+  - `/home/projects/cyber-team/dist/local-model-benchmarks/qwen3-1.7b-q4km-no-reasoning-staging-20260729.json`.
+  - `/home/projects/cyber-team/dist/autonomous-company-v3/autonomous-company-v3-smoke-20260729T080324Z.json`.
+  - `/home/projects/cyber-team/dist/business-workflows/business-workflow-smoke-20260729T080830Z.json`.
+  - `/home/projects/cyber-team/dist/erpnext/smoke/cyberteam-erpnext-tool-smoke-20260729T080834Z.json`.
+- Next step:
+  - Start the strict 24-hour staging soak against the immutable release.
+
+### 2026-07-29T08:29:55Z — STEP-180 — Hardened readiness for scheduled event processing and rehearsed the soak gate
+- Files/services changed:
+  - Added an append-only staging soak monitor and detached launcher with exact version/build checks, authenticated readiness probes, interruption failure, and secret-free evidence.
+  - Added a configurable 30-minute business-event processing window; fresh pending signals report `processing`, while stale unexplained signals block readiness.
+- Commands run:
+  - Thirty-second public staging soak preflight at five-second cadence.
+  - Focused readiness tests followed by the full quality gate with backend/frontend tests, build, typecheck, Alembic SQL, dependency audits, Compose, secret scan, FOSS policy, and diff checks.
+- Result:
+  - The first preflight failed correctly when a scheduled cycle produced fresh in-flight signals, exposing an over-strict readiness rule instead of starting a misleading soak.
+  - Regression coverage now proves only stale pending events block readiness.
+  - Full quality gate passed with 311 backend tests and 24 frontend tests.
+- Evidence:
+  - `/home/projects/cyber-team/dist/soak/staging-soak-20260729T081714Z.summary.json`.
+  - `/home/projects/cyber-team/backend/tests/test_autonomous_company_readiness.py`.
+  - `/home/projects/cyber-team/docs/runbooks/staging-soak.md`.
+- Next step:
+  - Commit the readiness fix, build and deploy an immutable replacement image, pass the soak preflight, and start the complete 24-hour window.

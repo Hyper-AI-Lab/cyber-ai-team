@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -7,6 +9,7 @@ from cyber_team.db import Base
 from cyber_team.db.models import (
     Agent,
     AgentMandate,
+    BusinessEvent,
     CompanyModelRevision,
     CompanyObjective,
     CompanyObjectiveRevision,
@@ -169,3 +172,47 @@ async def test_ready_control_plane_has_fresh_sources_model_strategy_and_mandates
     assert result["sections"]["source_freshness"]["stale_required"] == []
     assert result["sections"]["mandates"]["missing_mandates"] == 0
     assert result["sections"]["strategy"]["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_business_events_only_block_after_processing_window(
+    readiness_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "business_event_readiness_stale_after_seconds", 1800)
+    now = utc_now()
+    event = BusinessEvent(
+        id="event-1",
+        company_namespace="company:test",
+        event_type="evidence.repository.changed",
+        source_type="repository",
+        source_id="README.md",
+        payload={},
+        status="pending",
+        idempotency_key="event-1",
+        occurred_at=now,
+        created_at=now,
+    )
+    async with readiness_session_factory() as session:
+        session.add(event)
+        await session.commit()
+
+    fresh = await AutonomousCompanyReadinessService(llm_gateway=FakeLLM()).summary()
+    fresh_events = fresh["sections"]["business_events"]
+    assert fresh_events["status"] == "processing"
+    assert fresh_events["blocking"] is False
+    assert fresh_events["in_processing_window"] == 1
+    assert fresh_events["stale_unexplained"] == 0
+
+    async with readiness_session_factory() as session:
+        stored = await session.get(BusinessEvent, event.id)
+        assert stored is not None
+        stored.created_at = now - timedelta(seconds=1801)
+        await session.commit()
+
+    stale = await AutonomousCompanyReadinessService(llm_gateway=FakeLLM()).summary()
+    stale_events = stale["sections"]["business_events"]
+    assert stale_events["status"] == "stale_pending"
+    assert stale_events["blocking"] is True
+    assert stale_events["in_processing_window"] == 0
+    assert stale_events["stale_unexplained"] == 1

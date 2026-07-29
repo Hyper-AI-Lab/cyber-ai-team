@@ -75,6 +75,22 @@ class AutonomousCompanyReadinessService:
                 ).scalar_one()
             )
             event_counts = await self._counts(session, BusinessEvent.status)
+            pending_events = event_counts.get("pending", 0)
+            processing_window_seconds = max(
+                1,
+                settings.business_event_readiness_stale_after_seconds,
+            )
+            stale_before = utc_now() - timedelta(seconds=processing_window_seconds)
+            stale_pending_events = int(
+                (
+                    await session.execute(
+                        select(func.count(BusinessEvent.id)).where(
+                            BusinessEvent.status == "pending",
+                            BusinessEvent.created_at <= stale_before,
+                        )
+                    )
+                ).scalar_one()
+            )
             delivery_counts = await self._counts(session, BusinessEventDelivery.status)
             work_counts = await self._counts(session, BusinessWorkItem.status)
             domain_controls = (
@@ -152,13 +168,30 @@ class AutonomousCompanyReadinessService:
             "mandated_agents": mandated_agents,
             "missing_mandates": mandate_gap,
         }
-        unexplained = event_counts.get("pending", 0)
+        in_processing_window = max(0, pending_events - stale_pending_events)
         events = {
-            "status": "ready" if unexplained == 0 else "pending_work",
-            "blocking": unexplained > 0,
+            "status": (
+                "stale_pending"
+                if stale_pending_events
+                else "processing"
+                if pending_events
+                else "ready"
+            ),
+            "blocking": stale_pending_events > 0,
             "counts": event_counts,
             "outbox_counts": delivery_counts,
-            "unexplained": unexplained,
+            "pending": pending_events,
+            "in_processing_window": in_processing_window,
+            "stale_unexplained": stale_pending_events,
+            "unexplained": stale_pending_events,
+            "processing_window_seconds": processing_window_seconds,
+            "detail": (
+                "Pending events exceeded the allowed processing window."
+                if stale_pending_events
+                else "Pending events are within the normal processing window."
+                if pending_events
+                else "Every business event has a recorded disposition."
+            ),
         }
         strategy = {
             "status": (
