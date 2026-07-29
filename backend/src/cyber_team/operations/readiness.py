@@ -120,7 +120,32 @@ class ProductionReadinessEvidenceService:
     async def _control_evidence(self) -> list[dict[str, Any]]:
         if not self._audit:
             return []
-        return await self._audit.list_events(event_type="control.evidence", limit=200)
+        evidence: list[dict[str, Any]] = []
+        evidence.extend(
+            await self._audit.list_events(
+                event_type="control.evidence",
+                resource_type="control",
+                resource_id="ci.github_actions",
+                limit=1,
+            )
+        )
+        evidence.extend(
+            await self._audit.list_events(
+                event_type="control.evidence",
+                resource_type="control",
+                resource_id="alert_delivery.email",
+                limit=1,
+            )
+        )
+        evidence.extend(
+            await self._audit.list_events(
+                event_type="control.evidence",
+                resource_type="control",
+                resource_id_prefix="credential_rotation.",
+                limit=1,
+            )
+        )
+        return evidence
 
     def _ci_status(self, evidence: list[dict[str, Any]]) -> dict[str, Any]:
         latest = self._latest_json(["dist/ci/github-ci-latest.json"])

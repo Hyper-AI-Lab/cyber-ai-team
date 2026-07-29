@@ -5060,3 +5060,24 @@
   - `/home/projects/cyber-team/docs/runbooks/staging-soak.md`.
 - Next step:
   - Commit the readiness fix, build and deploy an immutable replacement image, pass the soak preflight, and start the complete 24-hour window.
+
+### 2026-07-29T09:12:57Z — STEP-181 — Closed high-volume readiness evidence eviction
+- Files/services changed:
+  - Released and promoted immutable `0.3.0-rc2` from commit `20f45381d7e9d684cebe2ae4b5a28bf9245c022d` with the stale-event readiness fix.
+  - Replaced the readiness service's fixed recent-audit window with indexed control-ID queries for CI, alert delivery, and credential-rotation evidence.
+  - Added a regression proving a valid email alert proof remains discoverable after 500 unrelated control-evidence records.
+- Commands run:
+  - Formal rc2 release gate: 311 backend tests, 24 frontend tests, migrations, isolated Compose smoke, image builds, and Trivy scans.
+  - Staging promotion with backup and live Compose smoke.
+  - Focused readiness/audit tests, Ruff, compileall, and diff hygiene for the evidence lookup hardening.
+- Result:
+  - `0.3.0-rc2` deployed successfully and business-event readiness reported zero pending or stale signals.
+  - The deployment exposed that autonomous audit volume could evict today's alert proof from a 200-event scan; the new direct lookup passed 16 focused tests and cannot be displaced by unrelated events.
+  - The follow-up candidate is versioned `0.3.0-rc3` so no immutable rc2 artifact is overwritten.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.0-rc2.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.0-rc2-20260729-090804.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.0-rc2-20260729-090647.dump`.
+  - `/home/projects/cyber-team/backend/tests/test_readiness_evidence.py`.
+- Next step:
+  - Commit, build, scan, and promote rc3; pass the soak preflight and start the uninterrupted 24-hour gate.

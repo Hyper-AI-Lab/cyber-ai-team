@@ -27,6 +27,26 @@ class FakeAudit:
         }
 
 
+class FilteredAudit:
+    def __init__(self, events):
+        self.events = events
+        self.calls = []
+
+    async def list_events(self, **kwargs):
+        self.calls.append(kwargs)
+        resource_id = kwargs.get("resource_id")
+        resource_id_prefix = kwargs.get("resource_id_prefix")
+        events = self.events
+        if resource_id:
+            events = [item for item in events if item.get("resource_id") == resource_id]
+        if resource_id_prefix:
+            events = [
+                item for item in events
+                if str(item.get("resource_id") or "").startswith(resource_id_prefix)
+            ]
+        return events[: kwargs.get("limit", 100)]
+
+
 @pytest.mark.asyncio
 async def test_readiness_evidence_reads_fresh_artifacts(tmp_path, monkeypatch):
     now = datetime.now(UTC).isoformat()
@@ -360,3 +380,52 @@ async def test_alert_and_credential_evidence_do_not_store_secret_values():
     assert audit.recorded[1]["control_id"] == "credential_rotation.staging"
     assert audit.recorded[1]["evidence"]["secret_names"] == ["SMTP_PASSWORD"]
     assert "secret-value" not in json.dumps(audit.recorded)
+
+
+@pytest.mark.asyncio
+async def test_alert_evidence_is_not_evicted_by_unrelated_audit_volume(
+    tmp_path,
+    monkeypatch,
+):
+    now = datetime.now(UTC).isoformat()
+    alert = {
+        "id": "alert-proof",
+        "event_type": "control.evidence",
+        "resource_type": "control",
+        "resource_id": "alert_delivery.email",
+        "outcome": "success",
+        "created_at": now,
+        "metadata": {
+            "control_id": "alert_delivery.email",
+            "evidence": {"response_status": "sent", "provider": "smtp"},
+        },
+    }
+    noise = [
+        {
+            "id": f"noise-{index}",
+            "event_type": "control.evidence",
+            "resource_type": "control",
+            "resource_id": f"autonomy.cycle.{index}",
+            "outcome": "success",
+            "created_at": now,
+            "metadata": {},
+        }
+        for index in range(500)
+    ]
+    audit = FilteredAudit(noise + [alert])
+    monkeypatch.setattr(
+        "cyber_team.operations.readiness.settings.environment",
+        "staging",
+    )
+
+    summary = await ProductionReadinessEvidenceService(
+        audit_service=audit,
+        root_dir=tmp_path,
+    ).summary()
+
+    assert summary["alerts"]["status"] == "ready"
+    assert summary["alerts"]["last_delivery_test"] == now
+    assert any(
+        call.get("resource_id") == "alert_delivery.email" and call.get("limit") == 1
+        for call in audit.calls
+    )

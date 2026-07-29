@@ -96,6 +96,7 @@ class AuditService:
         actor: str | None = None,
         resource_type: str | None = None,
         resource_id: str | None = None,
+        resource_id_prefix: str | None = None,
     ) -> list[dict]:
         limit = max(1, min(limit, 500))
         async with async_session() as session:
@@ -108,6 +109,8 @@ class AuditService:
                 query = query.where(AuditEvent.resource_type == resource_type)
             if resource_id:
                 query = query.where(AuditEvent.resource_id == resource_id)
+            if resource_id_prefix:
+                query = query.where(AuditEvent.resource_id.startswith(resource_id_prefix))
             result = await session.execute(
                 query.order_by(AuditEvent.created_at.desc()).limit(limit)
             )

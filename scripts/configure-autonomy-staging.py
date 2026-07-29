@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 VALUES = {
-    "APP_VERSION": "0.3.0-rc2",
+    "APP_VERSION": "0.3.0-rc3",
     "COMPANY_AUTONOMY_ENABLED": "true",
     "COMPANY_AUTONOMY_TEMPORAL_SCHEDULE_ENABLED": "true",
     "LEGACY_GOVERNOR_RULE_PROPOSER_ENABLED": "false",
