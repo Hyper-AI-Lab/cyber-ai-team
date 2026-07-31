@@ -5143,3 +5143,24 @@
   - `/home/projects/cyber-team/backend/tests/test_company_strategy.py`.
 - Next step:
   - Rebuild stable images from the hardened commit, promote them with a fresh backup, rerun the Knowledge/Research canary, and publish `v0.3.0` only after live PostgreSQL and local-inference evidence pass.
+
+### 2026-07-31T17:27:00Z — STEP-185 — Closed the stable Knowledge/Research canary
+- Files/services changed:
+  - Hardened evidence ingestion against concurrent unique-key commits while preserving idempotent signal and artifact reuse.
+  - Rebuilt and scanned the stable core/UI images from commit `e5c2ae53e16ce4a4922ebc41c0e6ced15cd76e85`, then promoted that exact build to staging.
+  - Kept Knowledge/Research active as the canary domain with Company Builder, Governance, and Supervisor active as control-plane domains; all other business domains remain paused.
+- Commands run:
+  - Full backend suite with 315 tests, Ruff, compileall, Alembic SQL, dependency audit, frontend tests/typecheck/build, Compose validation, secret/FOSS/diff checks, and both PostgreSQL migration rehearsals.
+  - Trivy scans for the final `cyber-team-core:0.3.0` and `cyber-team-ui:0.3.0` images.
+  - Backup-first staging promotion, public Compose smoke, exact build-SHA verification, manual autonomous-company cycle, and post-deploy API/worker log audit.
+- Result:
+  - Staging reports version `0.3.0`, build SHA `e5c2ae53e16ce4a4922ebc41c0e6ced15cd76e85`, and all dependency readiness checks are `ok`.
+  - The final canary completed evidence acquisition with zero errors, processed and routed 100 signals, completed local-model strategy generation, maintained 100% mandate coverage across 29 active agents, and completed the cycle without an ingestion race or context-window failure.
+  - Core and worker logs contain no `IntegrityError`, `ContextWindowExceeded`, traceback, error, or critical event since the final promotion.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.0.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.0-20260731-172214.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.0-20260731-172043.dump`.
+  - `/home/projects/cyber-team/dist/canary/knowledge-research-canary-20260731T172341Z.json`.
+- Next step:
+  - Publish the verified commits and annotated `v0.3.0` tag to the public repository, require green push/manual CI, then continue the staged domain-canary expansion without widening side-effect authority.
