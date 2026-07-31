@@ -5164,3 +5164,23 @@
   - `/home/projects/cyber-team/dist/canary/knowledge-research-canary-20260731T172341Z.json`.
 - Next step:
   - Publish the verified commits and annotated `v0.3.0` tag to the public repository, require green push/manual CI, then continue the staged domain-canary expansion without widening side-effect authority.
+
+### 2026-07-31T17:33:00Z — STEP-186 — Published Cyber-Team v0.3.0
+- Files/services changed:
+  - Published the stable application commits and closure ledger to public `main` at `Hyper-AI-Lab/cyber-ai-team`.
+  - Published annotated tag and GitHub release `v0.3.0`; the tag targets the exact staging application build `e5c2ae53e16ce4a4922ebc41c0e6ced15cd76e85`.
+- Commands run:
+  - Pushed public `main` and annotated tag `v0.3.0`, then created the GitHub release.
+  - Watched push CI run `30651163390` to completion.
+  - Triggered and watched full manual CI run `30651351961` to completion.
+- Result:
+  - Push CI passed all applicable backend, frontend, migration, dependency, Compose, secret, FOSS policy, and diff checks.
+  - Manual CI passed every job, including Docker Compose smoke, observability validation, and release-image vulnerability scans.
+  - The latest automatic scheduled CI run `30609513614` is also green; the next schedule will exercise the newly published `main` automatically.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/releases/tag/v0.3.0`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30651163390`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30651351961`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30609513614`.
+- Next step:
+  - Observe the Knowledge/Research canary through its normal scheduled cycles, then activate the next low-risk internal domain canary only after its event, memory, strategy, and Observer evidence remain clean.
