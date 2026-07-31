@@ -5121,3 +5121,25 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30442177917`.
 - Next step:
   - Verify and publish stable `v0.3.0` from the accepted v3 code path, promote it to staging, and begin the policy-gated Knowledge/Research canary.
+
+### 2026-07-31T16:23:47Z — STEP-184 — Promoted stable candidate and hardened the first domain canary
+- Files/services changed:
+  - Promoted stable version metadata to `0.3.0`, built and scanned the stable core/UI images, backed up staging, and deployed the stable candidate.
+  - Limited domain execution to the Knowledge/Research canary while retaining the Company Builder, Governance, and Supervisor control-plane domains.
+  - Added PostgreSQL row claiming for pending company signals and bounded, provenance-preserving strategy context generation for local inference.
+- Commands run:
+  - Stable release checks, 314 backend tests, 24 frontend tests, Ruff, compileall, Alembic SQL, dependency audits, Compose smoke, secret/FOSS scans, and Trivy scans.
+  - Staging promotion with backup, public health/readiness checks, a manual autonomous-company cycle, and worker-log review.
+  - Focused concurrent-ingestion and strategy-context regression tests followed by the complete backend suite.
+- Result:
+  - Stable staging health and dependency readiness passed on version `0.3.0`.
+  - The canary correctly exposed a concurrent business-event insertion race and an oversized local-model strategy prompt before public release publication.
+  - Signal processors now claim rows with `FOR UPDATE SKIP LOCKED`; strategy advisory input remains valid JSON and is capped at 18,000 characters with explicit omission metadata.
+  - All 314 backend tests pass after hardening; the accepted `0.3.0-rc3` images remain available as rollback artifacts.
+- Evidence:
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.0-20260731-154717.json`.
+  - `/home/projects/cyber-team/dist/canary/knowledge-research-canary-20260731T160027Z.json`.
+  - `/home/projects/cyber-team/backend/tests/test_company_intelligence.py`.
+  - `/home/projects/cyber-team/backend/tests/test_company_strategy.py`.
+- Next step:
+  - Rebuild stable images from the hardened commit, promote them with a fresh backup, rerun the Knowledge/Research canary, and publish `v0.3.0` only after live PostgreSQL and local-inference evidence pass.

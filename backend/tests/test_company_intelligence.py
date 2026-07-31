@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cyber_team.clock import utc_now
@@ -95,6 +96,15 @@ def erpnext_payload(*, country="Germany"):
             },
         },
     }
+
+
+def test_pending_signal_query_claims_rows_without_waiting():
+    query = CompanyIntelligenceService._pending_signal_query("company:test", 200)
+
+    compiled = str(query.compile(dialect=postgresql.dialect()))
+
+    assert "FOR UPDATE SKIP LOCKED" in compiled
+    assert query._limit_clause.value == 200
 
 
 @pytest.mark.asyncio

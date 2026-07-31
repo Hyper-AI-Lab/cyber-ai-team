@@ -76,6 +76,15 @@ class InvalidStrategyLLM:
         }
 
 
+class CapturingStrategyLLM:
+    def __init__(self):
+        self.messages = []
+
+    async def invoke_json(self, **kwargs):
+        self.messages.append(kwargs["user_message"])
+        return __import__("json").loads(kwargs["user_message"])["example"]
+
+
 @pytest.fixture
 async def strategy_session_factory(monkeypatch):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -254,6 +263,59 @@ def test_target_revision_change_is_bounded_to_twenty_percent():
     assert CompanyStrategyService._bounded_number(100, 250) == 120
     assert CompanyStrategyService._bounded_number(100, 10) == 80
     assert CompanyStrategyService._bounded_number(None, 250) == 250
+
+
+@pytest.mark.asyncio
+async def test_strategy_advisory_uses_valid_bounded_provenance_context():
+    llm = CapturingStrategyLLM()
+    service = CompanyStrategyService(llm_gateway=llm)
+    model = CompanyModelRevision(
+        id="model-large",
+        company_namespace="company:test",
+        revision=1,
+        status="active",
+        model={
+            "business_description": None,
+            "offerings": [{"name": "AI Company OS", "detail": "x" * 2_000}],
+            "customer_segments": [],
+        },
+        claim_ids=[],
+        unknowns=["business_description", "customer_segments"],
+        disputes=[],
+        provenance_coverage=0.8,
+        confidence=0.8,
+        source_hash="large-model-source",
+        owner_locks={},
+        created_by="company_discovery_agent",
+        activated_at=utc_now(),
+    )
+    claims = [
+        {
+            "id": f"claim-{index:03d}",
+            "predicate": "offering_candidate",
+            "value": {"name": f"Offering {index}", "detail": "y" * 2_000},
+            "state": "verified" if index % 2 == 0 else "inferred",
+            "confidence": 0.9 - (index / 1_000),
+            "trust_class": "canonical",
+            "sensitivity": "internal",
+            "evidence_ids": [f"evidence-{index:03d}"],
+        }
+        for index in range(200)
+    ]
+
+    proposal = await service._propose_strategy(model, claims)
+    payload = __import__("json").loads(llm.messages[0])
+
+    assert "generation_error" not in proposal
+    assert len(llm.messages[0]) <= service.STRATEGY_CONTEXT_MAX_CHARS
+    assert payload["context_summary"]["total_claim_count"] == 200
+    assert 0 < payload["context_summary"]["included_claim_count"] < 200
+    assert payload["context_summary"]["omitted_claim_count"] > 0
+    assert all(
+        evidence_id.startswith("evidence-")
+        for item in payload["claims"]
+        for evidence_id in item["evidence_ids"]
+    )
 
 
 @pytest.mark.asyncio

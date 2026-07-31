@@ -165,6 +165,8 @@ class CompanyStrategyService:
 
     STRATEGY_AGENT_ID = "strategy_portfolio_agent"
     PROBATION_DAYS = 30
+    STRATEGY_CONTEXT_MAX_CHARS = 18_000
+    STRATEGY_MAX_CLAIMS = 80
 
     def __init__(self, *, llm_gateway=None, audit_service=None) -> None:
         self._llm = llm_gateway
@@ -531,6 +533,8 @@ class CompanyStrategyService:
                     "value": item.value,
                     "state": item.epistemic_state,
                     "confidence": item.confidence,
+                    "trust_class": item.trust_class,
+                    "sensitivity": item.sensitivity,
                     "evidence_ids": item.evidence_ids,
                 }
                 for item in items
@@ -541,7 +545,6 @@ class CompanyStrategyService:
         model: CompanyModelRevision,
         claims: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        example = self._deterministic_proposals(model, claims)
         if not self._llm:
             return self._generation_failure("No strategy advisory LLM is configured.")
         system_prompt = (
@@ -554,26 +557,25 @@ class CompanyStrategyService:
             "binding names. Omit any KPI that cannot be expressed with those bindings. "
             "Return only JSON with the same fields and shapes as the supplied example."
         )
-        request: dict[str, Any] = {
-            "company_model": model.model,
-            "unknowns": model.unknowns,
-            "claims": claims,
-            "allowed_metric_bindings": ALLOWED_METRIC_BINDINGS,
-            "example": example,
-        }
+        request, advisory_claims = self._bounded_strategy_request(model, claims)
         validation: dict[str, Any] = {"valid": False, "errors": []}
         for attempt in range(2):
             try:
                 candidate = await self._llm.invoke_json(
                     system_prompt=system_prompt,
-                    user_message=json.dumps(request, default=str)[:60_000],
+                    user_message=json.dumps(
+                        request,
+                        default=str,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
                     agent_id=self.STRATEGY_AGENT_ID,
                 )
             except Exception as exc:  # noqa: BLE001 - fail closed on provider errors.
                 return self._generation_failure(
                     f"Strategy advisory provider failed: {type(exc).__name__}"
                 )
-            validation = self._validate_proposals(candidate, model, claims)
+            validation = self._validate_proposals(candidate, model, advisory_claims)
             if validation["valid"]:
                 return candidate
             if attempt == 0:
@@ -591,6 +593,138 @@ class CompanyStrategyService:
             "Strategy advisory output failed schema or provenance validation: "
             + "; ".join(validation["errors"][:10])
         )
+
+    @classmethod
+    def _bounded_strategy_request(
+        cls,
+        model: CompanyModelRevision,
+        claims: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Build valid JSON that fits the local inference context budget."""
+        ranked = sorted(
+            claims,
+            key=lambda item: (
+                0 if item.get("state") == "verified" else 1,
+                0 if item.get("trust_class") in {"owner_locked", "canonical"} else 1,
+                -float(item.get("confidence") or 0),
+                str(item.get("id") or ""),
+            ),
+        )[: cls.STRATEGY_MAX_CLAIMS]
+        compact_model = cls._compact_json_value(model.model, max_items=12, max_string=500)
+        compact_unknowns = [str(item)[:300] for item in (model.unknowns or [])[:50]]
+        compact_claims: list[dict[str, Any]] = []
+        model_compacted = compact_model != model.model
+
+        def build(items: list[dict[str, Any]]) -> dict[str, Any]:
+            return {
+                "company_model": compact_model,
+                "unknowns": compact_unknowns,
+                "claims": items,
+                "context_summary": {
+                    "total_claim_count": len(claims),
+                    "included_claim_count": len(items),
+                    "omitted_claim_count": max(0, len(claims) - len(items)),
+                    "selection": "verified/canonical first, then confidence",
+                    "model_compacted": model_compacted,
+                },
+                "allowed_metric_bindings": ALLOWED_METRIC_BINDINGS,
+                "example": cls._deterministic_proposals(model, items),
+            }
+
+        request = build(compact_claims)
+        while (
+            len(
+                json.dumps(
+                    request,
+                    default=str,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
+            > cls.STRATEGY_CONTEXT_MAX_CHARS
+            and compact_unknowns
+        ):
+            compact_unknowns.pop()
+            request = build(compact_claims)
+        if len(
+            json.dumps(
+                request,
+                default=str,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        ) > cls.STRATEGY_CONTEXT_MAX_CHARS:
+            compact_model = {
+                "context_omitted": "Company model exceeded the advisory context budget.",
+                "source_hash": model.source_hash,
+            }
+            model_compacted = True
+            request = build(compact_claims)
+        for claim in ranked:
+            compact_claim = {
+                "id": str(claim.get("id") or "")[:120],
+                "predicate": str(claim.get("predicate") or "")[:160],
+                "value": cls._compact_json_value(
+                    claim.get("value") or {}, max_items=12, max_string=500
+                ),
+                "state": str(claim.get("state") or "unknown")[:40],
+                "confidence": float(claim.get("confidence") or 0),
+                "trust_class": str(claim.get("trust_class") or "unknown")[:40],
+                "sensitivity": str(claim.get("sensitivity") or "internal")[:40],
+                "evidence_ids": [
+                    str(item)[:120] for item in (claim.get("evidence_ids") or [])[:12]
+                ],
+            }
+            candidate_claims = [*compact_claims, compact_claim]
+            candidate_request = build(candidate_claims)
+            encoded = json.dumps(
+                candidate_request,
+                default=str,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            if len(encoded) > cls.STRATEGY_CONTEXT_MAX_CHARS:
+                continue
+            compact_claims = candidate_claims
+            request = candidate_request
+        return request, compact_claims
+
+    @classmethod
+    def _compact_json_value(
+        cls,
+        value: Any,
+        *,
+        max_items: int,
+        max_string: int,
+        depth: int = 0,
+    ) -> Any:
+        if depth >= 5:
+            return "[nested value omitted]"
+        if isinstance(value, dict):
+            return {
+                str(key)[:120]: cls._compact_json_value(
+                    item,
+                    max_items=max_items,
+                    max_string=max_string,
+                    depth=depth + 1,
+                )
+                for key, item in list(value.items())[:max_items]
+            }
+        if isinstance(value, list):
+            return [
+                cls._compact_json_value(
+                    item,
+                    max_items=max_items,
+                    max_string=max_string,
+                    depth=depth + 1,
+                )
+                for item in value[:max_items]
+            ]
+        if isinstance(value, str):
+            return value[:max_string]
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        return str(value)[:max_string]
 
     @staticmethod
     def _generation_failure(detail: str) -> dict[str, Any]:

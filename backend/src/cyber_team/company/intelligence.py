@@ -406,15 +406,7 @@ class CompanyIntelligenceService:
         events = 0
         async with async_session() as session:
             signals = (
-                await session.execute(
-                    select(CompanySignal)
-                    .where(
-                        CompanySignal.company_namespace == namespace,
-                        CompanySignal.status.in_({"pending", "quarantined"}),
-                    )
-                    .order_by(CompanySignal.received_at)
-                    .limit(max(1, min(limit, 500)))
-                )
+                await session.execute(self._pending_signal_query(namespace, limit))
             ).scalars().all()
             for signal in signals:
                 artifact = (
@@ -495,6 +487,20 @@ class CompanyIntelligenceService:
             "created_claims": created_claims,
             "created_events": events,
         }
+
+    @staticmethod
+    def _pending_signal_query(company_namespace: str, limit: int):
+        """Claim pending signals once across concurrent discovery cycles."""
+        return (
+            select(CompanySignal)
+            .where(
+                CompanySignal.company_namespace == company_namespace,
+                CompanySignal.status.in_({"pending", "quarantined"}),
+            )
+            .order_by(CompanySignal.received_at)
+            .limit(max(1, min(limit, 500)))
+            .with_for_update(skip_locked=True)
+        )
 
     async def discover_company_model(
         self,
