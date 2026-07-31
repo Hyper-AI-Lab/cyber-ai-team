@@ -14,6 +14,7 @@ CYBERTEAM_ENV_FILE=deploy/environments/staging.env scripts/erpnext-backup.sh
 CYBERTEAM_ENV_FILE=deploy/environments/staging.env scripts/erpnext-restore-drill.sh
 CYBERTEAM_ENV_FILE=deploy/environments/staging.env scripts/load-smoke.sh
 CYBERTEAM_ENV_FILE=deploy/environments/staging.env python3 scripts/business-workflow-smoke.py
+./scripts/start-staging-soak.sh
 ```
 
 Evidence is written to:
@@ -24,6 +25,19 @@ Evidence is written to:
 - `dist/erpnext/restore-drills/`
 - `dist/load-tests/`
 - `dist/business-workflows/`
+- `dist/soak/`
+
+## Strict Staging Soak
+
+Run the 24-hour soak only after the immutable candidate is deployed and its live smoke
+passes. The detached monitor verifies the exact version and build SHA, public health,
+owner authentication, and operations readiness every five minutes. Any failed sample or
+interruption fails the gate; do not splice partial windows together.
+
+The accepted Autonomous Company Operations v3 candidate is recorded in
+`dist/soak/staging-soak-20260729T095839Z.summary.json`: 289 of 289 samples passed with no
+failures over 86,400 seconds. See `docs/runbooks/staging-soak.md` for operation and
+recovery details.
 
 ## Alert Delivery Proof
 

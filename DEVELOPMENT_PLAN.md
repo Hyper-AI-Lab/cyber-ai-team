@@ -1,4 +1,4 @@
-# Cyber-Team Autonomous Company OS v2 Development Plan
+# Cyber-Team Autonomous Company OS v3 Development Plan
 
 ## 1. Product North Star
 
@@ -37,9 +37,12 @@ The repository now has a working production-shaped staging foundation:
   outsourcing requests, and FOSS-first resource policy are implemented at v1/v2
   production-readiness depth.
 
-The main product gap has moved from "static demo agents" to "useful continuous executive
-operation": scheduled governor/observer runs, owner digest cadence, richer autonomous
-remediation, and clearer cockpit workflows need to become routine operating behavior.
+Autonomous Company Operations v3 is implemented and accepted in staging. The immutable
+`0.3.0-rc3` candidate passed the complete release gate, public push and manual CI, live
+smokes, and an uninterrupted 24-hour soak with 289 successful samples and no failures.
+The next operating phase is evidence-driven canary expansion: Knowledge/Research first,
+then other internal domains, while permanent legal, financial, credential, destructive,
+deployment, and high-impact customer gates remain in force.
 
 ## 3. Target Architecture
 
@@ -209,11 +212,11 @@ Exit criteria:
 
 ### Phase 4: Adaptive Workflow Engine
 
-Status: production v1 foundation. Autonomous plans, durable plan tasks, Temporal workers,
-owner approvals, ERPNext/company-context workflows, and generated workflow intents from
-role capabilities/business context now exist. Remaining work is making those intents more
-predictive and richer across calendar/docs/analytics signals when those integrations are
-configured.
+Status: production v3 foundation. Autonomous plans, durable work items, business events,
+agent mandates, Temporal schedules/workflows, dynamic workflow specifications, owner
+approvals, ERPNext/company-context workflows, and generated intents from role capabilities
+and business evidence are implemented. Optional calendar/docs/analytics signals activate
+only when company evidence and configured integrations justify them.
 
 Deliverables:
 
@@ -253,9 +256,11 @@ Exit criteria:
 ### Phase 6: Governance and Permissions
 
 Status: production safety foundation implemented for the single-owner model. Approval
-target matching, expiry, consumed-state protection, manual-only external side effects,
-audit evidence, prompt-injection downgrade behavior, and FOSS/resource policy checks are
-in place. OpenFGA/Keycloak remain optional profiles rather than required staging blockers.
+target matching, expiry, consumed-state protection, policy-gated side effects, permanent
+action gates, audit evidence, prompt-injection quarantine, Observer review, and
+FOSS/resource policy checks are in place. Reversible external action classes remain in
+shadow probation until their evidence thresholds pass. OpenFGA/Keycloak remain optional
+profiles rather than required single-owner staging blockers.
 
 Deliverables:
 
@@ -294,11 +299,11 @@ Exit criteria:
 
 ### Phase 8: Production Hardening
 
-Status: staging production-readiness foundation implemented. GitHub CI, local release
-gate, staging deploy, smoke, backup/restore evidence, load/business workflow smokes,
-credential inventory, alert proof, image scanning, restart helper, and runbooks exist.
-Production cutover remains intentionally out of scope until real production secrets and a
-formal owner approval ceremony are supplied.
+Status: staging production-readiness acceptance complete. GitHub CI, local release gate,
+staging deploy, smoke, backup/restore evidence, load/business workflow smokes, credential
+inventory, alert proof, image scanning, restart helper, runbooks, and a strict 24-hour
+soak have passed. Production cutover remains intentionally out of scope until real
+production secrets and a formal owner approval ceremony are supplied.
 
 Deliverables:
 
@@ -316,25 +321,25 @@ Exit criteria:
 
 ## 5. Immediate Execution Plan
 
-1. Keep staging running from the latest promotion record with
+1. Publish the soak-accepted runtime as stable `v0.3.0` using the same v3 code path and
+   repeat the immutable release, migration, scan, promotion, and live-smoke gates.
+2. Keep staging pinned to its latest promotion record with
    `START_STAGING_DRY_RUN=0 ./scripts/start-staging-current.sh`.
-2. Owner reviews the three fresh high-risk role approvals:
-   Finance & Accounting (`erpnext_invoice_create`), Marketing & PR (`send_email`), and
-   Operations & Procurement (`procurement_request`).
-3. Defer or leave the six optional communications/provider role gaps until SMS, voice,
-   WhatsApp/Slack/Telegram, or related channels become business requirements.
-4. Release and verify the **Memory vs ERPNext Canonical Conflict Detection v1** slice:
-   migration, conflict scan/list/resolve API, recall exclusion, readiness/governor
-   signals, Memory UI review panel, and live staging scan.
-5. Continue with Phase 4 by building generated workflow intents from role capabilities
-   and company context.
+3. Start a policy-gated Knowledge/Research canary and collect mandate, work-item,
+   Observer, outcome, and operation-graph evidence.
+4. Expand to other internal-only domains after canary evidence is healthy; do not relax
+   permanent action gates.
+5. Leave optional communications/provider gaps disabled until business evidence makes
+   them necessary and credentials are deliberately configured.
+6. Treat production promotion as a separate owner-approved operational ceremony.
 
 ## 6. Current Slice Notes
 
-The current live staging slice is the ERPNext-backed autonomous operations foundation.
-ERPNext drift detection refreshed company-context freshness after restart, and the role
-backlog contains nine active ERPNext-derived recommendations: three high-risk role
-approvals waiting for owner review and six optional-provider configuration items.
+The current live staging slice is the ERPNext-backed Autonomous Company Operations v3
+foundation. It includes epistemic company intelligence, evidence acquisition, strategy
+and KPI revisioning, durable mandates/work portfolios, dynamic workflow compilation,
+policy-gated action envelopes, outcome learning, capability expansion, and the
+Governor/Observer executive loop.
 
 The app was intentionally stopped for several days and restarted on 2026-07-21. Direct
 Compose restart initially exposed a restart drift risk because Compose defaults can fall
@@ -348,8 +353,8 @@ history, latest executive runs, Observer reviews, brief cooldown/idempotency, an
 low-risk remediation counts. The Owner Console Executive Cockpit renders those loops as
 an operating-cadence history panel.
 
-Memory vs ERPNext Canonical Conflict Detection v1 is the active milestone. The backend now
-persists canonical conflict records, scans ERPNext/company-context-seeded memory for stale
-source hashes and structured canonical-claim mismatches, excludes conflicted or
-canonical-superseded memory from agent recall, exposes conflict scan/list/resolve APIs,
-adds readiness/governor/executive metrics, and adds a Memory tab review panel.
+The v3 release candidate completed its strict 24-hour staging soak on 2026-07-30 with
+289/289 successful samples, zero failures, 75.17 ms mean latency, and 600.9 ms maximum
+latency. The active milestone is stable-release publication followed by the
+Knowledge/Research canary. No customer-visible, financial, legal, credential,
+destructive, or deployment authority is widened by that canary.

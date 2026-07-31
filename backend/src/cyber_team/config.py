@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # App
     app_name: str = "Cyber-Team"
-    app_version: str = "0.3.0-rc3"
+    app_version: str = "0.3.0"
     build_sha: str = "local"
     environment: str = "development"
     log_level: str = "INFO"

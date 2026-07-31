@@ -5102,3 +5102,22 @@
   - `/home/projects/cyber-team/dist/soak/staging-soak-20260729T095839Z.state.json`.
 - Next step:
   - Push the verified commits, confirm GitHub push/manual CI, and let the uninterrupted 24-hour soak complete before closure.
+
+### 2026-07-31T14:54:44Z — STEP-183 — Closed the Autonomous Company Operations v3 staging soak
+- Files/services changed:
+  - Reconciled the development plan, production-readiness plan, and closure runbook with the accepted v3 staging state.
+  - Advanced release metadata from `0.3.0-rc3` to stable candidate `0.3.0` without changing application behavior.
+- Commands run:
+  - Inspected the detached soak container lifecycle, final state, and final summary artifact.
+  - Confirmed the public push CI run `30441898747` and full manual CI run `30442177917` passed on public `main`.
+  - Audited the clean Git state, release tooling, version metadata, and existing public tags/releases.
+- Result:
+  - The strict soak completed after 86,400.14 seconds with 289/289 samples passed, zero failures, 75.17 ms mean latency, and 600.9 ms maximum latency.
+  - Every sample observed exact application version `0.3.0-rc3` and build SHA `3037684ebe9b62ab330f56bec752dabb903e4ff0`.
+  - The v3 staging acceptance gate is closed; production promotion remains a separate owner-approved ceremony.
+- Evidence:
+  - `/home/projects/cyber-team/dist/soak/staging-soak-20260729T095839Z.summary.json`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30441898747`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30442177917`.
+- Next step:
+  - Verify and publish stable `v0.3.0` from the accepted v3 code path, promote it to staging, and begin the policy-gated Knowledge/Research canary.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cyber-team"
-version = "0.3.0-rc3"
+version = "0.3.0"
 description = "AI-powered digital company operating system"
 readme = "README.md"
 requires-python = ">=3.11"

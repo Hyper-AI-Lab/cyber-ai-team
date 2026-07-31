@@ -1,7 +1,7 @@
 # Cyber-Team Production Readiness Plan
 
-This plan tracks the remaining work needed to move Cyber-Team from a verified
-development system toward production-grade operation.
+This plan records the controls used to keep Cyber-Team's single-owner staging deployment
+production-shaped and to prepare any future owner-approved production promotion.
 
 ## Current Baseline
 
@@ -23,9 +23,10 @@ Confirmed as of this pass:
   decisions have configurable in-memory per-minute rate limits.
 - Production startup requires `OWNER_PASSWORD_HASH` and rejects wildcard CORS.
 
-The system is not yet production-grade. The remaining plan is intentionally larger
-than a feature checklist because it covers verification, operations, security,
-data safety, and release discipline.
+The selected staging scope has completed its production-readiness acceptance, including
+an immutable release gate and uninterrupted 24-hour soak. This is operational readiness
+for the documented single-owner staging scope, not a claim of formal certification or a
+production cutover.
 
 ## Execution Status
 
@@ -74,12 +75,14 @@ Completed in the current implementation pass:
   isolated per environment through environment files.
 - Scheduled/manual CI now includes Prometheus config and alert-rule validation.
 
-Still pending:
+Still pending or intentionally conditional:
 
-- Hosted staging execution of release checks and Compose smoke using real staging
-  secrets and artifacts.
-- Restore drills against production-scale backup artifacts.
-- Full Asterisk media/TTS workflow beyond ARI call origination.
+- Production promotion with production secrets and an explicit owner approval record.
+- Restore drills against actual production-scale artifacts once those artifacts exist.
+- Full Asterisk media/TTS workflow only if company evidence activates voice as a required
+  channel; voice remains optional-disabled for the current scope.
+- Evidence-driven canary expansion from Knowledge/Research to other internal domains and,
+  separately, reversible external action classes.
 
 ## Phase 1: Repeatable Quality Gates
 
@@ -253,3 +256,7 @@ alert delivery, restore drills, credential rotation, conservative load testing,
 and business workflow smoke testing. See
 `docs/runbooks/production-readiness-closure.md` for the exact commands and
 evidence locations.
+
+The Autonomous Company Operations v3 candidate also passed the strict staging soak in
+`dist/soak/staging-soak-20260729T095839Z.summary.json`: 289 samples passed, zero failed,
+with the exact expected version and build SHA across the full 86,400-second window.
