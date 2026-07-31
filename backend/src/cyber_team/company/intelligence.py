@@ -271,76 +271,112 @@ class CompanyIntelligenceService:
         )
         injection = self.classify_untrusted_content(content)
 
-        async with async_session() as session:
-            source = (
-                await session.execute(
-                    select(CompanySource).where(
-                        CompanySource.company_namespace == namespace,
-                        CompanySource.source_key == source_key,
+        result: dict[str, Any] | None = None
+        for attempt in range(2):
+            async with async_session() as session:
+                source = (
+                    await session.execute(
+                        select(CompanySource).where(
+                            CompanySource.company_namespace == namespace,
+                            CompanySource.source_key == source_key,
+                        )
                     )
-                )
-            ).scalar_one()
-            existing = (
-                await session.execute(
-                    select(CompanySignal).where(
-                        CompanySignal.idempotency_key == idempotency_key
+                ).scalar_one()
+                source_id = source.id
+                existing = (
+                    await session.execute(
+                        select(CompanySignal).where(
+                            CompanySignal.idempotency_key == idempotency_key
+                        )
                     )
-                )
-            ).scalar_one_or_none()
-            if existing:
-                return {**self._signal_to_dict(existing), "duplicate": True}
+                ).scalar_one_or_none()
+                if existing:
+                    return {**self._signal_to_dict(existing), "duplicate": True}
 
-            signal = CompanySignal(
-                id=f"sig_{uuid.uuid4().hex}",
-                company_namespace=namespace,
-                source_id=source.id,
-                signal_type=signal_type,
-                external_id=external_id[:240],
-                status="quarantined" if injection["detected"] else "pending",
-                disposition="owner_escalation" if injection["detected"] else None,
-                trust_class=trust_class or source.trust_class,
-                sensitivity=sensitivity or source.sensitivity,
-                content_hash=content_hash,
-                redacted_payload=redacted,
-                injection_status="suspected" if injection["detected"] else "clear",
-                quarantine_reason=injection["reason"] if injection["detected"] else None,
-                idempotency_key=idempotency_key,
-                occurred_at=occurred_at,
-            )
-            session.add(signal)
-            artifact = (
-                await session.execute(
-                    select(EvidenceArtifact).where(
-                        EvidenceArtifact.source_id == source.id,
-                        EvidenceArtifact.content_hash == content_hash,
+                artifact = (
+                    await session.execute(
+                        select(EvidenceArtifact).where(
+                            EvidenceArtifact.source_id == source_id,
+                            EvidenceArtifact.content_hash == content_hash,
+                        )
                     )
-                )
-            ).scalar_one_or_none()
-            if not artifact:
-                artifact = EvidenceArtifact(
-                    id=f"ev_{uuid.uuid4().hex}",
+                ).scalar_one_or_none()
+                signal = CompanySignal(
+                    id=f"sig_{uuid.uuid4().hex}",
                     company_namespace=namespace,
-                    source_id=source.id,
-                    signal_id=signal.id,
-                    artifact_type=artifact_type,
-                    title=(title or signal_type)[:240],
-                    source_uri=self._safe_source_uri(source_uri),
+                    source_id=source_id,
+                    signal_type=signal_type,
+                    external_id=external_id[:240],
+                    status="quarantined" if injection["detected"] else "pending",
+                    disposition="owner_escalation" if injection["detected"] else None,
+                    trust_class=trust_class or source.trust_class,
+                    sensitivity=sensitivity or source.sensitivity,
                     content_hash=content_hash,
-                    extracted_text=content[:100_000],
-                    trust_class=signal.trust_class,
-                    sensitivity=signal.sensitivity,
-                    metadata_={
-                        "external_id": external_id[:240],
-                        "injection_status": signal.injection_status,
-                    },
+                    redacted_payload=redacted,
+                    injection_status="suspected" if injection["detected"] else "clear",
+                    quarantine_reason=injection["reason"] if injection["detected"] else None,
+                    idempotency_key=idempotency_key,
+                    occurred_at=occurred_at,
                 )
-                session.add(artifact)
-            source.last_success_at = utc_now()
-            source.last_error = None
-            source.updated_at = utc_now()
-            await session.commit()
-            result = self._signal_to_dict(signal)
-            result.update({"duplicate": False, "evidence_id": artifact.id})
+                session.add(signal)
+                if not artifact:
+                    artifact = EvidenceArtifact(
+                        id=f"ev_{uuid.uuid4().hex}",
+                        company_namespace=namespace,
+                        source_id=source_id,
+                        signal_id=signal.id,
+                        artifact_type=artifact_type,
+                        title=(title or signal_type)[:240],
+                        source_uri=self._safe_source_uri(source_uri),
+                        content_hash=content_hash,
+                        extracted_text=content[:100_000],
+                        trust_class=signal.trust_class,
+                        sensitivity=signal.sensitivity,
+                        metadata_={
+                            "external_id": external_id[:240],
+                            "injection_status": signal.injection_status,
+                        },
+                    )
+                    session.add(artifact)
+                source.last_success_at = utc_now()
+                source.last_error = None
+                source.updated_at = utc_now()
+                try:
+                    await session.commit()
+                except IntegrityError:
+                    await session.rollback()
+                    existing = (
+                        await session.execute(
+                            select(CompanySignal).where(
+                                CompanySignal.idempotency_key == idempotency_key
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if existing:
+                        existing_artifact = (
+                            await session.execute(
+                                select(EvidenceArtifact).where(
+                                    EvidenceArtifact.source_id == source_id,
+                                    EvidenceArtifact.content_hash == content_hash,
+                                )
+                            )
+                        ).scalar_one_or_none()
+                        return {
+                            **self._signal_to_dict(existing),
+                            "duplicate": True,
+                            "evidence_id": (
+                                existing_artifact.id if existing_artifact else None
+                            ),
+                        }
+                    if attempt == 0:
+                        continue
+                    raise
+                result = self._signal_to_dict(signal)
+                result.update({"duplicate": False, "evidence_id": artifact.id})
+                break
+
+        if result is None:
+            raise RuntimeError("Signal ingestion did not produce a durable result")
 
         if self._audit:
             await self._audit.record(

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cyber_team.clock import utc_now
@@ -18,6 +19,7 @@ from cyber_team.db.models import (
     CompanyClaim,
     CompanyContextSnapshot,
     CompanySignal,
+    CompanySource,
     EvidenceArtifact,
     OperationGraphNode,
 )
@@ -105,6 +107,98 @@ def test_pending_signal_query_claims_rows_without_waiting():
 
     assert "FOR UPDATE SKIP LOCKED" in compiled
     assert query._limit_clause.value == 200
+
+
+@pytest.mark.asyncio
+async def test_signal_ingestion_resolves_unique_commit_race_as_duplicate(monkeypatch):
+    service = CompanyIntelligenceService()
+    service.ensure_default_sources = AsyncMock(return_value=[])
+    now = utc_now()
+    source = CompanySource(
+        id="source-cyber-team",
+        company_namespace="company:test",
+        source_key="cyber_team",
+        source_type="internal",
+        name="Cyber-Team",
+        trust_class="internal",
+        sensitivity="internal",
+        config={},
+        cursor={},
+    )
+    existing_signal = CompanySignal(
+        id="signal-existing",
+        company_namespace="company:test",
+        source_id=source.id,
+        signal_type="audit.event",
+        external_id="concurrent-event",
+        status="pending",
+        trust_class="internal",
+        sensitivity="internal",
+        content_hash="content-hash",
+        redacted_payload={"outcome": "success"},
+        injection_status="clear",
+        idempotency_key="idempotency-key",
+        received_at=now,
+    )
+    existing_artifact = EvidenceArtifact(
+        id="evidence-existing",
+        company_namespace="company:test",
+        source_id=source.id,
+        signal_id=existing_signal.id,
+        artifact_type="audit_event",
+        content_hash="content-hash",
+    )
+
+    class Result:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one(self):
+            return self.value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class ConflictingSession:
+        def __init__(self):
+            self.results = iter(
+                [source, None, None, existing_signal, existing_artifact]
+            )
+            self.rolled_back = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def execute(self, _query):
+            return Result(next(self.results))
+
+        def add(self, _item):
+            return None
+
+        async def commit(self):
+            raise IntegrityError("INSERT", {}, RuntimeError("duplicate"))
+
+        async def rollback(self):
+            self.rolled_back = True
+
+    session = ConflictingSession()
+    monkeypatch.setattr(intelligence_module, "async_session", lambda: session)
+
+    result = await service.ingest_signal(
+        source_key="cyber_team",
+        signal_type="audit.event",
+        external_id="concurrent-event",
+        payload={"outcome": "success"},
+        company_namespace="company:test",
+    )
+
+    assert result["id"] == existing_signal.id
+    assert result["duplicate"] is True
+    assert result["evidence_id"] == existing_artifact.id
+    assert session.rolled_back is True
 
 
 @pytest.mark.asyncio
