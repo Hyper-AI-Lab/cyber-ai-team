@@ -5563,3 +5563,24 @@
   - `/home/projects/cyber-team/backend/tests/test_memory_service.py`.
 - Next step:
   - Run the complete `0.3.10` gate, promote backup-first, repeat the live Security probe, and require a clean grounded completion before publishing.
+
+### 2026-08-01T18:57:05Z — STEP-207 — Promoted v0.3.10 and passed the Security canonical-memory canary
+- Files/services changed:
+  - Verified immutable `0.3.10` release images from commit `837a57a3f19171d71d35de9d136460ec6f0ff7cf` and promoted them backup-first to staging.
+  - Ran one bounded Security/Compliance diagnostic with the Temporal worker stopped during direct execution, then restarted the worker and left the Security domain active.
+  - Cancelled all three unexecuted advisory descendants created by the diagnostic so the acceptance probe could not expand into unattended portfolio work.
+- Commands run:
+  - Formal release gate with 335 backend tests, 24 frontend tests, Ruff, compileall, Alembic offline SQL, both PostgreSQL migration rehearsals, dependency/secret/FOSS checks, isolated Compose smoke, immutable image builds, and zero-finding Trivy scans.
+  - Backup-first staging promotion and public Compose smoke, controlled worker stop/start, one-item Security domain-loop execution, descendant cancellation, memory-trace inspection, approval/communication delta checks, and recent core/worker error-log scan.
+- Result:
+  - Staging reports `0.3.10` at exact build SHA `837a57a3f19171d71d35de9d136460ec6f0ff7cf`; promotion and smoke passed.
+  - Work item `work_ea7c6b33611c42a597bfbfaff3a1c218` completed with confidence `0.98`, grounding `passed`, clean memory preflight, all three active Security agents recognized, no matching unresolved role gap, and `side_effects_executed=false`.
+  - Approval count remained `3` and communication-log count remained `30`; no email, ERPNext mutation, or other external action occurred. Child items `work_b1b98e8b19f94524bd24d335cda23456`, `work_a175bf786a5e4b90b02ed65f10828fab`, and `work_41b5124cb36c402f99f69aa86601157a` were cancelled before worker restart.
+  - Memory trace `ee00f980-a530-4ba3-9648-9971ac7c1d00` links the completed mandate-loop invocation; recent core and worker logs contain no traceback, deadlock, workflow-task timeout, or error event.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.10.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.10-20260801-183649.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.10-20260801-183522.dump`.
+  - Work item `work_ea7c6b33611c42a597bfbfaff3a1c218` and trace `ee00f980-a530-4ba3-9648-9971ac7c1d00`.
+- Next step:
+  - Publish `v0.3.10`, require green public push/manual CI, refresh CI/readiness evidence, and run a no-auto-action executive measurement cycle before reviewing any obsolete approval.
