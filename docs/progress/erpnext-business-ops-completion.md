@@ -5348,3 +5348,21 @@
   - Temporal v4 run `019fbc2b-8d99-716b-b86b-ac02236a8b18` and retired v3 run `a07c3376-d7d8-4ff2-a392-68c7a7f87ed8`.
 - Next step:
   - Publish the accumulated staged-autonomy hardening to the public repository, tag `v0.3.5`, and require green push and manual GitHub CI before selecting the next domain canary.
+
+### 2026-08-01T07:33:00Z — STEP-195 — Published v0.3.5 and passed public CI
+- Files/services changed:
+  - Published the accumulated `0.3.1` through `0.3.5` staged-autonomy hardening to public repository `Hyper-AI-Lab/cyber-ai-team` on `main`.
+  - Added annotated tag `v0.3.5` to the exact tested application commit and created the public GitHub release.
+- Commands run:
+  - Pushed `main` and `v0.3.5`, created the GitHub release, watched the push-triggered CI, dispatched a second manual CI run against public `main`, and watched every job to completion.
+- Result:
+  - Push CI run `30689684592` completed successfully.
+  - Manual CI run `30689840462` completed successfully: Backend, Frontend, Docker Compose Smoke, Observability Config, Compose/Secrets/Diff Hygiene, and Docker Image Scan all passed.
+  - The latest scheduled CI run `30687183454` is also green. The public repository and local `main` are synchronized.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/releases/tag/v0.3.5`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30689684592`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30689840462`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30687183454`.
+- Next step:
+  - Continue the global staged rollout by selecting the next safe internal domain from current evidence; keep high-impact, customer-visible, legal, financial, credential, destructive, and production-deployment actions permanently policy- or owner-gated.
