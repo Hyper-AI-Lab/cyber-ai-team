@@ -5458,3 +5458,37 @@
   - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
 - Next step:
   - Run the policy-complete `0.3.7` release gate, promote backup-first, execute a clean Security canary after quarantine, and require public GitHub CI evidence for final readiness.
+
+### 2026-08-01T15:56:00Z — STEP-201 — Promoted v0.3.7 and proved correct grounded reasoning
+- Files/services changed:
+  - Promoted `0.3.7` from commit `03bb39ed8237e03730fc3a42d24e8625bd846d0e` after a fresh staging backup.
+  - Ran one no-tool Security role-state probe after reactivation.
+- Commands run:
+  - Policy-complete release gate with 331 backend tests, 24 frontend tests, both PostgreSQL rehearsals, isolated Compose smoke, dependency/secret/FOSS checks, image builds, and zero-finding Trivy scans.
+  - Backup-first promotion, public smoke, one-item Security domain loop, and memory-trace inspection.
+- Result:
+  - The live probe completed at confidence `1.0`, reported three active Security agents and no unresolved Security role gap, explicitly rejected conflicting recalled memory, created no child work, and executed no side effect.
+  - Its trace recalled eight memories, including prior failed canary assessments. Because the output was correct, the post-output contradiction guard did not quarantine those stale inputs; this exposed the need for pre-invocation cleanup.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.7.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.7-20260801-155304.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.7-20260801-155133.dump`.
+  - Work item `work_23a45d1b83b149a7a126683e2668cdc9` and memory trace `ac5318e2-a51e-49e9-ae20-f4632582db20`.
+- Next step:
+  - Move stale role-state memory quarantine to the authoritative preflight so correct agent reasoning also heals recalled memory.
+
+### 2026-08-01T16:01:00Z — STEP-202 — Added pre-invocation authoritative memory healing
+- Files/services changed:
+  - Added a pre-invocation scan of the assigned agent's recent memory whenever live state proves the role family is staffed and has no unresolved role gap.
+  - Quarantines stale role-state entries before LLM recall, includes remediation evidence in the authoritative context, and keeps agent-output contradictions on a separate circuit-breaker counter.
+  - Advanced candidate release metadata to `0.3.8`.
+- Commands run:
+  - Ran focused Ruff, Git diff hygiene, and all 18 work-portfolio tests.
+- Result:
+  - Tests prove a correct agent result still quarantines stale memory, leaves valid memory untouched, records a Memory Steward finding, and does not pause the domain.
+  - Repeated agent contradictions remain independently counted and pause the affected domain at the configured threshold.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/work_portfolio.py`.
+  - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
+- Next step:
+  - Promote `0.3.8`, rerun the Security memory probe, verify stale-memory IDs are excluded and the domain remains healthy, then publish and require green public CI.

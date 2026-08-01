@@ -1010,6 +1010,20 @@ class WorkPortfolioService:
                 error="Agent manager is unavailable.",
             )
         authoritative_context = await self._build_authoritative_context(item)
+        preflight_context_hash = self._hash(authoritative_context)
+        if (
+            int(authoritative_context.get("active_family_agent_count") or 0) > 0
+            and not authoritative_context.get("unresolved_role_gaps")
+        ):
+            authoritative_context["memory_preflight"] = (
+                await self._quarantine_authoritative_role_conflicts(
+                    item,
+                    authoritative_context,
+                    None,
+                    context_hash=preflight_context_hash,
+                    circuit_eligible=False,
+                )
+            )
         context_hash = self._hash(authoritative_context)
         task = (
             f"MANDATE-BOUNDED WORK ITEM {item.id}\n"
@@ -1087,6 +1101,7 @@ class WorkPortfolioService:
                     authoritative_context,
                     grounding,
                     context_hash=context_hash,
+                    circuit_eligible=True,
                 )
             )
         proposal_result = (
@@ -1338,9 +1353,10 @@ class WorkPortfolioService:
         self,
         item: BusinessWorkItem,
         context: dict[str, Any],
-        grounding: dict[str, Any],
+        grounding: dict[str, Any] | None,
         *,
         context_hash: str,
+        circuit_eligible: bool,
     ) -> dict[str, Any]:
         """Exclude contradicted memories and trip a bounded domain circuit breaker."""
         now = utc_now()
@@ -1371,21 +1387,37 @@ class WorkPortfolioService:
                 ]
                 if memory_id
             }
-            entries = []
+            recent_agent_entries = (
+                await session.execute(
+                    select(MemoryEntry)
+                    .where(MemoryEntry.agent_id == item.assigned_agent_id)
+                    .order_by(desc(MemoryEntry.created_at))
+                    .limit(500)
+                )
+            ).scalars().all()
+            entries_by_id = {entry.id: entry for entry in recent_agent_entries}
             if memory_ids:
-                entries = (
+                traced_entries = (
                     await session.execute(
                         select(MemoryEntry).where(MemoryEntry.id.in_(memory_ids))
                     )
                 ).scalars().all()
+                entries_by_id.update({entry.id: entry for entry in traced_entries})
             quarantined_ids = []
-            for entry in entries:
+            for entry in entries_by_id.values():
+                existing_metadata = dict(entry.metadata_ or {})
+                if (
+                    existing_metadata.get("canonical_superseded") is True
+                    and existing_metadata.get("exclude_from_recall_reason")
+                    == "authoritative_role_state_conflict"
+                ):
+                    continue
                 if not any(
                     pattern.search(entry.content)
                     for pattern in STALE_ROLE_STATE_PATTERNS
                 ):
                     continue
-                metadata = dict(entry.metadata_ or {})
+                metadata = existing_metadata
                 metadata.update(
                     {
                         "canonical_superseded": True,
@@ -1403,16 +1435,36 @@ class WorkPortfolioService:
                 entry.metadata_ = metadata
                 quarantined_ids.append(entry.id)
 
+            if not quarantined_ids and not circuit_eligible:
+                return {
+                    "status": "clean",
+                    "finding_id": None,
+                    "trace_ids": trace_ids,
+                    "quarantined_memory_ids": [],
+                    "occurrence_count": 0,
+                    "agent_conflict_count": 0,
+                    "threshold": threshold,
+                    "lookback_hours": lookback_hours,
+                    "circuit_breaker_tripped": False,
+                    "domain_state": "active",
+                }
+
             finding = await session.get(MemoryStewardFinding, finding_id)
             prior_evidence = dict(finding.evidence or {}) if finding else {}
             prior_last_seen = prior_evidence.get("last_seen_at")
             occurrence_count = int(prior_evidence.get("occurrence_count") or 0)
+            agent_conflict_count = int(
+                prior_evidence.get("agent_conflict_count") or 0
+            )
             if prior_last_seen and not self._within_lookback(
                 str(prior_last_seen),
                 lookback_start,
             ):
                 occurrence_count = 0
+                agent_conflict_count = 0
             occurrence_count += 1
+            if circuit_eligible:
+                agent_conflict_count += 1
             work_item_ids = sorted(
                 {
                     *[
@@ -1440,21 +1492,24 @@ class WorkPortfolioService:
                 or now.isoformat(),
                 "last_seen_at": now.isoformat(),
                 "occurrence_count": occurrence_count,
+                "agent_conflict_count": agent_conflict_count,
                 "lookback_hours": lookback_hours,
                 "work_item_ids": work_item_ids,
                 "quarantined_memory_ids": quarantined_all,
                 "authoritative_context_hash": context_hash,
-                "grounding_findings": grounding.get("findings", []),
+                "grounding_findings": (
+                    grounding.get("findings", []) if grounding else []
+                ),
             }
             description = (
-                "An agent repeated a role-state claim that contradicted current "
-                "active agents and role-gap records. Conflicting recalled and "
-                "written memories were excluded from future recall."
+                "Memory contained a role-state claim that contradicted current "
+                "active agents and role-gap records. Conflicting recalled or "
+                "written entries were excluded from future recall."
             )
             if finding:
                 finding.status = "open"
                 finding.severity = (
-                    "high" if occurrence_count >= threshold else "medium"
+                    "high" if agent_conflict_count >= threshold else "medium"
                 )
                 finding.trace_ids = sorted({*(finding.trace_ids or []), *trace_ids})
                 finding.evidence = evidence
@@ -1464,7 +1519,7 @@ class WorkPortfolioService:
             else:
                 finding = MemoryStewardFinding(
                     id=finding_id,
-                    finding_type="authoritative_grounding_conflict",
+                    finding_type="authoritative_memory_conflict",
                     severity="medium",
                     status="open",
                     agent_id=item.assigned_agent_id,
@@ -1486,7 +1541,7 @@ class WorkPortfolioService:
                 )
                 session.add(finding)
 
-            circuit_tripped = occurrence_count >= threshold
+            circuit_tripped = agent_conflict_count >= threshold
             control = await session.get(DomainAutonomyControl, family)
             if circuit_tripped:
                 reason = (
@@ -1513,6 +1568,7 @@ class WorkPortfolioService:
                 "trace_ids": trace_ids,
                 "quarantined_memory_ids": sorted(quarantined_ids),
                 "occurrence_count": occurrence_count,
+                "agent_conflict_count": agent_conflict_count,
                 "threshold": threshold,
                 "lookback_hours": lookback_hours,
                 "circuit_breaker_tripped": circuit_tripped,

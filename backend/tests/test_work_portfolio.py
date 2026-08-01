@@ -657,13 +657,19 @@ async def test_grounding_conflicts_quarantine_memory_and_pause_repeated_domain(
     first_remediation = first_result["items"][0]["actual_outcome"]["grounding"][
         "memory_remediation"
     ]
+    first_preflight = first_result["items"][0]["actual_outcome"][
+        "authoritative_context"
+    ]["memory_preflight"]
     assert first_result["items"][0]["status"] == "blocked"
-    assert first_remediation["occurrence_count"] == 1
-    assert first_remediation["circuit_breaker_tripped"] is False
-    assert first_remediation["quarantined_memory_ids"] == [
+    assert first_preflight["quarantined_memory_ids"] == [
         "memory-stale-recalled",
         "memory-stale-written-one",
     ]
+    assert first_preflight["agent_conflict_count"] == 0
+    assert first_remediation["occurrence_count"] == 2
+    assert first_remediation["agent_conflict_count"] == 1
+    assert first_remediation["circuit_breaker_tripped"] is False
+    assert first_remediation["quarantined_memory_ids"] == []
     async with portfolio_session_factory() as session:
         stale = await session.get(MemoryEntry, "memory-stale-recalled")
         valid = await session.get(MemoryEntry, "memory-valid")
@@ -676,8 +682,9 @@ async def test_grounding_conflicts_quarantine_memory_and_pause_repeated_domain(
         "authoritative_role_state_conflict"
     )
     assert "canonical_superseded" not in valid.metadata_
-    assert finding.finding_type == "authoritative_grounding_conflict"
-    assert finding.evidence["occurrence_count"] == 1
+    assert finding.finding_type == "authoritative_memory_conflict"
+    assert finding.evidence["occurrence_count"] == 2
+    assert finding.evidence["agent_conflict_count"] == 1
     assert control is None
 
     second = await service.create_work_item(
@@ -724,7 +731,8 @@ async def test_grounding_conflicts_quarantine_memory_and_pause_repeated_domain(
         "memory_remediation"
     ]
     assert second_result["items"][0]["status"] == "blocked"
-    assert second_remediation["occurrence_count"] == 2
+    assert second_remediation["occurrence_count"] == 4
+    assert second_remediation["agent_conflict_count"] == 2
     assert second_remediation["circuit_breaker_tripped"] is True
     assert second_remediation["domain_state"] == "paused"
     async with portfolio_session_factory() as session:
@@ -735,8 +743,92 @@ async def test_grounding_conflicts_quarantine_memory_and_pause_repeated_domain(
     assert control.state == "paused"
     assert control.owner == "autonomy_grounding_circuit_breaker"
     assert finding.severity == "high"
-    assert finding.evidence["occurrence_count"] == 2
-    assert audit.record_control_evidence.await_count == 2
+    assert finding.evidence["occurrence_count"] == 4
+    assert finding.evidence["agent_conflict_count"] == 2
+    assert audit.record_control_evidence.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_memory_preflight_heals_stale_memory_when_agent_reasoning_is_correct(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    async with portfolio_session_factory() as session:
+        session.add_all(
+            [
+                Agent(
+                    id="security-agent",
+                    role_family="security",
+                    role_name="Security Agent",
+                    instructions="Assess security evidence.",
+                    tools=["security_scan"],
+                    memory_namespace="company:test:security",
+                    status="active",
+                ),
+                MemoryEntry(
+                    id="memory-stale-preflight",
+                    agent_id="security-agent",
+                    memory_type="episodic",
+                    namespace="company:test:security",
+                    content="The Security role gap persists.",
+                    metadata_={},
+                ),
+            ]
+        )
+        await session.commit()
+    manager = AsyncMock()
+    manager.invoke_agent.return_value = json.dumps(
+        {
+            "assessment": (
+                "Security has one active agent and no unresolved role gap in the "
+                "authoritative current operating context."
+            ),
+            "confidence": 0.99,
+            "unknowns": [],
+            "recommended_action": "no_action",
+            "expected_outcome": {"type": "documented_no_action"},
+            "proposed_work": [],
+        }
+    )
+    audit = AsyncMock()
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        audit_service=audit,
+        company_intelligence_service=FakeIntelligence(),
+    )
+    await service.ensure_active_agent_mandates()
+    await service.create_work_item(
+        title="Verify Security role state",
+        description="Reject stale memory using current state.",
+        work_type="analysis",
+        company_namespace="company:test",
+        assigned_agent_id="security-agent",
+        payload={},
+        acceptance_criteria=["current_state_used"],
+        idempotency_key="grounding-preflight-correct-reasoning",
+    )
+
+    result = await service.run_domain_loop("security-agent", prepare=False)
+
+    item = result["items"][0]
+    preflight = item["actual_outcome"]["authoritative_context"][
+        "memory_preflight"
+    ]
+    assert item["status"] == "completed"
+    assert item["actual_outcome"]["grounding"]["status"] == "passed"
+    assert preflight["quarantined_memory_ids"] == ["memory-stale-preflight"]
+    assert preflight["agent_conflict_count"] == 0
+    assert preflight["circuit_breaker_tripped"] is False
+    async with portfolio_session_factory() as session:
+        memory = await session.get(MemoryEntry, "memory-stale-preflight")
+        finding = (
+            await session.execute(select(MemoryStewardFinding))
+        ).scalar_one()
+        control = await session.get(DomainAutonomyControl, "security")
+    assert memory.metadata_["canonical_superseded"] is True
+    assert finding.evidence["agent_conflict_count"] == 0
+    assert control is None
+    audit.record_control_evidence.assert_awaited_once()
 
 
 @pytest.mark.asyncio

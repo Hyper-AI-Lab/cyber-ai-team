@@ -40,7 +40,7 @@ const navItems: { view: ViewName; label: string; icon: React.ElementType }[] = [
   { view: 'audit', label: 'Audit Trail', icon: ScrollText },
 ]
 
-const appVersion = process.env.NEXT_PUBLIC_APP_VERSION || '0.3.7'
+const appVersion = process.env.NEXT_PUBLIC_APP_VERSION || '0.3.8'
 const buildSha = process.env.NEXT_PUBLIC_BUILD_SHA || ''
 
 export default function Sidebar({
