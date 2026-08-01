@@ -93,6 +93,13 @@ SAFE_AGENT_PROPOSED_WORK_TYPES = {
     "research",
     "workflow_proposal",
 }
+SAFE_AGENT_PROPOSED_WORK_TYPE_ALIASES = {
+    "capability_assessment": "analysis",
+    "capability_gap": "capability_proposal",
+    "evidence_research": "research",
+    "internal_analysis": "analysis",
+    "strategic_planning": "planning",
+}
 INFORMATIONAL_AUDIT_OUTCOMES = {
     "allowed",
     "completed",
@@ -919,7 +926,9 @@ class WorkPortfolioService:
             "revise, stop, no_action, escalate), expected_outcome (object), and "
             "proposed_work (array, maximum 3). Each proposed_work item may contain "
             "title, description, work_type, priority, acceptance_criteria, and "
-            "expected_outcome. Never include tool calls, credentials, executable "
+            "expected_outcome. work_type must be one of: "
+            f"{', '.join(sorted(SAFE_AGENT_PROPOSED_WORK_TYPES))}. "
+            "Never include tool calls, credentials, executable "
             "instructions, or external side effects."
         )
         try:
@@ -941,7 +950,7 @@ class WorkPortfolioService:
                 status="failed",
                 outcome={},
                 error=type(exc).__name__,
-                )
+            )
         if self._intelligence:
             injection = self._intelligence.classify_untrusted_content(result)
             if injection["detected"]:
@@ -960,16 +969,36 @@ class WorkPortfolioService:
                 outcome={"classification": "structured_output_invalid"},
                 error=str(exc),
             )
-        proposals = await self._create_agent_proposed_work(item, assessment)
+        proposal_result = await self._create_agent_proposed_work(item, assessment)
+        assessment["rejected_proposals"].extend(proposal_result["rejected_proposals"])
+        created_ids = proposal_result["created_work_item_ids"]
+        requested_follow_up = bool(assessment["proposed_work"] or assessment["rejected_proposals"])
+        follow_up_required = assessment["recommended_action"] in {
+            "continue",
+            "revise",
+            "escalate",
+        }
+        completion_blocked = requested_follow_up and follow_up_required and not created_ids
+        outcome = {
+            **assessment,
+            "created_work_item_ids": created_ids,
+            "completion_contract": {
+                "follow_up_required": follow_up_required,
+                "requested_follow_up": requested_follow_up,
+                "accepted_follow_up_count": len(created_ids),
+                "satisfied": not completion_blocked,
+            },
+            "side_effects_executed": False,
+        }
         return await self._finish_work(
             item.id,
-            status="completed",
-            outcome={
-                **assessment,
-                "created_work_item_ids": proposals,
-                "side_effects_executed": False,
-            },
-            error=None,
+            status="blocked" if completion_blocked else "completed",
+            outcome=outcome,
+            error=(
+                "The agent required follow-up work, but no safe proposal could be persisted."
+                if completion_blocked
+                else None
+            ),
         )
 
     async def _execute_tool_work(self, item: BusinessWorkItem) -> dict[str, Any]:
@@ -1038,10 +1067,20 @@ class WorkPortfolioService:
         self,
         parent: BusinessWorkItem,
         assessment: dict[str, Any],
-    ) -> list[str]:
+    ) -> dict[str, list[Any]]:
         depth = int((parent.payload or {}).get("proposal_depth", 0))
         if depth >= 3:
-            return []
+            return {
+                "created_work_item_ids": [],
+                "rejected_proposals": [
+                    {
+                        "index": index,
+                        "reason": "proposal_depth_limit",
+                        "work_type": proposal["work_type"],
+                    }
+                    for index, proposal in enumerate(assessment["proposed_work"][:3])
+                ],
+            }
         created_ids = []
         for index, proposal in enumerate(assessment["proposed_work"][:3]):
             work_type = proposal["work_type"]
@@ -1068,7 +1107,10 @@ class WorkPortfolioService:
                 created_by=parent.assigned_agent_id or "mandate_loop",
             )
             created_ids.append(created["id"])
-        return created_ids
+        return {
+            "created_work_item_ids": created_ids,
+            "rejected_proposals": [],
+        }
 
     @staticmethod
     def _parse_role_result(raw: str) -> dict[str, Any]:
@@ -1131,12 +1173,17 @@ class WorkPortfolioService:
                     {"index": index, "reason": "proposal_schema_invalid"}
                 )
                 continue
-            if proposal["work_type"] not in SAFE_AGENT_PROPOSED_WORK_TYPES:
+            requested_work_type = str(proposal["work_type"]).strip().lower()
+            work_type = SAFE_AGENT_PROPOSED_WORK_TYPE_ALIASES.get(
+                requested_work_type,
+                requested_work_type,
+            )
+            if work_type not in SAFE_AGENT_PROPOSED_WORK_TYPES:
                 rejected.append(
                     {
                         "index": index,
                         "reason": "work_type_not_allowlisted",
-                        "work_type": str(proposal["work_type"])[:100],
+                        "work_type": requested_work_type[:100],
                     }
                 )
                 continue
@@ -1161,6 +1208,7 @@ class WorkPortfolioService:
             normalized.append(
                 {
                     **proposal,
+                    "work_type": work_type,
                     "title": str(proposal["title"])[:240],
                     "description": str(proposal["description"])[:8000],
                 }

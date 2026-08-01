@@ -470,6 +470,57 @@ async def test_role_loop_persists_validated_follow_up_work(
 
 
 @pytest.mark.asyncio
+async def test_role_loop_normalizes_reviewed_safe_work_type_aliases(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    manager = AsyncMock()
+    manager.invoke_agent.return_value = json.dumps(
+        {
+            "assessment": "Product evidence needs an internal planning pass.",
+            "confidence": 0.82,
+            "unknowns": [],
+            "recommended_action": "continue",
+            "expected_outcome": {"type": "prioritized_backlog"},
+            "proposed_work": [
+                {
+                    "title": "Prioritize the product backlog",
+                    "description": "Rank internal work without external mutation.",
+                    "work_type": "strategic_planning",
+                    "priority": "medium",
+                    "acceptance_criteria": ["prioritized_backlog_recorded"],
+                    "expected_outcome": {"type": "prioritized_backlog"},
+                }
+            ],
+        }
+    )
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        company_intelligence_service=FakeIntelligence(),
+    )
+    await service.ensure_active_agent_mandates()
+    await service.create_work_item(
+        title="Assess product state",
+        description="Create a safe internal backlog.",
+        work_type="domain_assessment",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={},
+        acceptance_criteria=["prioritized_backlog_recorded"],
+        idempotency_key="work-safe-alias",
+    )
+
+    result = await service.run_domain_loop("knowledge-agent", prepare=False)
+
+    outcome = result["items"][0]["actual_outcome"]
+    assert result["items"][0]["status"] == "completed"
+    assert outcome["completion_contract"]["satisfied"] is True
+    async with portfolio_session_factory() as session:
+        child = await session.get(BusinessWorkItem, outcome["created_work_item_ids"][0])
+    assert child.work_type == "planning"
+
+
+@pytest.mark.asyncio
 async def test_role_loop_keeps_assessment_but_rejects_unsafe_follow_up(
     portfolio_session_factory,
 ):
@@ -513,8 +564,14 @@ async def test_role_loop_keeps_assessment_but_rejects_unsafe_follow_up(
     result = await service.run_domain_loop("knowledge-agent", prepare=False)
 
     outcome = result["items"][0]["actual_outcome"]
-    assert result["items"][0]["status"] == "completed"
+    assert result["items"][0]["status"] == "blocked"
     assert outcome["created_work_item_ids"] == []
+    assert outcome["completion_contract"] == {
+        "follow_up_required": True,
+        "requested_follow_up": True,
+        "accepted_follow_up_count": 0,
+        "satisfied": False,
+    }
     assert outcome["rejected_proposals"] == [
         {
             "index": 0,
@@ -522,6 +579,55 @@ async def test_role_loop_keeps_assessment_but_rejects_unsafe_follow_up(
             "work_type": "external_mutation",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_role_loop_blocks_when_proposal_depth_prevents_required_follow_up(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    manager = AsyncMock()
+    manager.invoke_agent.return_value = json.dumps(
+        {
+            "assessment": "More bounded research is required.",
+            "confidence": 0.8,
+            "unknowns": ["Verified source"],
+            "recommended_action": "continue",
+            "expected_outcome": {"type": "evidence_artifact"},
+            "proposed_work": [
+                {
+                    "title": "Collect one more source",
+                    "description": "Continue the evidence chain.",
+                    "work_type": "research",
+                    "priority": "low",
+                    "acceptance_criteria": ["source_recorded"],
+                    "expected_outcome": {"type": "evidence_artifact"},
+                }
+            ],
+        }
+    )
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        company_intelligence_service=FakeIntelligence(),
+    )
+    await service.ensure_active_agent_mandates()
+    await service.create_work_item(
+        title="Stop recursive decomposition",
+        description="The depth circuit breaker must be truthful.",
+        work_type="research",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={"proposal_depth": 3},
+        acceptance_criteria=["source_recorded"],
+        idempotency_key="work-depth-limit",
+    )
+
+    result = await service.run_domain_loop("knowledge-agent", prepare=False)
+
+    outcome = result["items"][0]["actual_outcome"]
+    assert result["items"][0]["status"] == "blocked"
+    assert outcome["created_work_item_ids"] == []
+    assert outcome["rejected_proposals"][0]["reason"] == "proposal_depth_limit"
 
 
 @pytest.mark.asyncio
