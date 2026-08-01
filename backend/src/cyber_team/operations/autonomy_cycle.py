@@ -139,8 +139,8 @@ class TemporalAutonomyController:
             if exc.status != RPCStatusCode.NOT_FOUND:
                 raise
             await client.start_workflow(
-                "AutonomousCompanySignalWorkflow",
-                {"cycle_version": AutonomousCompanyCycleService.CYCLE_VERSION},
+                "AutonomousCompanySignalWorkflowV4",
+                self._signal_workflow_config(),
                 id=settings.company_autonomy_signal_workflow_id,
                 task_queue="cyberteam-tasks",
                 retry_policy=RetryPolicy(
@@ -162,6 +162,10 @@ class TemporalAutonomyController:
             "governor_schedule_created": governor_schedule_created,
             "signal_workflow_id": settings.company_autonomy_signal_workflow_id,
             "signal_workflow_started": signal_started,
+            "signal_max_cycles": settings.company_autonomy_signal_max_cycles,
+            "signal_max_buffered_events": (
+                settings.company_autonomy_signal_max_buffered_events
+            ),
             "interval_seconds": settings.domain_loop_interval_seconds,
             "governor_interval_seconds": settings.governor_interval_seconds,
         }
@@ -189,6 +193,17 @@ class TemporalAutonomyController:
         handle = client.get_workflow_handle(settings.company_autonomy_signal_workflow_id)
         await handle.signal("business_event_received", str(event_id)[:200])
         return {"status": "signaled", "event_id": event_id}
+
+    @staticmethod
+    def _signal_workflow_config() -> dict[str, Any]:
+        return {
+            "cycle_version": AutonomousCompanyCycleService.CYCLE_VERSION,
+            "max_cycles": max(1, min(settings.company_autonomy_signal_max_cycles, 100)),
+            "max_buffered_events": max(
+                1,
+                min(settings.company_autonomy_signal_max_buffered_events, 500),
+            ),
+        }
 
     @staticmethod
     def _schedule_update(schedule: Schedule):

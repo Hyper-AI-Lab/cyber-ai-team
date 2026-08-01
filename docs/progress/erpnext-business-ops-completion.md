@@ -5285,3 +5285,44 @@
   - `/home/projects/cyber-team/backend/tests/test_api_roles.py`.
 - Next step:
   - Commit and release `0.3.4`, deploy backup-first, preview and apply live role-family reconciliation, verify mandate repair, then activate the next safe internal domain canary.
+
+### 2026-08-01T06:20:00Z — STEP-192 — Reconciled live role families and accepted the Engineering canary
+- Files/services changed:
+  - Released and promoted immutable `0.3.4` from commit `bf34dd42a7c763193b4caaabe1cc4274f7313413` after backup.
+  - Applied the generated role-family reconciliation only after a live dry-run preview.
+  - Activated Engineering as the third low-risk advisory domain alongside Knowledge and Product.
+- Commands run:
+  - Formal release gate with 326 backend tests, 24 frontend tests, both PostgreSQL migration rehearsals, isolated Compose smoke, dependency/secret/FOSS checks, image builds, and Trivy scans.
+  - Backup-first staging promotion and public smoke.
+  - Dry-run and real `POST /api/roles/team-activation/reconcile-families`, database mandate/family verification, and an idempotency dry run.
+  - One Engineering parent canary and bounded first-level execution, followed by work-tree, communication, approval, readiness, audit, and log inspection.
+- Result:
+  - Nine historical generated agents and nine generated manifests were moved from stale June proposal families to explicit role-gap families; 11 mandate revisions were created, leaving 29 active agents with exactly 29 active mandates and no duplicate active mandates.
+  - A repeat dry run reports zero candidates. Owner-created agents and role-gap history were not rewritten.
+  - Engineering parent `work_8ebf8e028a484457bb1f906f504a8ae4` completed at confidence `0.75` with three accepted safe children and no side effects. Two first-level children completed at confidence `0.70` and `0.90`; all completion contracts were satisfied, with zero communication logs and zero approval requests created by the canary.
+  - Staging reports version `0.3.4`, exact build SHA `bf34dd42a7c763193b4caaabe1cc4274f7313413`, dependency readiness `ready`, and operations readiness `ready`.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.4.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.4-20260801-060752.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.4-20260801-060640.dump`.
+- Next step:
+  - Eliminate the recovered Temporal signal-workflow replay timeout observed after worker restart before expanding another domain.
+
+### 2026-08-01T06:31:07Z — STEP-193 — Versioned and bounded the Temporal signal processor
+- Files/services changed:
+  - Added `AutonomousCompanySignalWorkflowV4` with synchronous deduplicating signal ingestion, a bounded 100-event buffer, and continue-as-new after 10 cycles.
+  - Preserved the v3 workflow implementation for deterministic replay compatibility while moving new signals to a fresh v4 workflow ID.
+  - Limited the local llama.cpp fallback to three threads and three CPUs on the four-core host so control-plane workflow scheduling retains CPU headroom.
+  - Advanced candidate release metadata to `0.3.5` and added environment controls for signal history/buffer limits and local-inference CPU allocation.
+- Commands run:
+  - Inspected the Temporal execution history for run `a07c3376-d7d8-4ff2-a392-68c7a7f87ed8`; confirmed 141 events, 12 completed activities, and three recovered workflow-task timeouts across two worker restarts.
+  - Ran 22 focused autonomy, team-activation, and truthful-work regression tests, Ruff, Compose local-AI config validation, and diff hygiene.
+- Result:
+  - The replacement workflow starts with fresh history and automatically rolls history forward before replay cost grows unbounded.
+  - Signal deduplication and buffer caps are regression-tested; local inference can no longer consume all four host CPUs by configuration.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/worker.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/autonomy_cycle.py`.
+  - `/home/projects/cyber-team/backend/tests/test_autonomy_cycle.py`.
+- Next step:
+  - Complete the `0.3.5` quality/release gate, promote backup-first, start and signal v4, retire the old v3 execution, and prove no workflow-task timeout recurs.

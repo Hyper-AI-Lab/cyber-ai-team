@@ -411,6 +411,46 @@ class AutonomousCompanySignalWorkflow:
 
 
 @workflow.defn
+class AutonomousCompanySignalWorkflowV4:
+    """Bounded signal processor with short histories for reliable replay."""
+
+    def __init__(self) -> None:
+        self._event_ids: list[str] = []
+        self._cycles = 0
+        self._max_buffered_events = 100
+
+    @workflow.signal
+    def business_event_received(self, event_id: str) -> None:
+        if event_id not in self._event_ids and len(self._event_ids) < self._max_buffered_events:
+            self._event_ids.append(event_id)
+
+    @workflow.run
+    async def run(self, config: dict) -> None:
+        self._max_buffered_events = max(
+            1,
+            min(int(config.get("max_buffered_events", 100)), 500),
+        )
+        max_cycles = max(1, min(int(config.get("max_cycles", 10)), 100))
+        while True:
+            await workflow.wait_condition(lambda: bool(self._event_ids))
+            event_ids = list(self._event_ids)
+            self._event_ids.clear()
+            await workflow.execute_activity(
+                run_autonomous_company_cycle_activity,
+                {"trigger": "business_event_signal", "event_ids": event_ids},
+                start_to_close_timeout=timedelta(minutes=40),
+                retry_policy=RetryPolicy(
+                    initial_interval=timedelta(seconds=10),
+                    maximum_interval=timedelta(minutes=5),
+                    maximum_attempts=3,
+                ),
+            )
+            self._cycles += 1
+            if self._cycles >= max_cycles:
+                workflow.continue_as_new(config)
+
+
+@workflow.defn
 class CompanyOnboardingWorkflow:
     @workflow.run
     async def run(self, company_profile: dict) -> dict:
@@ -982,6 +1022,7 @@ async def run_worker():
             AutonomousCompanyCycleWorkflow,
             ExecutiveGovernorWorkflow,
             AutonomousCompanySignalWorkflow,
+            AutonomousCompanySignalWorkflowV4,
         ],
         activities=[
             invoke_agent_activity,

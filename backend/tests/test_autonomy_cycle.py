@@ -7,6 +7,7 @@ from cyber_team.operations.autonomy_cycle import (
     AutonomousCompanyCycleService,
     TemporalAutonomyController,
 )
+from cyber_team.worker import AutonomousCompanySignalWorkflowV4
 
 
 @pytest.mark.asyncio
@@ -95,6 +96,8 @@ async def test_temporal_controller_reconciles_schedule_and_signals(monkeypatch):
 
     monkeypatch.setattr(settings, "company_autonomy_temporal_schedule_enabled", True)
     monkeypatch.setattr(settings, "governor_enabled", True)
+    monkeypatch.setattr(settings, "company_autonomy_signal_max_cycles", 10)
+    monkeypatch.setattr(settings, "company_autonomy_signal_max_buffered_events", 100)
     controller = TemporalAutonomyController(client_factory=connect)
 
     status = await controller.ensure()
@@ -105,5 +108,32 @@ async def test_temporal_controller_reconciles_schedule_and_signals(monkeypatch):
     assert client.schedules[settings.company_autonomy_schedule_id].updated is True
     assert client.schedules[settings.governor_temporal_schedule_id].updated is True
     assert status["governor_schedule_id"] == settings.governor_temporal_schedule_id
+    assert status["signal_max_cycles"] == 10
+    assert status["signal_max_buffered_events"] == 100
     assert signal == {"status": "signaled", "event_id": "event-1"}
     assert client.workflow.signals == [("business_event_received", "event-1")]
+
+
+def test_signal_workflow_config_bounds_history_and_buffer(monkeypatch):
+    monkeypatch.setattr(settings, "company_autonomy_signal_max_cycles", 0)
+    monkeypatch.setattr(settings, "company_autonomy_signal_max_buffered_events", 9999)
+
+    config = TemporalAutonomyController._signal_workflow_config()
+
+    assert config == {
+        "cycle_version": AutonomousCompanyCycleService.CYCLE_VERSION,
+        "max_cycles": 1,
+        "max_buffered_events": 500,
+    }
+
+
+def test_v4_signal_workflow_deduplicates_and_bounds_buffer():
+    signal_workflow = AutonomousCompanySignalWorkflowV4()
+    signal_workflow._max_buffered_events = 2
+
+    signal_workflow.business_event_received("event-1")
+    signal_workflow.business_event_received("event-1")
+    signal_workflow.business_event_received("event-2")
+    signal_workflow.business_event_received("event-3")
+
+    assert signal_workflow._event_ids == ["event-1", "event-2"]

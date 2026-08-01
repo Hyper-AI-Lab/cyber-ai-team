@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # App
     app_name: str = "Cyber-Team"
-    app_version: str = "0.3.4"
+    app_version: str = "0.3.5"
     build_sha: str = "local"
     environment: str = "development"
     log_level: str = "INFO"
@@ -137,7 +137,9 @@ class Settings(BaseSettings):
     business_event_readiness_stale_after_seconds: int = 1800
     company_autonomy_temporal_schedule_enabled: bool = False
     company_autonomy_schedule_id: str = "cyberteam-autonomous-company-cycle-v3"
-    company_autonomy_signal_workflow_id: str = "cyberteam-autonomous-company-signals-v3"
+    company_autonomy_signal_workflow_id: str = "cyberteam-autonomous-company-signals-v4"
+    company_autonomy_signal_max_cycles: int = 10
+    company_autonomy_signal_max_buffered_events: int = 100
     action_policy_shadow_days: int = 7
     action_policy_min_validated_cases: int = 10
     action_policy_min_evaluator_score: float = 0.8
