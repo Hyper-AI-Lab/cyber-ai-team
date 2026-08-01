@@ -81,6 +81,10 @@ class TeamActivationRunRequest(BaseModel):
     source_snapshot_id: str | None = None
 
 
+class TeamActivationFamilyReconcileRequest(BaseModel):
+    dry_run: bool = True
+
+
 class SupervisorReviewResponse(BaseModel):
     reviewed_at: str
     actor: str
@@ -329,6 +333,26 @@ async def run_team_activation(
         apply_safe_roles=data.apply_safe_roles,
         request_high_risk_grants=data.request_high_risk_grants,
         source_snapshot_id=data.source_snapshot_id,
+    )
+
+
+@router.post("/team-activation/reconcile-families")
+async def reconcile_team_activation_role_families(
+    data: TeamActivationFamilyReconcileRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "reconcile",
+        "team_activation",
+        context={"dry_run": data.dry_run},
+    )
+    service = request.app.state.team_activation_service
+    return await service.reconcile_generated_role_families(
+        actor=principal.email,
+        dry_run=data.dry_run,
     )
 
 

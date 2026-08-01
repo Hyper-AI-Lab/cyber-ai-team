@@ -213,6 +213,7 @@ async def lifespan(app: FastAPI):
         agent_manager=app.state.agent_manager,
         tool_registry=app.state.tool_registry,
         audit_service=app.state.audit_service,
+        mandate_service=app.state.work_portfolio_service,
     )
     app.state.interop_service = InteropService(
         tool_registry=app.state.tool_registry,

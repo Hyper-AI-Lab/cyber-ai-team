@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 
 def test_provision_role_endpoint_success(test_app_client, mock_agent_manager):
     # Prepare mock return data for creating the manifest
@@ -150,6 +152,30 @@ def test_role_operating_cadence_endpoint_success(test_app_client, mock_agent_man
     assert response.json()["counts"]["cadences"] == 2
     mock_agent_manager.role_operating_cadence.assert_called_once_with(
         company_namespace="company:acme"
+    )
+
+
+def test_team_activation_family_reconciliation_endpoint(test_app_client):
+    service = AsyncMock()
+    service.reconcile_generated_role_families.return_value = {
+        "status": "dry_run",
+        "dry_run": True,
+        "candidate_count": 2,
+        "agents_reconciled": 0,
+        "candidates": [],
+    }
+    test_app_client.app.state.team_activation_service = service
+
+    response = test_app_client.post(
+        "/api/roles/team-activation/reconcile-families",
+        json={"dry_run": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["candidate_count"] == 2
+    service.reconcile_generated_role_families.assert_awaited_once_with(
+        actor="owner@example.com",
+        dry_run=True,
     )
 
 

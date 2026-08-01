@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -6,7 +8,13 @@ from cyber_team.agents import manager as manager_module
 from cyber_team.agents.manager import AgentManager
 from cyber_team.clock import utc_now
 from cyber_team.db import Base
-from cyber_team.db.models import Agent, AgentCapabilityGrant, ApprovalRequest, RoleGap
+from cyber_team.db.models import (
+    Agent,
+    AgentCapabilityGrant,
+    ApprovalRequest,
+    RoleGap,
+    RoleManifest,
+)
 from cyber_team.roles import team_activation as team_activation_module
 from cyber_team.roles.team_activation import TeamActivationService
 
@@ -94,7 +102,16 @@ async def session_factory(monkeypatch):
         await engine.dispose()
 
 
-async def seed_gap(factory, *, gap_id: str, name: str, tools: list[str]):
+async def seed_gap(
+    factory,
+    *,
+    gap_id: str,
+    name: str,
+    tools: list[str],
+    capability: str = "operations",
+    context_family: str | None = None,
+    proposed_family: str = "operations",
+):
     async with factory() as session:
         gap = RoleGap(
             id=gap_id,
@@ -104,12 +121,16 @@ async def seed_gap(factory, *, gap_id: str, name: str, tools: list[str]):
             severity="medium",
             source_type="company_context_snapshot",
             company_namespace="company:acme",
-            capability="operations",
+            capability=capability,
             requested_tools=tools,
-            context={"snapshot_id": "ctx_1", "source_hash": "hash-1"},
+            context={
+                "snapshot_id": "ctx_1",
+                "source_hash": "hash-1",
+                **({"role_family": context_family} if context_family else {}),
+            },
             proposed_role={
                 "manifest_payload": {
-                    "family": "operations",
+                    "family": proposed_family,
                     "name": name,
                     "description": f"{name} role.",
                     "instructions_template": "Operate within safe policy.",
@@ -214,3 +235,144 @@ async def test_team_activation_resolves_safe_only_role_gap(session_factory):
         "approval_request",
         "company_profile_read",
     ]
+
+
+@pytest.mark.asyncio
+async def test_team_activation_prefers_explicit_gap_family_over_stale_proposal(
+    session_factory,
+):
+    await seed_gap(
+        session_factory,
+        gap_id="gap_support",
+        name="Support Specialist",
+        tools=["memory_recall"],
+        capability="support",
+        context_family="support",
+        proposed_family="communications",
+    )
+    registry = FakeToolRegistry()
+    manager = AgentManager(tool_registry=registry)
+    service = TeamActivationService(agent_manager=manager, tool_registry=registry)
+
+    result = await service.run_activation(actor="owner@example.com")
+
+    assert result["status"] == "completed"
+    async with session_factory() as session:
+        agent = (
+            await session.execute(select(Agent).where(Agent.id == "support_specialist"))
+        ).scalar_one()
+        manifest = (
+            await session.execute(
+                select(RoleManifest).where(RoleManifest.id == "support_specialist")
+            )
+        ).scalar_one()
+    assert agent.role_family == "support"
+    assert manifest.family == "support"
+    assert manifest.config["family_source"] == "role_gap_context"
+    assert manifest.config["proposed_family_before_activation"] == "communications"
+
+
+@pytest.mark.asyncio
+async def test_team_activation_reconciles_only_generated_historical_families(
+    session_factory,
+):
+    await seed_gap(
+        session_factory,
+        gap_id="gap_historical_support",
+        name="Historical Support Specialist",
+        tools=["memory_recall"],
+        capability="support",
+        context_family="support",
+        proposed_family="communications",
+    )
+    async with session_factory() as session:
+        session.add(
+            RoleManifest(
+                id="historical_support_specialist_baseline",
+                family="communications",
+                name="Historical Support Specialist (Baseline)",
+                description="Historical generated baseline.",
+                instructions_template="Operate safely.",
+                default_tools=["memory_recall"],
+                memory_namespace="company:acme:team:historical_support",
+                approval_policy="auto",
+                success_metrics=[],
+                is_core=False,
+                config={
+                    "source": "team_activation",
+                    "role_gap_id": "gap_historical_support",
+                },
+            )
+        )
+        session.add(
+            Agent(
+                id="historical_support_specialist_baseline",
+                role_family="communications",
+                role_name="Historical Support Specialist (Baseline)",
+                instructions="Operate safely.",
+                tools=["memory_recall"],
+                memory_namespace="company:acme:team:historical_support",
+                approval_policy="auto",
+                status="active",
+                config={
+                    "provisioned_by": "team_activation",
+                    "role_gap_id": "gap_historical_support",
+                },
+            )
+        )
+        session.add(
+            Agent(
+                id="owner_created_agent",
+                role_family="communications",
+                role_name="Owner-created Support Advisor",
+                instructions="Owner managed.",
+                tools=[],
+                memory_namespace="company:acme:owner-advisor",
+                approval_policy="auto",
+                status="active",
+                config={"provisioned_by": "owner"},
+            )
+        )
+        await session.commit()
+
+    registry = FakeToolRegistry()
+    manager = AgentManager(tool_registry=registry)
+    mandate_service = AsyncMock()
+    mandate_service.ensure_active_agent_mandates.return_value = {
+        "status": "completed",
+        "created": 1,
+    }
+    service = TeamActivationService(
+        agent_manager=manager,
+        tool_registry=registry,
+        mandate_service=mandate_service,
+    )
+
+    preview = await service.reconcile_generated_role_families(
+        actor="owner@example.com",
+        dry_run=True,
+    )
+    assert preview["candidate_count"] == 1
+    assert preview["agents_reconciled"] == 0
+    mandate_service.ensure_active_agent_mandates.assert_not_awaited()
+
+    applied = await service.reconcile_generated_role_families(
+        actor="owner@example.com",
+        dry_run=False,
+    )
+    assert applied["status"] == "completed"
+    assert applied["agents_reconciled"] == 1
+    assert applied["manifests_reconciled"] == 1
+    mandate_service.ensure_active_agent_mandates.assert_awaited_once_with(
+        actor="owner@example.com"
+    )
+    async with session_factory() as session:
+        generated = await session.get(Agent, "historical_support_specialist_baseline")
+        owner_created = await session.get(Agent, "owner_created_agent")
+        manifest = await session.get(RoleManifest, "historical_support_specialist_baseline")
+    assert generated.role_family == "support"
+    assert generated.config["role_family_reconciliation"]["previous_family"] == (
+        "communications"
+    )
+    assert manifest.family == "support"
+    assert owner_created.role_family == "communications"

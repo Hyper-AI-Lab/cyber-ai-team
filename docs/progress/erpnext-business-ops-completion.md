@@ -5227,3 +5227,61 @@
   - `/home/projects/cyber-team/backend/tests/test_company_strategy.py`.
 - Next step:
   - Complete the `0.3.2` quality/release gate, promote with backup, run one live evidence-context consolidation followed by an identical no-op strategy cycle, then select the next domain from the cleaned portfolio.
+
+### 2026-08-01T03:40:00Z — STEP-189 — Stabilized evidence-driven strategy revisions
+- Files/services changed:
+  - Made strategy objective, KPI, benchmark, and experiment application idempotent against an unchanged active evidence context.
+  - Preserved owner locks and historical revisions while superseding stale autonomous artifacts without deletion.
+  - Advanced and deployed patch release `0.3.2` from commit `bee0fc1`.
+- Commands run:
+  - Focused strategy, intelligence, portfolio, and autonomy-cycle regressions followed by the full repository quality gate.
+  - Release image builds and scans, PostgreSQL migration rehearsals, isolated Compose smoke, backup-first staging promotion, and public health/readiness validation.
+  - One live evidence-context consolidation followed by an identical strategy cycle to prove the second pass was a no-op.
+- Result:
+  - An unchanged evidence context no longer creates repeated objective/KPI revisions or duplicate portfolio artifacts.
+  - Staging reported version `0.3.2` and exact build SHA `bee0fc1`; readiness remained `ready` with no blockers.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.2.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.2-20260801-032556.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.2-20260801-032435.dump`.
+- Next step:
+  - Exercise the first non-Knowledge domain canary and verify that parent work outcomes remain truthful when generated follow-up labels are rejected by policy.
+
+### 2026-08-01T05:07:18Z — STEP-190 — Enforced truthful Product canary outcomes
+- Files/services changed:
+  - Added reviewed semantic aliases for safe internal work labels and an exact allowlisted work vocabulary to role prompts.
+  - Added a completion contract that blocks parent work when required follow-up cannot be persisted, including the proposal-depth circuit breaker.
+  - Patched transitive frontend development dependencies and advanced release metadata to `0.3.3`.
+- Commands run:
+  - Fourteen focused portfolio tests, 60 control-plane tests, then the complete release gate with 323 backend tests and 24 frontend tests.
+  - Both PostgreSQL migration rehearsals, isolated Compose smoke, clean npm audit, Trivy scans, backup-first staging promotion, and public smoke.
+  - Product domain canary parent plus exactly one first-level child, followed by communication-log, readiness, audit, and core/worker log inspection.
+- Result:
+  - Work requiring follow-up can no longer report completion when every proposed child is rejected; depth exhaustion is explicit and blocked.
+  - Staging reports version `0.3.3`, build SHA `65b5e38a251275c238be89e6d7090c437c7fa241`, and readiness `ready`.
+  - Product canary `work_50903cce53b34996a0383f70ce39f7a3` completed with three accepted safe children, no rejected proposals, confidence `0.85`, and no side effects. Its first child `work_74f4399569314b35ad831cd1d54a1ddf` completed with three accepted safe children, confidence `0.92`, and no communication activity.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.3.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.3-20260801-050306.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.3-20260801-050144.dump`.
+- Next step:
+  - Reconcile historical generated baseline agents whose stored proposal family disagrees with authoritative role-gap context before activating another domain.
+
+### 2026-08-01T05:33:18Z — STEP-191 — Added generated role-family reconciliation
+- Files/services changed:
+  - Added authoritative role-family enforcement to safe team activation so stale proposal metadata cannot override explicit company-context provenance.
+  - Added an idempotent owner-authorized family reconciliation endpoint limited to system-generated team-activation agents and their generated manifests.
+  - Added versioned mandate refresh after repair and audit evidence describing affected agent IDs without rewriting role-gap history or owner-created agents.
+  - Advanced candidate release metadata to `0.3.4`.
+- Commands run:
+  - Inspected live PostgreSQL role gaps, generated agents, manifests, and family provenance.
+  - Ran 16 focused team-activation/API tests and the complete repository quality gate.
+- Result:
+  - The defect was historical: old June proposals had incorrect `proposed_role.family`, while explicit `context.role_family` was correct; newer proposals are already correct.
+  - Regression coverage proves activation prefers explicit context, reconciliation is dry-run capable and idempotent, owner-created agents are untouched, and mandates are refreshed after a real repair.
+  - Pre-release verification passed with 326 backend tests, 24 frontend tests, Ruff, compileall, Alembic offline SQL, dependency audits, production frontend build/typecheck, Compose validation, secret scan, FOSS policy, and diff hygiene.
+- Evidence:
+  - `/home/projects/cyber-team/backend/tests/test_team_activation.py`.
+  - `/home/projects/cyber-team/backend/tests/test_api_roles.py`.
+- Next step:
+  - Commit and release `0.3.4`, deploy backup-first, preview and apply live role-family reconciliation, verify mandate repair, then activate the next safe internal domain canary.

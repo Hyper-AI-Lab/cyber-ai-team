@@ -10,12 +10,14 @@ from sqlalchemy import desc, select
 from cyber_team.agents.manager import AgentManager, slug_id
 from cyber_team.audit.service import AuditService
 from cyber_team.clock import utc_now
+from cyber_team.company.operating_model import OperatingModelBuilder
 from cyber_team.db import async_session
 from cyber_team.db.models import (
     Agent,
     AgentCapabilityGrant,
     CompanyContextSnapshot,
     RoleGap,
+    RoleManifest,
     TeamActivationRun,
 )
 from cyber_team.tools.registry import ToolRegistry
@@ -38,10 +40,141 @@ class TeamActivationService:
         agent_manager: AgentManager,
         tool_registry: ToolRegistry,
         audit_service: AuditService | None = None,
+        mandate_service: Any | None = None,
     ) -> None:
         self._agent_manager = agent_manager
         self._tool_registry = tool_registry
         self._audit = audit_service
+        self._mandate_service = mandate_service
+
+    async def reconcile_generated_role_families(
+        self,
+        *,
+        actor: str,
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        """Repair historical generated agents using explicit role-gap provenance."""
+        now = utc_now()
+        candidates: list[dict[str, Any]] = []
+        manifests_reconciled = 0
+        generated_agents_scanned = 0
+
+        async with async_session() as session:
+            agents = (
+                await session.execute(
+                    select(Agent).where(Agent.status != "deleted").order_by(Agent.id)
+                )
+            ).scalars().all()
+            generated = [
+                agent
+                for agent in agents
+                if (agent.config or {}).get("provisioned_by") == "team_activation"
+                and (agent.config or {}).get("role_gap_id")
+            ]
+            generated_agents_scanned = len(generated)
+            gap_ids = {(agent.config or {})["role_gap_id"] for agent in generated}
+            gaps = {
+                gap.id: gap
+                for gap in (
+                    await session.execute(select(RoleGap).where(RoleGap.id.in_(gap_ids)))
+                ).scalars().all()
+            } if gap_ids else {}
+            manifests = {
+                manifest.id: manifest
+                for manifest in (
+                    await session.execute(select(RoleManifest))
+                ).scalars().all()
+            }
+
+            for agent in generated:
+                gap_id = str((agent.config or {})["role_gap_id"])
+                gap = gaps.get(gap_id)
+                expected_family = self._authoritative_gap_family(gap) if gap else None
+                if not expected_family or expected_family == agent.role_family:
+                    continue
+                candidate = {
+                    "agent_id": agent.id,
+                    "role_name": agent.role_name,
+                    "role_gap_id": gap_id,
+                    "previous_family": agent.role_family,
+                    "expected_family": expected_family,
+                    "manifest_reconciled": False,
+                }
+                manifest = manifests.get(agent.id)
+                if not dry_run:
+                    previous_family = agent.role_family
+                    agent.role_family = expected_family
+                    agent.config = {
+                        **(agent.config or {}),
+                        "role_family_reconciliation": {
+                            "previous_family": previous_family,
+                            "expected_family": expected_family,
+                            "role_gap_id": gap_id,
+                            "reconciled_at": now.isoformat(),
+                        },
+                    }
+                    if (
+                        manifest
+                        and (manifest.config or {}).get("source") == "team_activation"
+                        and (manifest.config or {}).get("role_gap_id") == gap_id
+                    ):
+                        manifest.family = expected_family
+                        manifest.config = {
+                            **(manifest.config or {}),
+                            "role_family_reconciliation": {
+                                "previous_family": previous_family,
+                                "expected_family": expected_family,
+                                "role_gap_id": gap_id,
+                                "reconciled_at": now.isoformat(),
+                            },
+                        }
+                        manifests_reconciled += 1
+                        candidate["manifest_reconciled"] = True
+                candidates.append(candidate)
+            if not dry_run and candidates:
+                await session.commit()
+
+        mandate_refresh = None
+        mandate_refresh_error = None
+        if not dry_run and candidates and self._mandate_service:
+            try:
+                mandate_refresh = await self._mandate_service.ensure_active_agent_mandates(
+                    actor=actor
+                )
+            except Exception as exc:  # noqa: BLE001 - expose partial repair truthfully.
+                mandate_refresh_error = str(exc)
+
+        status = "dry_run" if dry_run else ("degraded" if mandate_refresh_error else "completed")
+        result = {
+            "status": status,
+            "dry_run": dry_run,
+            "generated_agents_scanned": generated_agents_scanned,
+            "candidate_count": len(candidates),
+            "agents_reconciled": 0 if dry_run else len(candidates),
+            "manifests_reconciled": 0 if dry_run else manifests_reconciled,
+            "candidates": candidates,
+            "mandate_refresh": mandate_refresh,
+            "mandate_refresh_error": mandate_refresh_error,
+            "checked_at": now.isoformat(),
+        }
+        if self._audit and candidates:
+            await self._audit.record(
+                event_type="team_activation.role_families_reconciled",
+                actor=actor,
+                actor_type="user" if actor != "system" else "system",
+                resource_type="team_activation",
+                action="reconcile_role_families",
+                outcome="success" if status in {"completed", "dry_run"} else "degraded",
+                metadata={
+                    "dry_run": dry_run,
+                    "candidate_count": len(candidates),
+                    "agents_reconciled": result["agents_reconciled"],
+                    "manifests_reconciled": result["manifests_reconciled"],
+                    "agent_ids": [item["agent_id"] for item in candidates],
+                    "mandate_refresh_error": mandate_refresh_error,
+                },
+            )
+        return result
 
     async def run_activation(
         self,
@@ -276,6 +409,7 @@ class TeamActivationService:
         manifest_payload = (gap.get("proposed_role") or {}).get("manifest_payload") or {}
         if not manifest_payload:
             raise ValueError(f"Role gap {gap_id} has no manifest payload")
+        authoritative_family = self._authoritative_gap_family_dict(gap)
 
         requested_tools = self._unique(
             [
@@ -295,6 +429,7 @@ class TeamActivationService:
             safe_tools=safe_tools,
             baseline_variant=needs_baseline_variant,
             company_namespace=company_namespace,
+            authoritative_family=authoritative_family,
         )
         agent_id = slug_id(activation_manifest["name"])
         result = {
@@ -549,8 +684,12 @@ class TeamActivationService:
         safe_tools: list[str],
         baseline_variant: bool,
         company_namespace: str,
+        authoritative_family: str | None,
     ) -> dict[str, Any]:
         payload = dict(manifest_payload)
+        proposed_family = payload.get("family")
+        if authoritative_family:
+            payload["family"] = authoritative_family
         original_name = str(payload.get("name") or gap["title"]).strip()
         if baseline_variant:
             payload["name"] = f"{original_name} (Baseline)"
@@ -572,12 +711,40 @@ class TeamActivationService:
                 "canonical_role_name": original_name,
                 "baseline_variant": baseline_variant,
                 "activation_policy": "safe_auto_activation_v1",
+                "family_source": (
+                    "role_gap_context" if authoritative_family else "role_proposal"
+                ),
+                "proposed_family_before_activation": proposed_family,
             }
         )
         payload["config"] = config
         payload.setdefault("success_metrics", [])
         payload["is_core"] = False
         return payload
+
+    @staticmethod
+    def _authoritative_gap_family(gap: RoleGap | None) -> str | None:
+        if not gap:
+            return None
+        return TeamActivationService._explicit_family(
+            context=gap.context or {},
+            capability=gap.capability,
+        )
+
+    @staticmethod
+    def _authoritative_gap_family_dict(gap: dict[str, Any]) -> str | None:
+        return TeamActivationService._explicit_family(
+            context=gap.get("context") or {},
+            capability=gap.get("capability"),
+        )
+
+    @staticmethod
+    def _explicit_family(*, context: dict[str, Any], capability: Any) -> str | None:
+        for candidate in (context.get("role_family"), context.get("business_function")):
+            normalized = str(candidate or "").strip().lower().replace(" ", "_")
+            if normalized in OperatingModelBuilder.ROLE_DEFINITIONS:
+                return normalized
+        return AgentManager._family_for_role_gap_capability(capability)
 
     async def _maybe_request_role_gap_approval(
         self,
