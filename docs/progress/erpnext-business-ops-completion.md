@@ -5492,3 +5492,40 @@
   - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
 - Next step:
   - Promote `0.3.8`, rerun the Security memory probe, verify stale-memory IDs are excluded and the domain remains healthy, then publish and require green public CI.
+
+### 2026-08-01T17:06:00Z — STEP-203 — Verified v0.3.8 and contained an unrelated-gap canary defect
+- Files/services changed:
+  - Verified immutable `0.3.8` release images from commit `6afa757e11961064138f072fd37426b712df98a0` and promoted them backup-first to staging.
+  - Ran one bounded Security role-state memory probe with the Temporal worker stopped during direct execution, then cancelled all three unexecuted advisory descendants.
+  - Paused Security after the probe and dismissed false role gap `gap_7ff961af5219`, which had inferred outbound voice from an earlier no-tool remediation probe despite its explicit no-side-effect scope.
+- Commands run:
+  - Formal release gate with 332 backend tests, 24 frontend tests, both PostgreSQL migration rehearsals, isolated Compose smoke, dependency/secret/FOSS checks, immutable image builds, and zero-finding Trivy scans.
+  - Backup-first staging promotion, public Compose smoke, controlled worker stop/start, one-item domain-loop execution, descendant cancellation, direct memory metadata checks, and audited role-gap dismissal.
+- Result:
+  - Staging reported `0.3.8` and exact build SHA `6afa757e11961064138f072fd37426b712df98a0`; health and smoke passed and no external side effect occurred.
+  - The agent correctly reported three active Security agents, but a still-open unrelated outbound-voice capability gap prevented the preflight from quarantining one stale Security-role memory entry.
+  - This proved that family-level “any unresolved gap” logic was too coarse. The release was not published, Security remained paused, and all probe-generated work was contained.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.8.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.8-20260801-165635.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.8-20260801-165512.dump`.
+  - Probe `work_4ee59fcca1c24761b3e2a106b8abe00a`; cancelled descendants `work_14dae4f5daee4661ad421685e1785f2c`, `work_40b75692c2a14d5eb6899fa59866bbf2`, and `work_2a997a25d4be4d8dae7def5a594fa4ed`.
+- Next step:
+  - Match stale role assertions to specific unresolved gap identities, preserve current capability-gap memory, and rerun the same proof as `0.3.9`.
+
+### 2026-08-01T17:18:00Z — STEP-204 — Added specific-gap authoritative grounding
+- Files/services changed:
+  - Replaced the family-wide role-gap exception with normalized identity matching against each current gap's ID, title, and capability.
+  - Applied the same specific-gap rule to memory preflight, assessment grounding, and capability-proposal validation.
+  - Added regression coverage proving an unrelated outbound-voice gap cannot preserve a stale Security-staffing claim, while a memory statement about the real outbound-voice gap remains valid.
+  - Advanced candidate release metadata to `0.3.9`.
+- Commands run:
+  - Ran focused Ruff checks, Git diff hygiene, and all 19 work-portfolio tests.
+- Result:
+  - All focused checks passed. Current unresolved capability evidence is preserved, but unrelated stale role-state memory and agent claims are now deterministically quarantined or blocked.
+  - The worker is online on the last verified image while Security remains paused pending `0.3.9` promotion.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/work_portfolio.py`.
+  - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
+- Next step:
+  - Run the complete `0.3.9` release gate, promote backup-first, prove stale-memory quarantine with the same live Security probe, and publish only after public CI is green.

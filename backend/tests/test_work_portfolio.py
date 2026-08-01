@@ -773,6 +773,24 @@ async def test_memory_preflight_heals_stale_memory_when_agent_reasoning_is_corre
                     content="The Security role gap persists.",
                     metadata_={},
                 ),
+                MemoryEntry(
+                    id="memory-current-capability-gap",
+                    agent_id="security-agent",
+                    memory_type="episodic",
+                    namespace="company:test:security",
+                    content="The outbound voice role gap persists.",
+                    metadata_={},
+                ),
+                RoleGap(
+                    id="gap-outbound-voice",
+                    title="Blocked work needs outbound voice capability",
+                    description="A real, unrelated capability gap.",
+                    status="proposed",
+                    severity="medium",
+                    company_namespace="company:test",
+                    capability="outbound_voice",
+                    context={"role_family": "security"},
+                ),
             ]
         )
         await session.commit()
@@ -821,14 +839,52 @@ async def test_memory_preflight_heals_stale_memory_when_agent_reasoning_is_corre
     assert preflight["circuit_breaker_tripped"] is False
     async with portfolio_session_factory() as session:
         memory = await session.get(MemoryEntry, "memory-stale-preflight")
+        current_gap_memory = await session.get(
+            MemoryEntry,
+            "memory-current-capability-gap",
+        )
         finding = (
             await session.execute(select(MemoryStewardFinding))
         ).scalar_one()
         control = await session.get(DomainAutonomyControl, "security")
     assert memory.metadata_["canonical_superseded"] is True
+    assert "canonical_superseded" not in current_gap_memory.metadata_
     assert finding.evidence["agent_conflict_count"] == 0
     assert control is None
     audit.record_control_evidence.assert_awaited_once()
+
+
+def test_authoritative_grounding_matches_specific_current_gap():
+    service = WorkPortfolioService()
+    context = {
+        "observed_at": "2026-08-01T00:00:00",
+        "active_family_agent_count": 3,
+        "unresolved_role_gaps": [
+            {
+                "id": "gap-outbound-voice",
+                "title": "Blocked work needs outbound voice capability",
+                "capability": "outbound_voice",
+            }
+        ],
+    }
+    unsupported = {
+        "assessment": "The Security & Compliance Agent role remains unfulfilled.",
+        "proposed_work": [],
+        "rejected_proposals": [],
+    }
+    supported = {
+        "assessment": "The outbound voice role gap persists.",
+        "proposed_work": [],
+        "rejected_proposals": [],
+    }
+
+    blocked = service._apply_authoritative_grounding(unsupported, context)
+    passed = service._apply_authoritative_grounding(supported, context)
+
+    assert blocked["status"] == "blocked"
+    assert blocked["findings"][0]["type"] == "authoritative_role_state_conflict"
+    assert passed["status"] == "passed"
+    assert passed["findings"] == []
 
 
 @pytest.mark.asyncio

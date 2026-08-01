@@ -1011,10 +1011,7 @@ class WorkPortfolioService:
             )
         authoritative_context = await self._build_authoritative_context(item)
         preflight_context_hash = self._hash(authoritative_context)
-        if (
-            int(authoritative_context.get("active_family_agent_count") or 0) > 0
-            and not authoritative_context.get("unresolved_role_gaps")
-        ):
+        if int(authoritative_context.get("active_family_agent_count") or 0) > 0:
             authoritative_context["memory_preflight"] = (
                 await self._quarantine_authoritative_role_conflicts(
                     item,
@@ -1293,21 +1290,22 @@ class WorkPortfolioService:
         """Fail closed when role reasoning contradicts current authoritative state."""
         findings = []
         has_active_role = int(context.get("active_family_agent_count") or 0) > 0
-        has_current_gap = bool(context.get("unresolved_role_gaps"))
         assessment_text = str(assessment.get("assessment") or "")
-        if has_active_role and not has_current_gap and any(
+        unsupported_role_claim = any(
             pattern.search(assessment_text) for pattern in STALE_ROLE_STATE_PATTERNS
-        ):
+        ) and not self._matches_unresolved_role_gap(assessment_text, context)
+        if has_active_role and unsupported_role_claim:
             findings.append(
                 {
                     "type": "authoritative_role_state_conflict",
                     "detail": (
-                        "Assessment claimed a missing or unresolved role, but the "
-                        "current family has active agents and no unresolved role gap."
+                        "Assessment claimed a missing or unresolved role that does "
+                        "not match any current role gap, while the family has active "
+                        "agents."
                     ),
                 }
             )
-        if has_active_role and not has_current_gap:
+        if has_active_role:
             retained = []
             for index, proposal in enumerate(assessment["proposed_work"]):
                 proposal_text = (
@@ -1316,7 +1314,7 @@ class WorkPortfolioService:
                 if proposal["work_type"] == "capability_proposal" and (
                     "role gap" in proposal_text
                     or "deploy" in proposal_text and "role" in proposal_text
-                ):
+                ) and not self._matches_unresolved_role_gap(proposal_text, context):
                     assessment["rejected_proposals"].append(
                         {
                             "index": index,
@@ -1416,6 +1414,8 @@ class WorkPortfolioService:
                     pattern.search(entry.content)
                     for pattern in STALE_ROLE_STATE_PATTERNS
                 ):
+                    continue
+                if self._matches_unresolved_role_gap(entry.content, context):
                     continue
                 metadata = existing_metadata
                 metadata.update(
@@ -2157,6 +2157,33 @@ class WorkPortfolioService:
         }
         normalized = str(value or "operations").lower().replace(" ", "_")
         return aliases.get(normalized, normalized)
+
+    @classmethod
+    def _matches_unresolved_role_gap(
+        cls,
+        text: str,
+        context: dict[str, Any],
+    ) -> bool:
+        """Match role-state language to a specific current gap, not its whole family."""
+        normalized_text = cls._normalize_gap_identity(text)
+        if not normalized_text:
+            return False
+        for gap in context.get("unresolved_role_gaps") or []:
+            markers = {
+                str(gap.get("id") or "").lower(),
+                cls._normalize_gap_identity(str(gap.get("title") or "")),
+                cls._normalize_gap_identity(str(gap.get("capability") or "")),
+            }
+            if any(
+                marker and len(marker) >= 5 and marker in normalized_text
+                for marker in markers
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _normalize_gap_identity(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
 
     @classmethod
     def _role_gap_family(cls, gap: RoleGap) -> str:
