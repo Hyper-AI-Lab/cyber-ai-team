@@ -30,11 +30,13 @@ class FakeSession:
     def __init__(self, values=None):
         self.values = values or []
         self.statement = None
+        self.statements = []
         self.deleted = []
         self.commits = 0
 
     async def execute(self, statement):
         self.statement = statement
+        self.statements.append(statement)
         return FakeResult(self.values)
 
     async def delete(self, entry):
@@ -96,7 +98,9 @@ async def test_postgres_fallback_recall_filters_by_namespace(monkeypatch):
         )
     )
 
-    compiled = str(session.statement.compile(compile_kwargs={"literal_binds": True}))
+    compiled = str(
+        session.statements[0].compile(compile_kwargs={"literal_binds": True})
+    )
     assert "memory_entries.namespace = 'tenant-a'" in compiled
     assert result == [
         {
@@ -105,10 +109,11 @@ async def test_postgres_fallback_recall_filters_by_namespace(monkeypatch):
             "score": 1.0,
             "memory_type": "semantic",
             "namespace": "tenant-a",
-            "agent_id": "agent-1",
-            "importance": 0.9,
-        }
-    ]
+                "agent_id": "agent-1",
+                "importance": 0.9,
+                "metadata": {},
+            }
+        ]
 
 
 @pytest.mark.asyncio

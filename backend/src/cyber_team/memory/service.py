@@ -522,7 +522,7 @@ class MemoryService:
                 excluded.append(memory_id)
                 continue
             metadata = (
-                dict(entry.metadata_ or {})
+                dict(getattr(entry, "metadata_", {}) or {})
                 if entry is not None
                 else dict(item.get("metadata") or {})
             )
