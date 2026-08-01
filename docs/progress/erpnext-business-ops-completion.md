@@ -5326,3 +5326,25 @@
   - `/home/projects/cyber-team/backend/tests/test_autonomy_cycle.py`.
 - Next step:
   - Complete the `0.3.5` quality/release gate, promote backup-first, start and signal v4, retire the old v3 execution, and prove no workflow-task timeout recurs.
+
+### 2026-08-01T07:20:00Z — STEP-194 — Promoted bounded Temporal v4 and retired v3
+- Files/services changed:
+  - Verified immutable `0.3.5` release images from commit `31d56af017f63a4d7543b7b95e09f18ab0100ecc` and promoted them to staging after a PostgreSQL backup.
+  - Recreated only the local llama.cpp fallback with three inference threads, three batch threads, and a hard three-CPU limit, reserving one host CPU for the control plane.
+  - Started the fresh `AutonomousCompanySignalWorkflowV4`, processed a live idempotent Engineering-domain signal, and terminated the superseded v3 execution only after v4 completed its activity successfully.
+- Commands run:
+  - Full release gate with 328 backend tests, 24 frontend tests, Ruff, compileall, Alembic offline SQL, dependency audits, two PostgreSQL migration rehearsals, isolated Compose smoke, secret/FOSS checks, release image builds, and Trivy scans.
+  - Backup-first staging promotion, public health/readiness checks, and live Compose smoke with the real email side effect rejected.
+  - Temporal workflow list/history inspection, owner-authorized Engineering domain signal, bounded completion polling, v3 termination, local-model recreation, worker-log inspection, and operations-readiness verification.
+- Result:
+  - Staging reports version `0.3.5`, exact build SHA `31d56af017f63a4d7543b7b95e09f18ab0100ecc`, dependency readiness `ready`, and operations readiness `ready` with zero blockers.
+  - V4 processed one real autonomy-cycle activity with one completion, zero activity failures, and zero workflow-task timeouts; it remains running for new events. V3 is durably terminated with the reason `Replaced by bounded v4 after verified staging rollout`.
+  - The local model is healthy with `--threads 3`, `--threads-batch 3`, and Docker `NanoCpus=3000000000`. Worker logs contain no deadlock, traceback, or error after promotion.
+  - The Observer retains a non-blocking medium benchmark caveat with confidence `0.74`, but has no unresolved objections; external mutations remain impact- and approval-gated.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.5.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.5-20260801-071327.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.5-20260801-071201.dump`.
+  - Temporal v4 run `019fbc2b-8d99-716b-b86b-ac02236a8b18` and retired v3 run `a07c3376-d7d8-4ff2-a392-68c7a7f87ed8`.
+- Next step:
+  - Publish the accumulated staged-autonomy hardening to the public repository, tag `v0.3.5`, and require green push and manual GitHub CI before selecting the next domain canary.
