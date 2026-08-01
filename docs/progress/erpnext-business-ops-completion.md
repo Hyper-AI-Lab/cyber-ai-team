@@ -5366,3 +5366,57 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30687183454`.
 - Next step:
   - Continue the global staged rollout by selecting the next safe internal domain from current evidence; keep high-impact, customer-visible, legal, financial, credential, destructive, and production-deployment actions permanently policy- or owner-gated.
+
+### 2026-08-01T13:35:00Z — STEP-196 — Ran and contained the Security/Compliance domain canary
+- Files/services changed:
+  - Created one bounded, low-risk Security/Compliance advisory work item from recurring live benchmark and audit evidence.
+  - Activated only the Security domain for the canary, then paused it immediately after its first assessment exposed stale-state reasoning.
+- Commands run:
+  - Queried domain controls, agent mandates, role gaps, work queues, benchmark results, readiness evidence, tool readiness, communication logs, approvals, and recent Observer reviews.
+  - Executed exactly one Security/Compliance work item and inspected its complete work tree before any child was leased.
+- Result:
+  - Parent work item `work_f531f619ec464600846f780e59aac6bd` completed with no external side effect and created three low-risk advisory children.
+  - The assessment incorrectly claimed that the Security role remained unfulfilled even though three active Security agents and mandates existed and no active Security role gap remained.
+  - All three children remained `ready` and unexecuted. The Security domain was paused with the contradiction recorded; Product, Legal, Operations, Finance, Sales, Support, Marketing, HR, and Communications were not activated by this step.
+- Evidence:
+  - Parent work item `work_f531f619ec464600846f780e59aac6bd`.
+  - Quarantined child work items `work_03e4e7d4238f460bae5bfe28505ab947`, `work_9aceb4fdc3c84d6bb850b2d2e77dd568`, and `work_d882a2c6b10147c59058cd0c2c094a20`.
+- Next step:
+  - Add authoritative current-state grounding, contradiction guards, audited descendant cancellation, and worker-visible readiness evidence before rerunning the same canary.
+
+### 2026-08-01T14:05:00Z — STEP-197 — Hardened role reasoning and worker evidence consistency
+- Files/services changed:
+  - Added an authoritative operating-context envelope to every advisory role execution, covering current agents, unresolved role gaps, domain controls, KPI observations, benchmark results, and family work counts.
+  - Added deterministic contradiction detection that blocks stale role-gap claims and suppresses follow-up creation when live state proves a role is already staffed.
+  - Added an owner-authorized work-item cancellation API that can quarantine pending descendants and records control evidence without deleting work history.
+  - Mounted readiness evidence into the Temporal worker and advanced candidate release metadata to `0.3.6`.
+- Commands run:
+  - Ran focused Ruff checks and all 16 work-portfolio tests.
+  - Rendered Docker Compose configuration and verified the worker receives `READINESS_EVIDENCE_ROOT=/app/evidence` and the read-only `/app/evidence/dist` bind mount.
+  - Ran Git diff hygiene checks.
+- Result:
+  - All focused checks passed. Regression coverage proves authoritative context reaches the agent, contradictory stale-state output is blocked without spawning work, cancellation recursively quarantines only the intended tree, and cancellation evidence is durable.
+  - Scheduled Governor/Observer work will now read the same host-generated CI, restore, load, and business-smoke artifacts used by the API process.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/work_portfolio.py`.
+  - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
+  - `/home/projects/cyber-team/docker-compose.yml`.
+- Next step:
+  - Run the complete `0.3.6` quality and release gates, promote backup-first, cancel the false descendants, and rerun the bounded Security/Compliance canary against the hardened worker.
+
+### 2026-08-01T16:07:00Z — STEP-198 — Passed the complete v0.3.6 repository quality gate
+- Files/services changed:
+  - Finalized candidate release metadata for `0.3.6` across backend, frontend, Compose, configuration defaults, and deployment examples.
+- Commands run:
+  - Ran `scripts/quality-gate.sh` with the existing locked quality environments.
+- Result:
+  - Ruff passed, all 330 backend tests passed, compileall passed, and the complete Alembic migration chain rendered successfully as offline PostgreSQL SQL.
+  - The Python dependency audit reported no known vulnerabilities.
+  - The production frontend build and typecheck passed; all 24 frontend tests passed; the runtime dependency audit reported zero vulnerabilities.
+  - Compose configuration, shell/dashboard syntax, secret scanning, FOSS/resource policy, and Git diff hygiene all passed.
+  - The only test warning is the existing upstream Starlette deprecation notice for its TestClient compatibility import; it does not indicate an application failure.
+- Evidence:
+  - Local quality-gate transcript from 2026-08-01.
+  - `/tmp/cyberteam-alembic.sql`.
+- Next step:
+  - Commit the exact candidate, run the formal release gate with real PostgreSQL rehearsals and immutable image scans, then promote backup-first to staging.

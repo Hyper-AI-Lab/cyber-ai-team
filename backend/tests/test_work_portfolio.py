@@ -416,6 +416,14 @@ async def test_role_loop_completes_advisory_work_without_side_effects(
     trace = manager.invoke_agent.await_args.kwargs["trace_metadata"]
     assert trace["external_side_effects_allowed"] is False
     assert trace["work_item_id"] == created["id"]
+    assert trace["authoritative_context_hash"]
+    task = manager.invoke_agent.await_args.args[1]
+    assert "AUTHORITATIVE CURRENT OPERATING CONTEXT" in task
+    context = result["items"][0]["actual_outcome"]["authoritative_context"]
+    assert context["role_family"] == "knowledge"
+    assert context["active_family_agent_count"] == 1
+    assert context["unresolved_role_gaps"] == []
+    assert result["items"][0]["actual_outcome"]["grounding"]["status"] == "passed"
 
 
 @pytest.mark.asyncio
@@ -467,6 +475,159 @@ async def test_role_loop_persists_validated_follow_up_work(
         follow_up = await session.get(BusinessWorkItem, created_ids[0])
     assert follow_up.work_type == "research"
     assert follow_up.payload["parent_work_item_id"] == parent["id"]
+
+
+@pytest.mark.asyncio
+async def test_role_loop_blocks_stale_role_gap_claim_against_live_state(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    async with portfolio_session_factory() as session:
+        session.add(
+            Agent(
+                id="security-agent",
+                role_family="security",
+                role_name="Security & Compliance Agent",
+                instructions="Assess current security evidence.",
+                tools=["access_audit"],
+                memory_namespace="company:test:security",
+                status="active",
+            )
+        )
+        await session.commit()
+    manager = AsyncMock()
+    manager.invoke_agent.return_value = json.dumps(
+        {
+            "assessment": (
+                "The Security & Compliance Agent role remains unfulfilled and the "
+                "role gap persists."
+            ),
+            "confidence": 0.9,
+            "unknowns": [],
+            "recommended_action": "revise",
+            "expected_outcome": {"type": "role_activation"},
+            "proposed_work": [
+                {
+                    "title": "Resolve Security Agent role gap",
+                    "description": "Deploy the missing role.",
+                    "work_type": "capability_proposal",
+                    "priority": "high",
+                    "acceptance_criteria": ["role_deployed"],
+                    "expected_outcome": {"type": "role_activation"},
+                }
+            ],
+        }
+    )
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        company_intelligence_service=FakeIntelligence(),
+    )
+    await service.ensure_active_agent_mandates()
+    await service.create_work_item(
+        title="Assess security benchmark failures",
+        description="Use current operating state.",
+        work_type="domain_assessment",
+        company_namespace="company:test",
+        assigned_agent_id="security-agent",
+        payload={},
+        acceptance_criteria=["current_state_used"],
+        idempotency_key="work-stale-security-role",
+    )
+
+    result = await service.run_domain_loop("security-agent", prepare=False)
+
+    item = result["items"][0]
+    assert item["status"] == "blocked"
+    assert item["actual_outcome"]["created_work_item_ids"] == []
+    assert item["actual_outcome"]["grounding"]["status"] == "blocked"
+    assert {
+        finding["type"]
+        for finding in item["actual_outcome"]["grounding"]["findings"]
+    } == {
+        "authoritative_role_state_conflict",
+        "unsupported_role_gap_proposal",
+    }
+    assert item["actual_outcome"]["completion_contract"]["satisfied"] is False
+    async with portfolio_session_factory() as session:
+        assert (
+            await session.execute(select(func.count(BusinessWorkItem.id)))
+        ).scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_generated_work_cancels_descendants_and_records_evidence(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    audit = AsyncMock()
+    service = WorkPortfolioService(audit_service=audit)
+    await service.ensure_active_agent_mandates()
+    parent = await service.create_work_item(
+        title="Invalid generated premise",
+        description="Parent work.",
+        work_type="analysis",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={},
+        acceptance_criteria=["reviewed"],
+        idempotency_key="cancel-parent",
+    )
+    child = await service.create_work_item(
+        title="Invalid child",
+        description="Child work.",
+        work_type="analysis",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={"parent_work_item_id": parent["id"]},
+        acceptance_criteria=["reviewed"],
+        idempotency_key="cancel-child",
+    )
+    grandchild = await service.create_work_item(
+        title="Invalid grandchild",
+        description="Grandchild work.",
+        work_type="analysis",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={"parent_work_item_id": child["id"]},
+        acceptance_criteria=["reviewed"],
+        idempotency_key="cancel-grandchild",
+    )
+    unrelated = await service.create_work_item(
+        title="Valid independent work",
+        description="Unrelated work.",
+        work_type="analysis",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={},
+        acceptance_criteria=["reviewed"],
+        idempotency_key="cancel-unrelated",
+    )
+
+    result = await service.cancel_work_item(
+        parent["id"],
+        reason="The generated work was based on stale role state.",
+        actor="owner@example.com",
+        include_descendants=True,
+    )
+
+    assert result["cancelled_count"] == 3
+    assert result["cancelled_ids"] == sorted(
+        [parent["id"], child["id"], grandchild["id"]]
+    )
+    async with portfolio_session_factory() as session:
+        cancelled = [
+            await session.get(BusinessWorkItem, item_id)
+            for item_id in result["cancelled_ids"]
+        ]
+        independent = await session.get(BusinessWorkItem, unrelated["id"])
+    assert all(item.status == "cancelled" for item in cancelled)
+    assert all(
+        item.actual_outcome["classification"]
+        == "owner_cancelled_invalid_generated_work"
+        for item in cancelled
+    )
+    assert independent.status == "ready"
+    audit.record_control_evidence.assert_awaited_once()
 
 
 @pytest.mark.asyncio

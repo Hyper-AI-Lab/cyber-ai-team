@@ -285,6 +285,11 @@ class BusinessWorkItemCreateRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=240)
 
 
+class BusinessWorkItemCancelRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=4000)
+    include_descendants: bool = True
+
+
 class WorkflowSpecificationCreateRequest(BaseModel):
     spec_key: str = Field(..., min_length=1, max_length=160)
     title: str = Field(..., min_length=1, max_length=240)
@@ -1175,6 +1180,32 @@ async def create_business_work_item(
         )
         await _signal_company_autonomy(request, result["id"])
         return result
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/work-items/{work_item_id}/cancel")
+async def cancel_business_work_item(
+    work_item_id: str,
+    data: BusinessWorkItemCancelRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "cancel",
+        "business_work_item",
+        work_item_id,
+        context={"include_descendants": data.include_descendants},
+    )
+    try:
+        return await request.app.state.work_portfolio_service.cancel_work_item(
+            work_item_id,
+            reason=data.reason,
+            actor=principal.email,
+            include_descendants=data.include_descendants,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
