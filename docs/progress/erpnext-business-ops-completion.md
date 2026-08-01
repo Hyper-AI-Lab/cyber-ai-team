@@ -5584,3 +5584,25 @@
   - Work item `work_ea7c6b33611c42a597bfbfaff3a1c218` and trace `ee00f980-a530-4ba3-9648-9971ac7c1d00`.
 - Next step:
   - Publish `v0.3.10`, require green public push/manual CI, refresh CI/readiness evidence, and run a no-auto-action executive measurement cycle before reviewing any obsolete approval.
+
+### 2026-08-01T19:08:47Z — STEP-208 — Published v0.3.10 and closed rollout evidence
+- Files/services changed:
+  - Published commits through `6fad0539ba675b3fbc8f57418ae499301e45d5c1` to `Hyper-AI-Lab/cyber-ai-team` and tagged application commit `837a57a3f19171d71d35de9d136460ec6f0ff7cf` as `v0.3.10`.
+  - Refreshed GitHub CI evidence, executive benchmarks, reflection, Observer review, and staging readiness.
+  - Resolved the two remediated canonical role-state findings and rejected four obsolete/no-op approvals without executing or replaying any action.
+- Commands run:
+  - Public `main` push, annotated tag push, GitHub release creation, push-CI watch, independent manual-CI dispatch/watch, and `scripts/github-ci-evidence.py`.
+  - One executive Governor measurement run with low-risk auto-apply disabled, forced benchmark/reflection refresh, and required Observer review.
+  - Authenticated readiness, approval-detail, finding-resolution, and approval-rejection checks.
+- Result:
+  - Push CI run `30713717488` and manual CI run `30713937252` passed every job on final public head `6fad0539ba675b3fbc8f57418ae499301e45d5c1`; the latest scheduled run is green and the next exact-head cron remains pending by definition.
+  - Staging readiness is `ready` with no blockers. Executive run `exegov_f31422f48972` completed with zero errors, fresh benchmarks/reflection, no side effect, and an Observer medium-severity disagreement recorded for three non-blocking benchmark follow-ups.
+  - Findings `mem_find_351622cac23e` and `mem_find_3a1f535be6a1` are resolved. Their two stale remediation approvals and two observe-only approvals were rejected with audit notes; pending approvals are now `0`.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/releases/tag/v0.3.10`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30713717488`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30713937252`.
+  - `/home/projects/cyber-team/dist/ci/github-ci-20260801T190607Z.json`.
+  - Executive run `exegov_f31422f48972` and Observer review `obs_70f9369d3c4146db`.
+- Next step:
+  - Continue the Autonomous Company Operations v3 canary sequence with evidence-ranked internal domains, beginning with the Observer's bounded memory-findings, role-backlog, and historical-workflow-failure follow-ups rather than choosing a business domain arbitrarily.
