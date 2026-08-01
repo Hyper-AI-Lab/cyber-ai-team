@@ -19,6 +19,8 @@ from cyber_team.db.models import (
     BusinessWorkItemDependency,
     CompanyObjective,
     CompanyObjectiveRevision,
+    CompanySignal,
+    CompanySource,
     RoleGap,
 )
 from cyber_team.operations import work_portfolio as portfolio_module
@@ -171,6 +173,129 @@ async def test_events_are_routed_once_or_deferred_with_capability_gap(
         "accepted_work_item",
         "deferred",
     }
+
+
+@pytest.mark.asyncio
+async def test_completed_audit_event_is_documented_as_no_action(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    async with portfolio_session_factory() as session:
+        session.add(
+            event(
+                "event-audit-completed",
+                "evidence.audit.event",
+                payload={"outcome": "completed"},
+            )
+        )
+        await session.commit()
+
+    result = await WorkPortfolioService().route_pending_events()
+
+    assert result["counts"]["no_action"] == 1
+    async with portfolio_session_factory() as session:
+        works = (await session.execute(select(BusinessWorkItem))).scalars().all()
+        disposition = (
+            await session.execute(select(BusinessEventDisposition))
+        ).scalar_one()
+    assert works == []
+    assert disposition.disposition == "no_action"
+
+
+@pytest.mark.asyncio
+async def test_historical_successful_audit_work_is_reconciled_but_failure_remains(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    now = utc_now()
+    source = CompanySource(
+        id="source-cyber-team",
+        company_namespace="company:test",
+        source_key="cyber_team",
+        source_type="internal",
+        name="Cyber-Team",
+        trust_class="internal",
+        sensitivity="internal",
+    )
+    async with portfolio_session_factory() as session:
+        session.add(source)
+        for suffix, outcome in (("success", "success"), ("failed", "failed")):
+            signal = CompanySignal(
+                id=f"signal-{suffix}",
+                company_namespace="company:test",
+                source_id=source.id,
+                signal_type="audit.event",
+                status="processed",
+                trust_class="internal",
+                sensitivity="internal",
+                content_hash=f"hash-{suffix}",
+                redacted_payload={
+                    "event_type": "workflow.execute",
+                    "outcome": outcome,
+                },
+                idempotency_key=f"signal-key-{suffix}",
+            )
+            audit_event = event(
+                f"event-{suffix}",
+                "evidence.audit.event",
+            )
+            audit_event.signal_id = signal.id
+            audit_event.status = "accepted"
+            work = BusinessWorkItem(
+                id=f"work-{suffix}",
+                company_namespace="company:test",
+                title="Assess audit event",
+                work_type="domain_assessment",
+                status="ready",
+                assigned_agent_id="observer_agent",
+                event_id=audit_event.id,
+                idempotency_key=f"work-key-{suffix}",
+            )
+            delivery = BusinessEventDelivery(
+                id=f"delivery-{suffix}",
+                event_id=audit_event.id,
+                destination="work_portfolio",
+                status="delivered",
+                available_at=now,
+                delivered_at=now,
+            )
+            disposition = BusinessEventDisposition(
+                id=f"disposition-{suffix}",
+                event_id=audit_event.id,
+                sequence=1,
+                status="accepted",
+                disposition="accepted_work_item",
+                reason="Assigned for assessment.",
+                work_item_id=work.id,
+                actor="business_event_router",
+            )
+            session.add_all([signal, audit_event, work, delivery, disposition])
+        await session.commit()
+
+    result = await WorkPortfolioService().reconcile_internal_audit_feedback()
+
+    assert result == {"status": "completed", "examined": 2, "reconciled": 1}
+    async with portfolio_session_factory() as session:
+        success_work = await session.get(BusinessWorkItem, "work-success")
+        failed_work = await session.get(BusinessWorkItem, "work-failed")
+        success_event = await session.get(BusinessEvent, "event-success")
+        success_dispositions = (
+            await session.execute(
+                select(BusinessEventDisposition)
+                .where(BusinessEventDisposition.event_id == "event-success")
+                .order_by(BusinessEventDisposition.sequence)
+            )
+        ).scalars().all()
+    assert success_work.status == "completed"
+    assert success_work.actual_outcome["classification"] == (
+        "informational_audit_no_action"
+    )
+    assert failed_work.status == "ready"
+    assert success_event.status == "resolved"
+    assert [item.disposition for item in success_dispositions] == [
+        "accepted_work_item",
+        "no_action",
+    ]
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,7 @@ from cyber_team.db.models import (
     BusinessWorkItem,
     BusinessWorkItemDependency,
     CompanyObjectiveRevision,
+    CompanySignal,
     DomainAutonomyControl,
     OperatingKPIDefinition,
     RoleGap,
@@ -91,6 +92,14 @@ SAFE_AGENT_PROPOSED_WORK_TYPES = {
     "planning",
     "research",
     "workflow_proposal",
+}
+INFORMATIONAL_AUDIT_OUTCOMES = {
+    "allowed",
+    "completed",
+    "passed",
+    "ready",
+    "skipped",
+    "success",
 }
 
 
@@ -279,6 +288,9 @@ class WorkPortfolioService:
 
     async def route_pending_events(self, *, limit: int = 200) -> dict[str, Any]:
         await self.ensure_active_agent_mandates()
+        reconciled = await self.reconcile_internal_audit_feedback(
+            limit=max(1_000, min(limit * 10, 10_000))
+        )
         counts = {"accepted": 0, "duplicate": 0, "deferred": 0, "escalated": 0, "no_action": 0}
         async with async_session() as session:
             await self._ensure_outbox_records(session)
@@ -447,7 +459,132 @@ class WorkPortfolioService:
                 )
                 counts["accepted"] += 1
             await session.commit()
-        return {"status": "completed", "processed": len(deliveries), "counts": counts}
+        return {
+            "status": "completed",
+            "processed": len(deliveries),
+            "reconciled_no_action": reconciled["reconciled"],
+            "counts": counts,
+        }
+
+    async def reconcile_internal_audit_feedback(
+        self,
+        *,
+        limit: int = 10_000,
+    ) -> dict[str, Any]:
+        """Close historical successful audit work that never required assessment."""
+        safe_limit = max(1, min(limit, 50_000))
+        now = utc_now()
+        reason = "Informational successful audit event requires no follow-up."
+        async with async_session() as session:
+            rows = (
+                await session.execute(
+                    select(BusinessWorkItem, BusinessEvent, CompanySignal)
+                    .join(BusinessEvent, BusinessEvent.id == BusinessWorkItem.event_id)
+                    .join(CompanySignal, CompanySignal.id == BusinessEvent.signal_id)
+                    .where(
+                        BusinessWorkItem.status.in_(
+                            {"ready", "retry", "blocked_dependency"}
+                        ),
+                        BusinessEvent.event_type == "evidence.audit.event",
+                    )
+                    .order_by(BusinessWorkItem.created_at)
+                    .with_for_update(skip_locked=True)
+                    .limit(safe_limit)
+                )
+            ).all()
+            informational = [
+                (
+                    work,
+                    event,
+                    str((signal.redacted_payload or {}).get("outcome") or "success")
+                    .lower(),
+                )
+                for work, event, signal in rows
+                if self._audit_outcome_is_informational(signal.redacted_payload)
+            ]
+            if not informational:
+                return {"status": "completed", "examined": len(rows), "reconciled": 0}
+
+            event_ids = [event.id for _, event, _ in informational]
+            sequences = {
+                event_id: int(sequence or 0)
+                for event_id, sequence in (
+                    await session.execute(
+                        select(
+                            BusinessEventDisposition.event_id,
+                            func.max(BusinessEventDisposition.sequence),
+                        )
+                        .where(BusinessEventDisposition.event_id.in_(event_ids))
+                        .group_by(BusinessEventDisposition.event_id)
+                    )
+                ).all()
+            }
+            deliveries = {
+                item.event_id: item
+                for item in (
+                    await session.execute(
+                        select(BusinessEventDelivery).where(
+                            BusinessEventDelivery.event_id.in_(event_ids),
+                            BusinessEventDelivery.destination == "work_portfolio",
+                        )
+                    )
+                ).scalars().all()
+            }
+            for work, event, outcome in informational:
+                work.status = "completed"
+                work.actual_outcome = {
+                    **(work.actual_outcome or {}),
+                    "classification": "informational_audit_no_action",
+                    "recommended_action": "no_action",
+                    "source_outcome": outcome,
+                    "side_effects_executed": False,
+                }
+                work.lease_owner = None
+                work.lease_expires_at = None
+                work.completed_at = now
+                event.status = "resolved"
+                event.disposition = "no_action"
+                event.disposition_reason = reason
+                event.resolved_at = now
+                delivery = deliveries.get(event.id)
+                if delivery:
+                    delivery.status = "delivered"
+                    delivery.delivered_at = delivery.delivered_at or now
+                    delivery.lease_owner = None
+                    delivery.lease_expires_at = None
+                    delivery.last_error = None
+                session.add(
+                    BusinessEventDisposition(
+                        id=f"disposition_{uuid.uuid4().hex}",
+                        event_id=event.id,
+                        sequence=sequences.get(event.id, 0) + 1,
+                        status="resolved",
+                        disposition="no_action",
+                        reason=reason,
+                        work_item_id=work.id,
+                        actor="business_event_router",
+                        created_at=now,
+                    )
+                )
+            await session.commit()
+
+        result = {
+            "status": "completed",
+            "examined": len(rows),
+            "reconciled": len(informational),
+        }
+        if self._audit:
+            await self._audit.record(
+                event_type="business_work.audit_feedback_reconciled",
+                actor="business_event_router",
+                actor_type="system",
+                resource_type="business_work_item",
+                resource_id=None,
+                action="reconcile",
+                outcome="success",
+                metadata=result,
+            )
+        return result
 
     async def create_work_item(
         self,
@@ -1299,7 +1436,13 @@ class WorkPortfolioService:
         return (
             event.event_type == "evidence.audit.event"
             and str((event.payload or {}).get("outcome") or "").lower()
-            in {"success", "passed", "ready"}
+            in INFORMATIONAL_AUDIT_OUTCOMES
+        )
+
+    @staticmethod
+    def _audit_outcome_is_informational(payload: dict[str, Any] | None) -> bool:
+        return str((payload or {}).get("outcome") or "").lower() in (
+            INFORMATIONAL_AUDIT_OUTCOMES
         )
 
     @staticmethod

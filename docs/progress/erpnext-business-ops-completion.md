@@ -5184,3 +5184,24 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30609513614`.
 - Next step:
   - Observe the Knowledge/Research canary through its normal scheduled cycles, then activate the next low-risk internal domain canary only after its event, memory, strategy, and Observer evidence remain clean.
+
+### 2026-08-01T01:55:00Z — STEP-187 — Closed the autonomous audit-feedback backlog defect
+- Files/services changed:
+  - Added bounded trusted routing metadata for internal audit signals so completed and successful evidence is deterministically classified as no-action.
+  - Suppressed recursive `company.signal_ingested` audit feedback and routine successful authorization/refresh telemetry while preserving failed and blocked audit evidence.
+  - Added an idempotent, row-locked reconciler that closes historical informational audit work append-only and leaves failed/blocked work available to the Observer.
+  - Advanced patch-release metadata from `0.3.0` to `0.3.1`; no schema migration or authority-policy change was required.
+- Commands run:
+  - Audited public health/readiness, Git state, disk headroom, scheduled Governor history, domain controls, business events, work items, mandates, outcomes, and Observer reviews.
+  - Counted the live backlog directly in PostgreSQL and classified source audit outcomes/event types.
+  - Ran 24 focused company-intelligence/work-portfolio tests followed by the full repository quality gate.
+- Result:
+  - The live audit found 29,225 ready work items, including 29,216 audit assessments assigned to `observer_agent`; 29,121 were successful and 91 completed events that never required assessment.
+  - Root cause was safe audit outcome metadata being retained in `CompanySignal` but omitted from `BusinessEvent`, combined with historical backfill of routine `authorization.allowed` telemetry.
+  - Full verification passed with 319 backend tests, 24 frontend tests, production frontend build, Ruff, compileall, Alembic offline SQL, dependency audits, Compose validation, secret scan, FOSS policy, and diff hygiene.
+- Evidence:
+  - `/home/projects/cyber-team/dist/canary/post-release-rollout-audit-20260801T0124Z.json`.
+  - `/home/projects/cyber-team/backend/tests/test_company_intelligence.py`.
+  - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
+- Next step:
+  - Build, scan, back up, and promote immutable `0.3.1`; reconcile the historical success backlog, prove failed audit work remains, and rerun the Knowledge/Research canary before selecting the next domain.

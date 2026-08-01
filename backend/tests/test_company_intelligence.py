@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 from base64 import b64encode
+from datetime import timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,6 +17,8 @@ from cyber_team.config import settings
 from cyber_team.db import Base
 from cyber_team.db.models import (
     Agent,
+    AuditEvent,
+    BusinessEvent,
     CompanyClaim,
     CompanyContextSnapshot,
     CompanySignal,
@@ -107,6 +110,99 @@ def test_pending_signal_query_claims_rows_without_waiting():
 
     assert "FOR UPDATE SKIP LOCKED" in compiled
     assert query._limit_clause.value == 200
+
+
+@pytest.mark.asyncio
+async def test_internal_audit_acquisition_skips_feedback_and_routine_success(
+    intelligence_session_factory,
+):
+    service = CompanyIntelligenceService()
+    await service.ensure_default_sources("company:test")
+    now = utc_now()
+    async with intelligence_session_factory() as session:
+        session.add_all(
+            [
+                AuditEvent(
+                    id="audit-1",
+                    event_type="authorization.allowed",
+                    actor="authorization",
+                    outcome="success",
+                    created_at=now,
+                ),
+                AuditEvent(
+                    id="audit-2",
+                    event_type="company.signal_ingested",
+                    actor="company_intelligence",
+                    outcome="success",
+                    created_at=now + timedelta(seconds=1),
+                ),
+                AuditEvent(
+                    id="audit-3",
+                    event_type="tool.execute",
+                    actor="agent",
+                    outcome="failed",
+                    created_at=now + timedelta(seconds=2),
+                ),
+                AuditEvent(
+                    id="audit-4",
+                    event_type="auth.refresh",
+                    actor="owner",
+                    outcome="success",
+                    created_at=now + timedelta(seconds=3),
+                ),
+            ]
+        )
+        await session.commit()
+
+    count = await service._acquire_internal_state("company:test")
+
+    assert count == 1
+    async with intelligence_session_factory() as session:
+        signals = (await session.execute(select(CompanySignal))).scalars().all()
+        source = (
+            await session.execute(
+                select(CompanySource).where(CompanySource.source_key == "cyber_team")
+            )
+        ).scalar_one()
+    assert [item.redacted_payload["event_type"] for item in signals] == [
+        "tool.execute"
+    ]
+    assert source.cursor["last_audit_id"] == "audit-4"
+
+
+@pytest.mark.asyncio
+async def test_internal_audit_signal_projects_only_safe_routing_metadata(
+    intelligence_session_factory,
+):
+    service = CompanyIntelligenceService()
+    await service.ingest_signal(
+        source_key="cyber_team",
+        signal_type="audit.event",
+        external_id="audit-success",
+        payload={
+            "event_type": "workflow.execute",
+            "resource_type": "workflow",
+            "action": "run",
+            "outcome": "completed",
+            "metadata": {
+                "severity": "low",
+                "private_context": "must not be projected",
+            },
+        },
+        trust_class="internal",
+    )
+
+    result = await service.process_pending_signals()
+
+    assert result["created_events"] == 1
+    async with intelligence_session_factory() as session:
+        event = (await session.execute(select(BusinessEvent))).scalar_one()
+    assert event.payload["outcome"] == "completed"
+    assert event.payload["audit_event_type"] == "workflow.execute"
+    assert event.payload["audit_resource_type"] == "workflow"
+    assert event.payload["audit_action"] == "run"
+    assert event.payload["severity"] == "low"
+    assert "private_context" not in event.payload
 
 
 @pytest.mark.asyncio

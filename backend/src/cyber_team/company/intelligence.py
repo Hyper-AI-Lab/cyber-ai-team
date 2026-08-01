@@ -104,6 +104,22 @@ EXTRACTABLE_PREDICATES = {
     "risk",
     "value_proposition",
 }
+INTERNAL_AUDIT_FEEDBACK_EVENT_TYPES = {
+    "company.signal_ingested",
+}
+INTERNAL_AUDIT_ROUTINE_SUCCESS_EVENT_TYPES = {
+    "authorization.allowed",
+    "auth.refresh",
+    "auth.websocket_ticket",
+}
+INFORMATIONAL_AUDIT_OUTCOMES = {
+    "allowed",
+    "completed",
+    "passed",
+    "ready",
+    "skipped",
+    "success",
+}
 
 
 class CompanyIntelligenceService:
@@ -476,6 +492,7 @@ class CompanyIntelligenceService:
                     )
                 ).scalar_one_or_none()
                 if not existing_event:
+                    routing_metadata = self._signal_routing_metadata(signal)
                     event = BusinessEvent(
                         id=f"evt_{uuid.uuid4().hex}",
                         company_namespace=namespace,
@@ -494,6 +511,7 @@ class CompanyIntelligenceService:
                             "quarantine": {
                                 "reason": signal.quarantine_reason,
                             },
+                            **routing_metadata,
                         },
                         status="pending",
                         idempotency_key=event_key,
@@ -1128,7 +1146,7 @@ class CompanyIntelligenceService:
                         ),
                     )
                 )
-            audits = (
+            audit_rows = (
                 await session.execute(
                     audit_query.order_by(AuditEvent.created_at, AuditEvent.id)
                     .limit(settings.company_source_batch_size)
@@ -1154,6 +1172,7 @@ class CompanyIntelligenceService:
                 )
             ).scalars().all()
         count = 0
+        audits = [item for item in audit_rows if self._audit_is_company_evidence(item)]
         for item in audits:
             result = await self.ingest_signal(
                 source_key="cyber_team",
@@ -1199,23 +1218,59 @@ class CompanyIntelligenceService:
             namespace,
             "cyber_team",
             {
-                    "last_audit_id": audits[-1].id if audits else cursor.get("last_audit_id"),
-                    "last_audit_at": (
-                        audits[-1].created_at.isoformat()
-                        if audits
-                        else cursor.get("last_audit_at")
-                    ),
-                    "last_memory_id": (
-                        memories[-1].id if memories else cursor.get("last_memory_id")
-                    ),
-                    "last_memory_at": (
-                        memories[-1].created_at.isoformat()
-                        if memories
-                        else cursor.get("last_memory_at")
-                    ),
+                "last_audit_id": (
+                    audit_rows[-1].id
+                    if audit_rows
+                    else cursor.get("last_audit_id")
+                ),
+                "last_audit_at": (
+                    audit_rows[-1].created_at.isoformat()
+                    if audit_rows
+                    else cursor.get("last_audit_at")
+                ),
+                "last_memory_id": (
+                    memories[-1].id if memories else cursor.get("last_memory_id")
+                ),
+                "last_memory_at": (
+                    memories[-1].created_at.isoformat()
+                    if memories
+                    else cursor.get("last_memory_at")
+                ),
             },
         )
         return count
+
+    @staticmethod
+    def _audit_is_company_evidence(item: AuditEvent) -> bool:
+        """Keep actionable audit evidence without recursively ingesting telemetry."""
+        if item.event_type in INTERNAL_AUDIT_FEEDBACK_EVENT_TYPES:
+            return False
+        return not (
+            item.event_type in INTERNAL_AUDIT_ROUTINE_SUCCESS_EVENT_TYPES
+            and str(item.outcome or "").lower() in INFORMATIONAL_AUDIT_OUTCOMES
+        )
+
+    @staticmethod
+    def _signal_routing_metadata(signal: CompanySignal) -> dict[str, Any]:
+        """Project only trusted, bounded fields needed for deterministic routing."""
+        if signal.signal_type != "audit.event" or signal.trust_class != "internal":
+            return {}
+        payload = signal.redacted_payload or {}
+        result: dict[str, Any] = {}
+        for source_key, target_key, max_length in (
+            ("outcome", "outcome", 30),
+            ("event_type", "audit_event_type", 100),
+            ("resource_type", "audit_resource_type", 100),
+            ("action", "audit_action", 100),
+        ):
+            value = payload.get(source_key)
+            if isinstance(value, str) and value.strip():
+                result[target_key] = value.strip()[:max_length]
+        metadata = payload.get("metadata")
+        severity = metadata.get("severity") if isinstance(metadata, dict) else None
+        if severity in {"low", "medium", "high", "critical"}:
+            result["severity"] = severity
+        return result
 
     async def _acquire_documents(self, namespace: str) -> int:
         count = 0
