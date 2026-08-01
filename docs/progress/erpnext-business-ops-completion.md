@@ -5205,3 +5205,25 @@
   - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
 - Next step:
   - Build, scan, back up, and promote immutable `0.3.1`; reconcile the historical success backlog, prove failed audit work remains, and rerun the Knowledge/Research canary before selecting the next domain.
+
+### 2026-08-01T02:47:01Z — STEP-188 — Deployed the audit repair and exposed strategy revision churn
+- Files/services changed:
+  - Built and scanned immutable `0.3.1` core/UI images from commit `8ce657ad7b1c1307f733cd850d64ee838125bb6b`.
+  - Promoted `0.3.1` to staging after a PostgreSQL backup and policy-complete isolated Compose smoke.
+  - Reconciled historical informational audit work through `WorkPortfolioService`; no direct database mutation or history deletion was used.
+  - Began `0.3.2` strategy-context hardening after the repaired portfolio exposed repeated autonomous objective/KPI revision churn.
+- Commands run:
+  - Full release gate with 319 backend tests, 24 frontend tests, Ruff, compileall, Alembic SQL, dependency audits, two PostgreSQL migration rehearsals, Compose smoke, secret/FOSS/diff checks, image builds, and Trivy scans.
+  - Backup-first staging promotion, public health/readiness validation, public Compose smoke, bounded 50,000-item reconciliation, and PostgreSQL evidence queries.
+  - Forty-one focused strategy, intelligence, portfolio, and autonomy-cycle tests after adding strategy-context idempotency and stale-artifact retirement.
+- Result:
+  - Staging reports `0.3.1`, exact build SHA `8ce657ad7b1c1307f733cd850d64ee838125bb6b`, and all dependency checks `ok`.
+  - The reconciler examined 29,414 audit-derived work items and append-only closed 29,411 informational outcomes; ready work fell from 29,225 to 12 while 26 failed items remained available for assessment.
+  - Evidence then showed 73 revisions on each of three objectives and 105 revisions on one KPI. The new `0.3.2` logic hashes the active evidence context, applies it once, bounds proposal cardinality, preserves owner locks, and supersedes stale autonomous portfolio artifacts without deleting history.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.1.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.1-20260801-023133.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.1-20260801-023021.dump`.
+  - `/home/projects/cyber-team/backend/tests/test_company_strategy.py`.
+- Next step:
+  - Complete the `0.3.2` quality/release gate, promote with backup, run one live evidence-context consolidation followed by an identical no-op strategy cycle, then select the next domain from the cleaned portfolio.

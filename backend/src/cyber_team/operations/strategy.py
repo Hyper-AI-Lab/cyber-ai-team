@@ -167,6 +167,9 @@ class CompanyStrategyService:
     PROBATION_DAYS = 30
     STRATEGY_CONTEXT_MAX_CHARS = 18_000
     STRATEGY_MAX_CLAIMS = 80
+    STRATEGY_MAX_OBJECTIVES = 10
+    STRATEGY_MAX_KPIS = 12
+    STRATEGY_MAX_EXPERIMENTS = 5
 
     def __init__(self, *, llm_gateway=None, audit_service=None) -> None:
         self._llm = llm_gateway
@@ -236,6 +239,39 @@ class CompanyStrategyService:
                 "company_namespace": namespace,
             }
         claims = await self._active_claims(namespace)
+        strategy_context_hash = self._strategy_context_hash(model, claims)
+        applied_review = await self._applied_strategy_context_review(
+            model_id=model.id,
+            strategy_context_hash=strategy_context_hash,
+        )
+        if applied_review:
+            current = await self._current_strategy_state(namespace=namespace)
+            observations = await self.observe_kpis(namespace=namespace, source_id=model.id)
+            result = {
+                "status": "completed",
+                "company_namespace": namespace,
+                "company_model_revision_id": model.id,
+                "observer_review_id": applied_review.id,
+                "strategy_context_hash": strategy_context_hash,
+                "context_reused": True,
+                **current,
+                "observations": observations,
+                "retired": {"objectives": 0, "kpis": 0, "experiments": 0},
+            }
+            if self._audit:
+                await self._audit.record_control_evidence(
+                    control_id="strategy.autonomous_cycle",
+                    control_area="ai_governance",
+                    actor=actor,
+                    outcome="success",
+                    evidence={
+                        "company_model_revision_id": model.id,
+                        "observer_review_id": applied_review.id,
+                        "strategy_context_hash": strategy_context_hash,
+                        "context_reused": True,
+                    },
+                )
+            return result
         proposals = await self._propose_strategy(model, claims)
         generation_error = proposals.get("generation_error")
         if generation_error:
@@ -262,7 +298,11 @@ class CompanyStrategyService:
         if not validation["valid"]:
             return {"status": "blocked", "reason": "invalid_strategy_proposal", **validation}
 
-        observer = await self._record_observer_review(model, proposals)
+        observer = await self._record_observer_review(
+            model,
+            proposals,
+            strategy_context_hash=strategy_context_hash,
+        )
         if observer.status != "agreed":
             return {
                 "status": "owner_review",
@@ -278,6 +318,7 @@ class CompanyStrategyService:
                     proposal,
                     model=model,
                     observer_review_id=observer.id,
+                    strategy_context_hash=strategy_context_hash,
                     actor=actor,
                 )
             )
@@ -307,16 +348,29 @@ class CompanyStrategyService:
                     actor=actor,
                 )
             )
+        retired = await self._retire_stale_strategy_artifacts(
+            namespace=namespace,
+            active_objective_ids={item["objective_id"] for item in objectives},
+            active_kpi_definition_ids={item["kpi_definition_id"] for item in kpis},
+            active_experiment_ids={item["id"] for item in experiments},
+        )
+        await self._mark_strategy_context_applied(
+            observer_review_id=observer.id,
+            strategy_context_hash=strategy_context_hash,
+        )
         observations = await self.observe_kpis(namespace=namespace, source_id=model.id)
         result = {
             "status": "completed",
             "company_namespace": namespace,
             "company_model_revision_id": model.id,
             "observer_review_id": observer.id,
+            "strategy_context_hash": strategy_context_hash,
+            "context_reused": False,
             "objectives": objectives,
             "kpis": kpis,
             "experiments": experiments,
             "observations": observations,
+            "retired": retired,
         }
         if self._audit:
             await self._audit.record_control_evidence(
@@ -327,6 +381,8 @@ class CompanyStrategyService:
                 evidence={
                     "company_model_revision_id": model.id,
                     "observer_review_id": observer.id,
+                    "strategy_context_hash": strategy_context_hash,
+                    "context_reused": False,
                     "objective_count": len(objectives),
                     "kpi_count": len(kpis),
                     "experiment_count": len(experiments),
@@ -499,6 +555,205 @@ class CompanyStrategyService:
                 )
             ).scalars().all()
             return [self._experiment_to_dict(item) for item in items]
+
+    async def _applied_strategy_context_review(
+        self,
+        *,
+        model_id: str,
+        strategy_context_hash: str,
+    ) -> ObserverReview | None:
+        async with async_session() as session:
+            reviews = (
+                await session.execute(
+                    select(ObserverReview)
+                    .where(ObserverReview.status == "agreed")
+                    .order_by(desc(ObserverReview.created_at))
+                    .limit(200)
+                )
+            ).scalars().all()
+        for review in reviews:
+            metadata = review.metadata_ or {}
+            if (
+                metadata.get("review_type") == "strategy_activation"
+                and metadata.get("company_model_revision_id") == model_id
+                and metadata.get("strategy_context_hash") == strategy_context_hash
+                and metadata.get("strategy_context_applied") is True
+            ):
+                return review
+        return None
+
+    async def _mark_strategy_context_applied(
+        self,
+        *,
+        observer_review_id: str,
+        strategy_context_hash: str,
+    ) -> None:
+        async with async_session() as session:
+            review = await session.get(ObserverReview, observer_review_id)
+            if not review:
+                raise RuntimeError(
+                    f"Observer review {observer_review_id} disappeared before activation"
+                )
+            metadata = dict(review.metadata_ or {})
+            if metadata.get("strategy_context_hash") != strategy_context_hash:
+                raise RuntimeError("Observer review strategy context no longer matches")
+            metadata["strategy_context_applied"] = True
+            metadata["strategy_context_applied_at"] = utc_now().isoformat()
+            review.metadata_ = metadata
+            await session.commit()
+
+    async def _current_strategy_state(self, *, namespace: str) -> dict[str, Any]:
+        async with async_session() as session:
+            objective_pairs = (
+                await session.execute(
+                    select(CompanyObjectiveRevision, CompanyObjective)
+                    .join(
+                        CompanyObjective,
+                        CompanyObjective.id == CompanyObjectiveRevision.objective_id,
+                    )
+                    .where(
+                        CompanyObjectiveRevision.status.in_({"probation", "active"}),
+                        CompanyObjective.status.in_({"probation", "active"}),
+                    )
+                    .order_by(desc(CompanyObjectiveRevision.created_at))
+                )
+            ).all()
+            kpi_pairs = (
+                await session.execute(
+                    select(OperatingKPIRevision, OperatingKPIDefinition)
+                    .join(
+                        OperatingKPIDefinition,
+                        OperatingKPIDefinition.id
+                        == OperatingKPIRevision.kpi_definition_id,
+                    )
+                    .where(
+                        OperatingKPIRevision.status.in_({"probation", "active"}),
+                        OperatingKPIDefinition.status.in_({"probation", "active"}),
+                        OperatingKPIDefinition.source == "company_strategy",
+                    )
+                    .order_by(desc(OperatingKPIRevision.created_at))
+                )
+            ).all()
+            experiments = (
+                await session.execute(
+                    select(StrategicExperiment)
+                    .where(
+                        StrategicExperiment.company_namespace == namespace,
+                        StrategicExperiment.status.in_({"proposed", "probation", "running"}),
+                    )
+                    .order_by(desc(StrategicExperiment.created_at))
+                )
+            ).scalars().all()
+        objectives = []
+        for revision, objective in objective_pairs:
+            if "autonomous_strategy" not in (objective.tags or []):
+                continue
+            objectives.append(
+                {
+                    **self._objective_revision_to_dict(revision),
+                    "strategy_key": None,
+                    "revision_id": revision.id,
+                    "duplicate": True,
+                }
+            )
+        return {
+            "objectives": objectives,
+            "kpis": [
+                {**self._kpi_revision_to_dict(revision), "duplicate": True}
+                for revision, _definition in kpi_pairs
+            ],
+            "experiments": [
+                {**self._experiment_to_dict(item), "duplicate": True}
+                for item in experiments
+            ],
+        }
+
+    async def _retire_stale_strategy_artifacts(
+        self,
+        *,
+        namespace: str,
+        active_objective_ids: set[str],
+        active_kpi_definition_ids: set[str],
+        active_experiment_ids: set[str],
+    ) -> dict[str, int]:
+        retired = {"objectives": 0, "kpis": 0, "experiments": 0}
+        now = utc_now()
+        async with async_session() as session:
+            objectives = (
+                await session.execute(
+                    select(CompanyObjective).where(
+                        CompanyObjective.status.in_({"probation", "active"})
+                    )
+                )
+            ).scalars().all()
+            for objective in objectives:
+                if (
+                    objective.id in active_objective_ids
+                    or "autonomous_strategy" not in (objective.tags or [])
+                ):
+                    continue
+                latest = (
+                    await session.execute(
+                        select(CompanyObjectiveRevision)
+                        .where(CompanyObjectiveRevision.objective_id == objective.id)
+                        .order_by(desc(CompanyObjectiveRevision.revision))
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if latest and latest.owner_locked:
+                    continue
+                objective.status = "superseded"
+                objective.updated_at = now
+                if latest and latest.status in {"probation", "active"}:
+                    latest.status = "superseded"
+                retired["objectives"] += 1
+
+            definitions = (
+                await session.execute(
+                    select(OperatingKPIDefinition).where(
+                        OperatingKPIDefinition.source == "company_strategy",
+                        OperatingKPIDefinition.status.in_({"probation", "active"}),
+                    )
+                )
+            ).scalars().all()
+            for definition in definitions:
+                if definition.id in active_kpi_definition_ids:
+                    continue
+                latest = (
+                    await session.execute(
+                        select(OperatingKPIRevision)
+                        .where(OperatingKPIRevision.kpi_definition_id == definition.id)
+                        .order_by(desc(OperatingKPIRevision.revision))
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if latest and latest.owner_locked:
+                    continue
+                definition.status = "superseded"
+                definition.updated_at = now
+                if latest and latest.status in {"probation", "active"}:
+                    latest.status = "superseded"
+                retired["kpis"] += 1
+
+            experiments = (
+                await session.execute(
+                    select(StrategicExperiment).where(
+                        StrategicExperiment.company_namespace == namespace,
+                        StrategicExperiment.status.in_({"proposed", "probation", "running"}),
+                    )
+                )
+            ).scalars().all()
+            for experiment in experiments:
+                if (
+                    experiment.id in active_experiment_ids
+                    or not experiment.created_by.startswith(f"{self.STRATEGY_AGENT_ID}:")
+                ):
+                    continue
+                experiment.status = "superseded"
+                experiment.completed_at = now
+                retired["experiments"] += 1
+            await session.commit()
+        return retired
 
     async def _active_model(self, namespace: str) -> CompanyModelRevision | None:
         async with async_session() as session:
@@ -855,6 +1110,23 @@ class CompanyStrategyService:
             or not isinstance(experiments, list)
         ):
             return {"valid": False, "errors": ["objectives, kpis, and experiments must be lists"]}
+        if not objectives:
+            errors.append("strategy proposal must include at least one objective")
+        if len(objectives) > CompanyStrategyService.STRATEGY_MAX_OBJECTIVES:
+            errors.append(
+                "strategy proposal exceeds the objective limit of "
+                f"{CompanyStrategyService.STRATEGY_MAX_OBJECTIVES}"
+            )
+        if len(kpis) > CompanyStrategyService.STRATEGY_MAX_KPIS:
+            errors.append(
+                "strategy proposal exceeds the KPI limit of "
+                f"{CompanyStrategyService.STRATEGY_MAX_KPIS}"
+            )
+        if len(experiments) > CompanyStrategyService.STRATEGY_MAX_EXPERIMENTS:
+            errors.append(
+                "strategy proposal exceeds the experiment limit of "
+                f"{CompanyStrategyService.STRATEGY_MAX_EXPERIMENTS}"
+            )
         known_evidence = {
             evidence_id
             for claim in claims
@@ -944,6 +1216,8 @@ class CompanyStrategyService:
         self,
         model: CompanyModelRevision,
         proposals: dict[str, Any],
+        *,
+        strategy_context_hash: str,
     ) -> ObserverReview:
         validation = self._validate_proposals(
             proposals,
@@ -977,6 +1251,8 @@ class CompanyStrategyService:
                     "review_type": "strategy_activation",
                     "company_model_revision_id": model.id,
                     "proposal_hash": self._hash(proposals),
+                    "strategy_context_hash": strategy_context_hash,
+                    "strategy_context_applied": False,
                 },
             )
             session.add(review)
@@ -989,6 +1265,7 @@ class CompanyStrategyService:
         *,
         model: CompanyModelRevision,
         observer_review_id: str,
+        strategy_context_hash: str,
         actor: str,
     ) -> dict[str, Any]:
         key = str(proposal["strategy_key"])
@@ -1021,7 +1298,17 @@ class CompanyStrategyService:
                 proposal.get("target") or {},
             )
             content_hash = self._hash(
-                {"objective_id": objective_id, "target": target, "model_id": model.id}
+                {
+                    "objective_id": objective_id,
+                    "title": str(proposal["title"])[:240],
+                    "description": str(proposal.get("description") or "")[:4000],
+                    "category": str(proposal.get("category") or "business")[:100],
+                    "priority": str(proposal.get("priority") or "medium")[:20],
+                    "target": target,
+                    "evidence_ids": sorted(proposal.get("evidence_ids") or []),
+                    "confidence": float(proposal.get("confidence") or 0),
+                    "strategy_context_hash": strategy_context_hash,
+                }
             )
             if latest and latest.rationale.endswith(content_hash):
                 return {
@@ -1042,7 +1329,8 @@ class CompanyStrategyService:
                 target=target,
                 rationale=(
                     f"Evidence-derived from company model {model.id}; Observer "
-                    f"review {observer_review_id}; {content_hash}"
+                    f"review {observer_review_id}; strategy context "
+                    f"{strategy_context_hash}; content {content_hash}"
                 ),
                 evidence_ids=proposal.get("evidence_ids") or [],
                 confidence=float(proposal.get("confidence") or 0),
@@ -1296,6 +1584,35 @@ class CompanyStrategyService:
             "target": item.target_value,
             "objectives": item.objective_revision_ids,
         }
+
+    @classmethod
+    def _strategy_context_hash(
+        cls,
+        model: CompanyModelRevision,
+        claims: list[dict[str, Any]],
+    ) -> str:
+        normalized_claims = sorted(
+            (
+                {
+                    "id": str(item.get("id") or ""),
+                    "predicate": str(item.get("predicate") or ""),
+                    "value": item.get("value") or {},
+                    "state": str(item.get("state") or "unknown"),
+                    "confidence": round(float(item.get("confidence") or 0), 6),
+                    "trust_class": str(item.get("trust_class") or "unknown"),
+                    "evidence_ids": sorted(item.get("evidence_ids") or []),
+                }
+                for item in claims
+            ),
+            key=lambda item: (item["id"], item["predicate"]),
+        )
+        return cls._hash(
+            {
+                "company_model_source_hash": model.source_hash,
+                "company_model_revision": model.revision,
+                "claims": normalized_claims,
+            }
+        )
 
     @staticmethod
     def _hash(value: Any) -> str:

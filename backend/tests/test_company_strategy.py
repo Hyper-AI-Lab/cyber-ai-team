@@ -32,9 +32,46 @@ class FakeAudit:
 
 
 class EvidenceBoundStrategyLLM:
+    def __init__(self):
+        self.calls = 0
+
     async def invoke_json(self, **kwargs):
+        self.calls += 1
         del kwargs["system_prompt"], kwargs["agent_id"]
         return __import__("json").loads(kwargs["user_message"])["example"]
+
+
+class ChangingStrategyLLM:
+    def __init__(self):
+        self.calls = 0
+
+    async def invoke_json(self, **kwargs):
+        self.calls += 1
+        payload = __import__("json").loads(kwargs["user_message"])
+        evidence_ids = sorted(
+            {
+                evidence_id
+                for claim in payload["claims"]
+                for evidence_id in claim["evidence_ids"]
+            }
+        )
+        key = "first_evidence_strategy" if self.calls == 1 else "revised_evidence_strategy"
+        return {
+            "objectives": [
+                {
+                    "strategy_key": key,
+                    "title": "First strategy" if self.calls == 1 else "Revised strategy",
+                    "description": "A bounded evidence-derived strategy.",
+                    "category": "company_discovery",
+                    "priority": "high",
+                    "target": {"unknown_count": 0},
+                    "confidence": 0.9,
+                    "evidence_ids": evidence_ids,
+                }
+            ],
+            "kpis": [],
+            "experiments": [],
+        }
 
 
 class RepairingStrategyLLM:
@@ -214,6 +251,48 @@ async def test_strategy_cycle_creates_probationary_revisions_idempotently(
     assert kpi_count == 2
     assert experiment_count == 1
     assert audit.evidence[-1]["outcome"] == "success"
+    assert service._llm.calls == 1
+    assert second["context_reused"] is True
+
+
+@pytest.mark.asyncio
+async def test_changed_evidence_context_retires_stale_strategy_artifacts(
+    strategy_session_factory,
+):
+    await seed_active_model(strategy_session_factory)
+    llm = ChangingStrategyLLM()
+    service = CompanyStrategyService(llm_gateway=llm)
+
+    first = await service.run_strategy_cycle()
+    async with strategy_session_factory() as session:
+        model = await session.get(CompanyModelRevision, "model-active")
+        model.source_hash = "changed-model-source-hash"
+        await session.commit()
+    second = await service.run_strategy_cycle()
+    third = await service.run_strategy_cycle()
+
+    assert first["context_reused"] is False
+    assert second["context_reused"] is False
+    assert second["retired"]["objectives"] == 1
+    assert third["context_reused"] is True
+    assert llm.calls == 2
+    async with strategy_session_factory() as session:
+        active_objectives = (
+            await session.execute(
+                select(CompanyObjectiveRevision).where(
+                    CompanyObjectiveRevision.status == "probation"
+                )
+            )
+        ).scalars().all()
+        superseded_objectives = (
+            await session.execute(
+                select(CompanyObjectiveRevision).where(
+                    CompanyObjectiveRevision.status == "superseded"
+                )
+            )
+        ).scalars().all()
+    assert [item.title for item in active_objectives] == ["Revised strategy"]
+    assert [item.title for item in superseded_objectives] == ["First strategy"]
 
 
 @pytest.mark.asyncio
@@ -263,6 +342,43 @@ def test_target_revision_change_is_bounded_to_twenty_percent():
     assert CompanyStrategyService._bounded_number(100, 250) == 120
     assert CompanyStrategyService._bounded_number(100, 10) == 80
     assert CompanyStrategyService._bounded_number(None, 250) == 250
+
+
+def test_strategy_proposal_size_is_bounded():
+    model = CompanyModelRevision(
+        id="model-bounds",
+        company_namespace="company:test",
+        revision=1,
+        status="active",
+        model={},
+        claim_ids=[],
+        unknowns=["business_description"],
+        disputes=[],
+        provenance_coverage=1,
+        confidence=0.9,
+        source_hash="bounds-source",
+        owner_locks={},
+        created_by="company_discovery_agent",
+    )
+    objectives = [
+        {
+            "strategy_key": f"objective_{index}",
+            "title": f"Objective {index}",
+            "target": {"unknown_count": 0},
+            "confidence": 0.9,
+            "evidence_ids": [],
+        }
+        for index in range(CompanyStrategyService.STRATEGY_MAX_OBJECTIVES + 1)
+    ]
+
+    result = CompanyStrategyService._validate_proposals(
+        {"objectives": objectives, "kpis": [], "experiments": []},
+        model,
+        [],
+    )
+
+    assert result["valid"] is False
+    assert any("objective limit" in item for item in result["errors"])
 
 
 @pytest.mark.asyncio
