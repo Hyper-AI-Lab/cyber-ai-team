@@ -88,8 +88,8 @@ class MemoryService:
 
         # Store in Qdrant (semantic retrieval)
         if self._qdrant:
-            embedding = await self._embed(data.content)
             try:
+                embedding = await self._embed(data.content)
                 await asyncio.to_thread(
                     self._qdrant.upsert,
                     collection_name=COLLECTION_NAME,
@@ -181,8 +181,11 @@ class MemoryService:
                         "namespace": hit.payload.get("namespace"),
                         "agent_id": hit.payload.get("agent_id"),
                         "importance": hit.payload.get("importance", 0.5),
+                        "_retrieval_source": "qdrant",
                     })
-                return results
+                if getattr(data, "defer_canonical_filter", False):
+                    return results
+                return (await self._filter_conflicted_results(results))[0]
             except Exception as e:
                 logger.warning(f"Qdrant search failed, falling back to DB: {e}")
 
@@ -210,7 +213,9 @@ class MemoryService:
                     "importance": r.importance,
                 })
 
-        return results
+        if getattr(data, "defer_canonical_filter", False):
+            return results
+        return (await self._filter_conflicted_results(results))[0]
 
     async def recall_with_policy(self, data) -> dict:
         query = getattr(data, "query")
@@ -243,6 +248,7 @@ class MemoryService:
                         namespace=scope["namespace"],
                         memory_type=scope.get("memory_type"),
                         limit=scope["limit"],
+                        defer_canonical_filter=True,
                     )
                 )
             except Exception as exc:
@@ -497,7 +503,7 @@ class MemoryService:
         self,
         results: list[dict],
     ) -> tuple[list[dict], list[str]]:
-        """Attach DB metadata and exclude memories superseded by canonical records."""
+        """Hydrate canonical content and exclude superseded or orphaned vectors."""
         ids = [str(item.get("id")) for item in results if item.get("id")]
         if not ids:
             return results, []
@@ -505,17 +511,46 @@ class MemoryService:
             entries = (
                 await session.execute(select(MemoryEntry).where(MemoryEntry.id.in_(ids)))
             ).scalars().all()
-            metadata_by_id = {entry.id: dict(entry.metadata_ or {}) for entry in entries}
+            entries_by_id = {entry.id: entry for entry in entries}
 
         filtered: list[dict] = []
         excluded: list[str] = []
         for item in results:
             memory_id = str(item.get("id") or "")
-            metadata = metadata_by_id.get(memory_id, dict(item.get("metadata") or {}))
+            entry = entries_by_id.get(memory_id)
+            if entry is None and item.get("_retrieval_source") == "qdrant":
+                excluded.append(memory_id)
+                continue
+            metadata = (
+                dict(entry.metadata_ or {})
+                if entry is not None
+                else dict(item.get("metadata") or {})
+            )
             if self._metadata_excludes_from_recall(metadata):
                 excluded.append(memory_id)
                 continue
-            filtered.append({**item, "metadata": metadata})
+            canonical_content = entry.content if entry is not None else item.get("content", "")
+            if (
+                metadata.get("type") == "agent_invocation_summary"
+                and metadata.get("result_excerpt")
+            ):
+                canonical_content = f"Agent outcome: {metadata['result_excerpt']}"
+            hydrated = {
+                key: value
+                for key, value in item.items()
+                if not str(key).startswith("_")
+            }
+            if entry is not None:
+                hydrated.update(
+                    {
+                        "content": canonical_content,
+                        "memory_type": entry.memory_type,
+                        "namespace": entry.namespace,
+                        "agent_id": entry.agent_id,
+                        "importance": entry.importance,
+                    }
+                )
+            filtered.append({**hydrated, "metadata": metadata})
         return filtered, excluded
 
     async def delete_memory(self, memory_id: str):
@@ -596,10 +631,8 @@ class MemoryService:
                 input=[text],
             )
             return response.data[0]["embedding"]
-        except Exception as e:
-            logger.warning(f"Embedding failed, using random vector: {e}")
-            import random
-            return [random.gauss(0, 0.1) for _ in range(VECTOR_SIZE)]
+        except Exception as exc:
+            raise RuntimeError("Embedding provider unavailable") from exc
 
     @staticmethod
     def _parse_expires_at(value) -> datetime | None:

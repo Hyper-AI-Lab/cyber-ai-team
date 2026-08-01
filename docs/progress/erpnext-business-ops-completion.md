@@ -5529,3 +5529,37 @@
   - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
 - Next step:
   - Run the complete `0.3.9` release gate, promote backup-first, prove stale-memory quarantine with the same live Security probe, and publish only after public CI is green.
+
+### 2026-08-01T17:48:00Z — STEP-205 — Promoted v0.3.9 and traced stale vector recall
+- Files/services changed:
+  - Verified and promoted `0.3.9` from commit `96b595ab0a5c0521bdb620e780e5809296222738` after a fresh staging backup.
+  - Ran one bounded Security probe with the worker stopped during direct execution, then paused Security after deterministic grounding rejected the result.
+- Commands run:
+  - Formal release gate with 333 backend tests, 24 frontend tests, both PostgreSQL migration rehearsals, isolated Compose smoke, dependency/secret/FOSS checks, immutable image builds, and zero-finding Trivy scans.
+  - Backup-first promotion, public smoke, one-item Security domain loop, memory-trace lineage queries, communication/approval counts, and worker stop/start containment.
+- Result:
+  - Preflight correctly quarantined stale memory `f8f93d94-81d3-4f3f-8fcd-ddac32c56c15`, but the model repeated the obsolete staffing claim. Post-output grounding blocked it, quarantined new memory `b76eb0b4-d8fd-428e-aa81-286595d3a58b`, created no child work, and executed no side effect.
+  - Trace inspection proved Qdrant returned the first 500 characters of invocation summaries, which emphasized old task prompts rather than canonical stored outcomes. The safety boundary worked, but the canary did not pass and Security remained paused.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.9.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.9-20260801-174341.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.9-20260801-174217.dump`.
+  - Work item `work_7477c948916648d6a8c3bf193ef3ee24` and trace `984ee5fa-7e96-45ee-9f1f-109174491f8f`.
+- Next step:
+  - Hydrate vector hits from canonical PostgreSQL content, expose prior agent outcomes instead of task prompts, and remove random-vector embedding fallback.
+
+### 2026-08-01T17:54:00Z — STEP-206 — Made semantic recall canonical and fail-closed
+- Files/services changed:
+  - Changed Qdrant retrieval so vector scores select IDs while PostgreSQL supplies canonical content, metadata, ownership, namespace, and importance.
+  - Agent-invocation memories now contribute their stored result excerpt to prompt context rather than replaying the old task instruction.
+  - Orphaned vector points are excluded, superseded-memory filtering remains authoritative, and embedding failures fall back to PostgreSQL text retrieval instead of generating random vectors.
+  - Advanced candidate release metadata to `0.3.10`.
+- Commands run:
+  - Ran focused Ruff and 30 memory-service, canonical-conflict, and work-portfolio tests.
+- Result:
+  - All focused checks passed. Tests prove canonical outcome hydration, vector-orphan exclusion, deterministic provider-failure fallback, specific-gap grounding, and stale-memory quarantine.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/memory/service.py`.
+  - `/home/projects/cyber-team/backend/tests/test_memory_service.py`.
+- Next step:
+  - Run the complete `0.3.10` gate, promote backup-first, repeat the live Security probe, and require a clean grounded completion before publishing.

@@ -17,7 +17,7 @@ services:
       - OPA_API_URL=http://opa:8181
       - ERPNEXT_URL=http://erpnext-frontend:8080
       - OPENFGA_API_URL=http://openfga:8080
-      - APP_VERSION=${APP_VERSION:-0.3.9}
+      - APP_VERSION=${APP_VERSION:-0.3.10}
       - BUILD_SHA=${BUILD_SHA:-local}
       - READINESS_EVIDENCE_ROOT=/app/evidence
       - LLM_LOCAL_API_BASE=http://llama-cpp:8080/v1
@@ -69,7 +69,7 @@ services:
       - TEMPORAL_HOST=temporal
       - OPA_API_URL=http://opa:8181
       - ERPNEXT_URL=http://erpnext-frontend:8080
-      - APP_VERSION=${APP_VERSION:-0.3.9}
+      - APP_VERSION=${APP_VERSION:-0.3.10}
       - BUILD_SHA=${BUILD_SHA:-local}
       - READINESS_EVIDENCE_ROOT=/app/evidence
       - LLM_LOCAL_API_BASE=http://llama-cpp:8080/v1
@@ -100,7 +100,7 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
         NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
-        NEXT_PUBLIC_APP_VERSION: ${APP_VERSION:-0.3.9}
+        NEXT_PUBLIC_APP_VERSION: ${APP_VERSION:-0.3.10}
         NEXT_PUBLIC_BUILD_SHA: ${BUILD_SHA:-local}
     container_name: ${CYBERTEAM_CONTAINER_PREFIX:-cyberteam}-ui
     ports:
@@ -108,7 +108,7 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
       - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
-      - NEXT_PUBLIC_APP_VERSION=${APP_VERSION:-0.3.9}
+      - NEXT_PUBLIC_APP_VERSION=${APP_VERSION:-0.3.10}
       - NEXT_PUBLIC_BUILD_SHA=${BUILD_SHA:-local}
     depends_on:
       core:

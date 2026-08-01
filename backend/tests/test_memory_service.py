@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cyber_team.db import Base
+from cyber_team.db.models import MemoryEntry
 from cyber_team.memory import service as memory_module
 from cyber_team.memory.service import MemoryService
 
@@ -31,6 +32,9 @@ async def test_memory_startup_degrades_when_qdrant_is_unavailable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_memory_recall_uses_current_qdrant_query_points_api(monkeypatch):
+    engine, session_factory = await build_session_factory()
+    monkeypatch.setattr(memory_module, "async_session", session_factory)
+
     class FakeQdrant:
         def __init__(self):
             self.calls = []
@@ -61,20 +65,168 @@ async def test_memory_recall_uses_current_qdrant_query_points_api(monkeypatch):
         return [0.1] * memory_module.VECTOR_SIZE
 
     monkeypatch.setattr(service, "_embed", fake_embed)
-    result = await service.recall(
-        SimpleNamespace(
-            query="operating context",
-            agent_id="agent-1",
-            memory_type="semantic",
-            namespace="company:test",
-            limit=5,
+    try:
+        async with session_factory() as session:
+            session.add(
+                MemoryEntry(
+                    id="memory-1",
+                    agent_id="agent-1",
+                    memory_type="semantic",
+                    namespace="company:test",
+                    content="Evidence-linked operating context",
+                    metadata_={},
+                    importance=0.8,
+                )
+            )
+            await session.commit()
+        result = await service.recall(
+            SimpleNamespace(
+                query="operating context",
+                agent_id="agent-1",
+                memory_type="semantic",
+                namespace="company:test",
+                limit=5,
+            )
         )
-    )
 
-    assert result[0]["id"] == "memory-1"
-    assert result[0]["score"] == 0.91
-    assert qdrant.calls[0]["query"][0] == 0.1
-    assert qdrant.calls[0]["limit"] == 5
+        assert result[0]["id"] == "memory-1"
+        assert result[0]["score"] == 0.91
+        assert qdrant.calls[0]["query"][0] == 0.1
+        assert qdrant.calls[0]["limit"] == 5
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_qdrant_recall_hydrates_canonical_agent_outcome(monkeypatch):
+    engine, session_factory = await build_session_factory()
+    monkeypatch.setattr(memory_module, "async_session", session_factory)
+
+    class FakeQdrant:
+        def query_points(self, **_kwargs):
+            return SimpleNamespace(
+                points=[
+                    SimpleNamespace(
+                        id="memory-agent-result",
+                        score=0.93,
+                        payload={
+                            "content": "Task: investigate the unresolved role gap",
+                            "memory_type": "episodic",
+                            "namespace": "company:test:security",
+                            "agent_id": "security-agent",
+                            "importance": 0.8,
+                        },
+                    ),
+                    SimpleNamespace(
+                        id="orphaned-vector",
+                        score=0.91,
+                        payload={
+                            "content": "Stale vector-only content",
+                            "memory_type": "episodic",
+                            "namespace": "company:test:security",
+                            "agent_id": "security-agent",
+                            "importance": 0.7,
+                        },
+                    ),
+                ]
+            )
+
+    service = MemoryService()
+    service._qdrant = FakeQdrant()
+
+    async def fake_embed(_text):
+        return [0.1] * memory_module.VECTOR_SIZE
+
+    monkeypatch.setattr(service, "_embed", fake_embed)
+    try:
+        async with session_factory() as session:
+            session.add(
+                MemoryEntry(
+                    id="memory-agent-result",
+                    agent_id="security-agent",
+                    memory_type="episodic",
+                    namespace="company:test:security",
+                    content=(
+                        "Task: investigate the unresolved role gap | "
+                        "Result: Security has three active agents."
+                    ),
+                    metadata_={
+                        "type": "agent_invocation_summary",
+                        "result_excerpt": "Security has three active agents.",
+                    },
+                    importance=0.8,
+                )
+            )
+            await session.commit()
+
+        result = await service.recall_with_policy(
+            SimpleNamespace(
+                query="current Security role state",
+                agent_id="security-agent",
+                memory_namespace="company:test:security",
+                role_family="security",
+                role_name="Security Agent",
+                limit=2,
+            )
+        )
+
+        assert [item["id"] for item in result["items"]] == ["memory-agent-result"]
+        assert result["items"][0]["content"] == (
+            "Agent outcome: Security has three active agents."
+        )
+        assert "Task: investigate" not in result["items"][0]["content"]
+        assert result["policy"]["excluded_conflicted_memory_ids"] == [
+            "orphaned-vector"
+        ]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_embedding_failure_falls_back_to_postgres(monkeypatch):
+    engine, session_factory = await build_session_factory()
+    monkeypatch.setattr(memory_module, "async_session", session_factory)
+
+    class FakeQdrant:
+        def query_points(self, **_kwargs):
+            raise AssertionError("query should not run without an embedding")
+
+    service = MemoryService()
+    service._qdrant = FakeQdrant()
+
+    async def failed_embed(_text):
+        raise RuntimeError("embedding provider unavailable")
+
+    monkeypatch.setattr(service, "_embed", failed_embed)
+    try:
+        async with session_factory() as session:
+            session.add(
+                MemoryEntry(
+                    id="memory-postgres-fallback",
+                    agent_id="security-agent",
+                    memory_type="semantic",
+                    namespace="company:test:security",
+                    content="current Security role state",
+                    metadata_={},
+                    importance=0.9,
+                )
+            )
+            await session.commit()
+
+        result = await service.recall(
+            SimpleNamespace(
+                query="current Security role state",
+                agent_id="security-agent",
+                memory_type="semantic",
+                namespace="company:test:security",
+                limit=5,
+            )
+        )
+
+        assert [item["id"] for item in result] == ["memory-postgres-fallback"]
+        assert result[0]["score"] == 1.0
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
