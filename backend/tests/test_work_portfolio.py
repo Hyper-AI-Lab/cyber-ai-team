@@ -21,6 +21,10 @@ from cyber_team.db.models import (
     CompanyObjectiveRevision,
     CompanySignal,
     CompanySource,
+    DomainAutonomyControl,
+    MemoryEntry,
+    MemoryStewardFinding,
+    MemoryTrace,
     RoleGap,
 )
 from cyber_team.operations import work_portfolio as portfolio_module
@@ -552,6 +556,187 @@ async def test_role_loop_blocks_stale_role_gap_claim_against_live_state(
         assert (
             await session.execute(select(func.count(BusinessWorkItem.id)))
         ).scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_grounding_conflicts_quarantine_memory_and_pause_repeated_domain(
+    portfolio_session_factory,
+    monkeypatch,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    async with portfolio_session_factory() as session:
+        session.add(
+            Agent(
+                id="security-agent",
+                role_family="security",
+                role_name="Security Agent",
+                instructions="Assess security evidence.",
+                tools=["security_scan"],
+                memory_namespace="company:test:security",
+                status="active",
+            )
+        )
+        await session.commit()
+    monkeypatch.setattr(settings, "autonomy_grounding_conflict_threshold", 2)
+    monkeypatch.setattr(settings, "autonomy_grounding_conflict_lookback_hours", 24)
+    manager = AsyncMock()
+    manager.invoke_agent.return_value = json.dumps(
+        {
+            "assessment": "The Security role remains unfulfilled and unresolved.",
+            "confidence": 0.9,
+            "unknowns": [],
+            "recommended_action": "escalate",
+            "expected_outcome": {"type": "role_activation"},
+            "proposed_work": [],
+        }
+    )
+    audit = AsyncMock()
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        audit_service=audit,
+        company_intelligence_service=FakeIntelligence(),
+    )
+    await service.ensure_active_agent_mandates()
+
+    first = await service.create_work_item(
+        title="First stale role assessment",
+        description="Use current role state.",
+        work_type="analysis",
+        company_namespace="company:test",
+        assigned_agent_id="security-agent",
+        payload={},
+        acceptance_criteria=["current_state_used"],
+        idempotency_key="grounding-conflict-first",
+    )
+    async with portfolio_session_factory() as session:
+        session.add_all(
+            [
+                MemoryEntry(
+                    id="memory-stale-recalled",
+                    agent_id="security-agent",
+                    memory_type="episodic",
+                    namespace="company:test:security",
+                    content="The Security role remains unfulfilled.",
+                    metadata_={},
+                ),
+                MemoryEntry(
+                    id="memory-stale-written-one",
+                    agent_id="security-agent",
+                    memory_type="episodic",
+                    namespace="company:test:security",
+                    content="The role gap persists for Security.",
+                    metadata_={},
+                ),
+                MemoryEntry(
+                    id="memory-valid",
+                    agent_id="security-agent",
+                    memory_type="episodic",
+                    namespace="company:test:security",
+                    content="Three Security agents are currently active.",
+                    metadata_={},
+                ),
+                MemoryTrace(
+                    id="trace-grounding-one",
+                    invocation_id="invocation-grounding-one",
+                    agent_id="security-agent",
+                    conversation_id=first["id"],
+                    source_type="agent_mandate_loop",
+                    task_excerpt="Assess current Security role state.",
+                    memory_namespace="company:test:security",
+                    recalled_memory_ids=["memory-stale-recalled", "memory-valid"],
+                    written_memory_ids=["memory-stale-written-one"],
+                    recall_count=2,
+                    write_count=1,
+                ),
+            ]
+        )
+        await session.commit()
+
+    first_result = await service.run_domain_loop("security-agent", prepare=False)
+
+    first_remediation = first_result["items"][0]["actual_outcome"]["grounding"][
+        "memory_remediation"
+    ]
+    assert first_result["items"][0]["status"] == "blocked"
+    assert first_remediation["occurrence_count"] == 1
+    assert first_remediation["circuit_breaker_tripped"] is False
+    assert first_remediation["quarantined_memory_ids"] == [
+        "memory-stale-recalled",
+        "memory-stale-written-one",
+    ]
+    async with portfolio_session_factory() as session:
+        stale = await session.get(MemoryEntry, "memory-stale-recalled")
+        valid = await session.get(MemoryEntry, "memory-valid")
+        finding = (
+            await session.execute(select(MemoryStewardFinding))
+        ).scalar_one()
+        control = await session.get(DomainAutonomyControl, "security")
+    assert stale.metadata_["canonical_superseded"] is True
+    assert stale.metadata_["exclude_from_recall_reason"] == (
+        "authoritative_role_state_conflict"
+    )
+    assert "canonical_superseded" not in valid.metadata_
+    assert finding.finding_type == "authoritative_grounding_conflict"
+    assert finding.evidence["occurrence_count"] == 1
+    assert control is None
+
+    second = await service.create_work_item(
+        title="Second stale role assessment",
+        description="Use current role state again.",
+        work_type="analysis",
+        company_namespace="company:test",
+        assigned_agent_id="security-agent",
+        payload={},
+        acceptance_criteria=["current_state_used"],
+        idempotency_key="grounding-conflict-second",
+    )
+    async with portfolio_session_factory() as session:
+        session.add_all(
+            [
+                MemoryEntry(
+                    id="memory-stale-written-two",
+                    agent_id="security-agent",
+                    memory_type="episodic",
+                    namespace="company:test:security",
+                    content="The Security role is missing.",
+                    metadata_={},
+                ),
+                MemoryTrace(
+                    id="trace-grounding-two",
+                    invocation_id="invocation-grounding-two",
+                    agent_id="security-agent",
+                    conversation_id=second["id"],
+                    source_type="agent_mandate_loop",
+                    task_excerpt="Reassess current Security role state.",
+                    memory_namespace="company:test:security",
+                    recalled_memory_ids=["memory-stale-recalled"],
+                    written_memory_ids=["memory-stale-written-two"],
+                    recall_count=1,
+                    write_count=1,
+                ),
+            ]
+        )
+        await session.commit()
+
+    second_result = await service.run_domain_loop("security-agent", prepare=False)
+
+    second_remediation = second_result["items"][0]["actual_outcome"]["grounding"][
+        "memory_remediation"
+    ]
+    assert second_result["items"][0]["status"] == "blocked"
+    assert second_remediation["occurrence_count"] == 2
+    assert second_remediation["circuit_breaker_tripped"] is True
+    assert second_remediation["domain_state"] == "paused"
+    async with portfolio_session_factory() as session:
+        control = await session.get(DomainAutonomyControl, "security")
+        finding = (
+            await session.execute(select(MemoryStewardFinding))
+        ).scalar_one()
+    assert control.state == "paused"
+    assert control.owner == "autonomy_grounding_circuit_breaker"
+    assert finding.severity == "high"
+    assert finding.evidence["occurrence_count"] == 2
+    assert audit.record_control_evidence.await_count == 2
 
 
 @pytest.mark.asyncio

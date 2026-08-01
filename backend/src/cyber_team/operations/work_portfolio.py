@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import desc, func, select
@@ -27,6 +27,9 @@ from cyber_team.db.models import (
     DomainAutonomyControl,
     ExecutiveBenchmarkDefinition,
     ExecutiveBenchmarkResult,
+    MemoryEntry,
+    MemoryStewardFinding,
+    MemoryTrace,
     OperatingKPIDefinition,
     OperatingKPIObservation,
     RoleGap,
@@ -1077,6 +1080,15 @@ class WorkPortfolioService:
             assessment,
             authoritative_context,
         )
+        if grounding["status"] == "blocked":
+            grounding["memory_remediation"] = (
+                await self._quarantine_authoritative_role_conflicts(
+                    item,
+                    authoritative_context,
+                    grounding,
+                    context_hash=context_hash,
+                )
+            )
         proposal_result = (
             {"created_work_item_ids": [], "rejected_proposals": []}
             if grounding["status"] == "blocked"
@@ -1321,6 +1333,221 @@ class WorkPortfolioService:
             "findings": findings,
             "authoritative_observed_at": context.get("observed_at"),
         }
+
+    async def _quarantine_authoritative_role_conflicts(
+        self,
+        item: BusinessWorkItem,
+        context: dict[str, Any],
+        grounding: dict[str, Any],
+        *,
+        context_hash: str,
+    ) -> dict[str, Any]:
+        """Exclude contradicted memories and trip a bounded domain circuit breaker."""
+        now = utc_now()
+        family = str(context.get("role_family") or "operations")
+        dedupe_key = f"authoritative_role_state_conflict:{family}:{item.assigned_agent_id}"
+        finding_id = f"mem_find_{hashlib.sha256(dedupe_key.encode()).hexdigest()[:12]}"
+        threshold = max(1, settings.autonomy_grounding_conflict_threshold)
+        lookback_hours = max(1, settings.autonomy_grounding_conflict_lookback_hours)
+        lookback_start = now - timedelta(hours=lookback_hours)
+        async with async_session() as session:
+            traces = (
+                await session.execute(
+                    select(MemoryTrace)
+                    .where(
+                        MemoryTrace.conversation_id == item.id,
+                        MemoryTrace.source_type == "agent_mandate_loop",
+                    )
+                    .order_by(desc(MemoryTrace.created_at))
+                )
+            ).scalars().all()
+            trace_ids = [trace.id for trace in traces]
+            memory_ids = {
+                str(memory_id)
+                for trace in traces
+                for memory_id in [
+                    *(trace.recalled_memory_ids or []),
+                    *(trace.written_memory_ids or []),
+                ]
+                if memory_id
+            }
+            entries = []
+            if memory_ids:
+                entries = (
+                    await session.execute(
+                        select(MemoryEntry).where(MemoryEntry.id.in_(memory_ids))
+                    )
+                ).scalars().all()
+            quarantined_ids = []
+            for entry in entries:
+                if not any(
+                    pattern.search(entry.content)
+                    for pattern in STALE_ROLE_STATE_PATTERNS
+                ):
+                    continue
+                metadata = dict(entry.metadata_ or {})
+                metadata.update(
+                    {
+                        "canonical_superseded": True,
+                        "exclude_from_recall_reason": (
+                            "authoritative_role_state_conflict"
+                        ),
+                        "grounding_conflict": {
+                            "work_item_id": item.id,
+                            "role_family": family,
+                            "authoritative_context_hash": context_hash,
+                            "quarantined_at": now.isoformat(),
+                        },
+                    }
+                )
+                entry.metadata_ = metadata
+                quarantined_ids.append(entry.id)
+
+            finding = await session.get(MemoryStewardFinding, finding_id)
+            prior_evidence = dict(finding.evidence or {}) if finding else {}
+            prior_last_seen = prior_evidence.get("last_seen_at")
+            occurrence_count = int(prior_evidence.get("occurrence_count") or 0)
+            if prior_last_seen and not self._within_lookback(
+                str(prior_last_seen),
+                lookback_start,
+            ):
+                occurrence_count = 0
+            occurrence_count += 1
+            work_item_ids = sorted(
+                {
+                    *[
+                        str(value)
+                        for value in prior_evidence.get("work_item_ids", [])
+                    ],
+                    item.id,
+                }
+            )
+            quarantined_all = sorted(
+                {
+                    *[
+                        str(value)
+                        for value in prior_evidence.get(
+                            "quarantined_memory_ids",
+                            [],
+                        )
+                    ],
+                    *quarantined_ids,
+                }
+            )
+            evidence = {
+                "dedupe_key": dedupe_key,
+                "first_seen_at": prior_evidence.get("first_seen_at")
+                or now.isoformat(),
+                "last_seen_at": now.isoformat(),
+                "occurrence_count": occurrence_count,
+                "lookback_hours": lookback_hours,
+                "work_item_ids": work_item_ids,
+                "quarantined_memory_ids": quarantined_all,
+                "authoritative_context_hash": context_hash,
+                "grounding_findings": grounding.get("findings", []),
+            }
+            description = (
+                "An agent repeated a role-state claim that contradicted current "
+                "active agents and role-gap records. Conflicting recalled and "
+                "written memories were excluded from future recall."
+            )
+            if finding:
+                finding.status = "open"
+                finding.severity = (
+                    "high" if occurrence_count >= threshold else "medium"
+                )
+                finding.trace_ids = sorted({*(finding.trace_ids or []), *trace_ids})
+                finding.evidence = evidence
+                finding.description = description
+                finding.updated_at = now
+                finding.resolved_at = None
+            else:
+                finding = MemoryStewardFinding(
+                    id=finding_id,
+                    finding_type="authoritative_grounding_conflict",
+                    severity="medium",
+                    status="open",
+                    agent_id=item.assigned_agent_id,
+                    memory_namespace=(
+                        traces[0].memory_namespace if traces else None
+                    ),
+                    company_namespace=item.company_namespace,
+                    title=f"Authoritative role-state conflict in {family}",
+                    description=description,
+                    recommendation=(
+                        "Review the quarantined memory lineage and keep the domain "
+                        "paused until an evidence-grounded canary passes."
+                    ),
+                    trace_ids=trace_ids,
+                    evidence=evidence,
+                    metadata_={"source": "work_portfolio_grounding_guard"},
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(finding)
+
+            circuit_tripped = occurrence_count >= threshold
+            control = await session.get(DomainAutonomyControl, family)
+            if circuit_tripped:
+                reason = (
+                    f"Automatically paused after {occurrence_count} authoritative "
+                    f"grounding conflicts within {lookback_hours} hours. Review "
+                    f"Memory Steward finding {finding_id} before resuming."
+                )
+                if not control:
+                    control = DomainAutonomyControl(
+                        domain=family,
+                        state="paused",
+                        reason=reason,
+                        owner="autonomy_grounding_circuit_breaker",
+                    )
+                    session.add(control)
+                else:
+                    control.state = "paused"
+                    control.reason = reason
+                    control.owner = "autonomy_grounding_circuit_breaker"
+                    control.updated_at = now
+            await session.commit()
+            result = {
+                "finding_id": finding_id,
+                "trace_ids": trace_ids,
+                "quarantined_memory_ids": sorted(quarantined_ids),
+                "occurrence_count": occurrence_count,
+                "threshold": threshold,
+                "lookback_hours": lookback_hours,
+                "circuit_breaker_tripped": circuit_tripped,
+                "domain_state": (
+                    "paused"
+                    if circuit_tripped
+                    else (control.state if control else "active")
+                ),
+            }
+        if self._audit:
+            await self._audit.record_control_evidence(
+                control_id="memory.authoritative_grounding_conflict",
+                control_area="ai_governance",
+                actor="work_portfolio_grounding_guard",
+                outcome="blocked",
+                evidence={
+                    **result,
+                    "work_item_id": item.id,
+                    "agent_id": item.assigned_agent_id,
+                    "role_family": family,
+                },
+            )
+        return result
+
+    @staticmethod
+    def _within_lookback(value: str, lookback_start: datetime) -> bool:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return False
+        if parsed.tzinfo and lookback_start.tzinfo is None:
+            parsed = parsed.replace(tzinfo=None)
+        elif parsed.tzinfo is None and lookback_start.tzinfo:
+            parsed = parsed.replace(tzinfo=lookback_start.tzinfo)
+        return parsed >= lookback_start
 
     async def _execute_tool_work(self, item: BusinessWorkItem) -> dict[str, Any]:
         if not self._tools or not item.assigned_agent_id:

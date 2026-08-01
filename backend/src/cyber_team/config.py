@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # App
     app_name: str = "Cyber-Team"
-    app_version: str = "0.3.6"
+    app_version: str = "0.3.7"
     build_sha: str = "local"
     environment: str = "development"
     log_level: str = "INFO"
@@ -83,6 +83,8 @@ class Settings(BaseSettings):
     executive_brief_email_interval_seconds: int = 86400
     executive_brief_email_cooldown_hours: int = 20
     autonomy_side_effect_mode: str = "approval_required"
+    autonomy_grounding_conflict_threshold: int = 2
+    autonomy_grounding_conflict_lookback_hours: int = 24
     require_live_tool_executors: bool = False
     supervisor_review_enabled: bool = True
     supervisor_review_initial_delay_seconds: int = 60

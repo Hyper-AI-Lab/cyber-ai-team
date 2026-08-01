@@ -5420,3 +5420,41 @@
   - `/tmp/cyberteam-alembic.sql`.
 - Next step:
   - Commit the exact candidate, run the formal release gate with real PostgreSQL rehearsals and immutable image scans, then promote backup-first to staging.
+
+### 2026-08-01T15:13:00Z — STEP-199 — Promoted v0.3.6 and reran the Security canary
+- Files/services changed:
+  - Verified release `0.3.6` from commit `d53edba5c7f64ed4760582348e0a8c9acc04fc57`, promoted it backup-first, and recreated the API, worker, and UI with the worker evidence bind mount.
+  - Cancelled all three false `0.3.5` canary descendants through the audited cancellation API.
+  - Reactivated Security for one evidence-identical `0.3.6` canary and paused it again after inspecting the bounded descendant tree.
+- Commands run:
+  - Formal release gate with 330 backend tests, 24 frontend tests, two PostgreSQL migration rehearsals, isolated Compose smoke, dependency/secret/FOSS checks, immutable image builds, and Trivy scans.
+  - Backup-first staging promotion and public Compose smoke with the real email action rejected.
+  - Live cancellation, domain-control, work creation, one-item domain-loop, executive benchmark refresh, readiness, communication, approval, work-tree, and container-mount inspections.
+- Result:
+  - Staging reported version `0.3.6` and exact build SHA `d53edba5c7f64ed4760582348e0a8c9acc04fc57`; health, login, dashboard, integrations, WebSocket tickets, tool readiness, and approval rejection passed.
+  - The parent canary used live authoritative state, recognized three active Security agents and no unresolved Security role gap, passed grounding at confidence `0.98`, and executed no side effects.
+  - Two automatically processed advisory descendants repeated the superseded role-gap claim from recalled memory. Both were blocked by authoritative grounding, generated no accepted follow-up, and executed no side effect. The sole remaining ready descendant was cancelled and Security was paused.
+  - Worker-visible restore, load, and business-smoke evidence changed from falsely missing to `ready`. CI remains the sole expected readiness blocker until this release is pushed and GitHub tests the public branch head.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.6.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.6-20260801-145057.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.6-20260801-144937.dump`.
+  - Parent canary `work_fa9b33b56428478aa7e1d2742453edfe` and blocked descendants `work_8f1501532a804c789aa1dbf492ad8a6d` and `work_54bb540d9aad4d61a00672ac5290d24d`.
+- Next step:
+  - Exclude contradicted memory from future recall and make repeated grounding conflicts trip an automatic per-domain circuit breaker.
+
+### 2026-08-01T15:27:00Z — STEP-200 — Added memory quarantine and grounding circuit breaker
+- Files/services changed:
+  - Added automatic quarantine for recalled and newly written memory entries whose role-state language contradicts current active agents and role-gap records.
+  - Added a deterministic, deduplicated Memory Steward finding with trace IDs, work IDs, quarantined memory IDs, occurrence count, lookback, and authoritative context hash.
+  - Added a configurable two-occurrence, 24-hour circuit breaker that raises the finding to high severity and pauses the affected operating domain.
+  - Advanced candidate release metadata to `0.3.7` and documented both configuration controls.
+- Commands run:
+  - Ran focused Ruff, Git diff hygiene, and all 17 work-portfolio tests.
+- Result:
+  - All focused checks passed. Tests prove stale recalled and written memories become non-recallable, unrelated valid memory is preserved, findings deduplicate and accumulate, the first conflict remains contained, and the second conflict automatically pauses only the affected domain.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/work_portfolio.py`.
+  - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
+- Next step:
+  - Run the policy-complete `0.3.7` release gate, promote backup-first, execute a clean Security canary after quarantine, and require public GitHub CI evidence for final readiness.
