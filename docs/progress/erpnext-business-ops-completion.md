@@ -5648,3 +5648,27 @@
   - `/home/projects/cyber-team/backend/tests/test_api_memory.py`.
 - Next step:
   - Run the complete `0.3.12` quality/release gate, promote backup-first, and finish live Governor/Observer acceptance against the hardened image.
+
+### 2026-08-02T05:05:49Z — STEP-211 — Promoted v0.3.12 and closed live autonomy acceptance
+- Files/services changed:
+  - Built and scanned immutable `cyber-team-core:0.3.12` and `cyber-team-ui:0.3.12` images from commit `6d9f5d5df16043f177d6d1d519955e956d6055e5`.
+  - Promoted the release backup-first to staging and persisted `APP_VERSION=0.3.12` for restart safety.
+  - Ran a bounded Knowledge/Research grounding canary, contained all generated descendants, resolved the superseded authoritative-memory conflict, and rejected its obsolete owner-review approval.
+  - Ran a final executive Governor cycle with forced KPI/benchmark/reflection refresh and required Observer review.
+- Commands run:
+  - Complete quality gate and formal release gate, including `343` backend tests, `24` frontend tests, Ruff, compileall, Alembic offline SQL, both PostgreSQL migration rehearsals, dependency audits, frontend production build/typecheck, Compose config, secret scan, FOSS policy scan, isolated Compose smoke, immutable builds, and Trivy scans.
+  - Promotion-policy dry run followed by backup-first staging promotion and public login/dashboard/WebSocket/tool-readiness smoke.
+  - Authenticated Memory Steward reconciliation, Knowledge domain loop, descendant cancellation, finding resolution, approval rejection, executive Governor/Observer cycle, readiness refresh, service status, and recent error-log scan.
+- Result:
+  - Both immutable images have zero Trivy findings and release manifest `0.3.12` records every required check as passed.
+  - Staging health reports `0.3.12` at exact build SHA `6d9f5d5df16043f177d6d1d519955e956d6055e5`; public promotion smoke passed without replaying its email side effect.
+  - Knowledge canary `work_f9028aecb4924773b9159f97d1e67664` completed with confidence `0.98`, grounding `passed`, current Knowledge/Memory agents recognized, and `side_effects_executed=false`; all three generated advisory descendants are cancelled.
+  - Final executive run `exegov_a645011ba6d4` completed with zero errors, all eleven KPI values at their safe target, all six benchmarks passing, one completed `observe_only` execution, no approval, and no external side effect. Observer review `obs_7ca6f910d9cc4d4b` agreed with zero findings.
+  - Staging readiness is `ready` with zero blockers, zero open Memory Steward findings, zero pending approvals, fresh company context, fresh benchmarks/reflection, and no recent core/worker/UI errors.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.12.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.12-20260802-045402.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.12-20260802-045235.dump`.
+  - Work item `work_f9028aecb4924773b9159f97d1e67664`, executive run `exegov_a645011ba6d4`, and Observer review `obs_7ca6f910d9cc4d4b`.
+- Next step:
+  - Publish the release and final evidence to the public repository, require green push/manual CI, refresh CI evidence, and confirm public-head readiness.
