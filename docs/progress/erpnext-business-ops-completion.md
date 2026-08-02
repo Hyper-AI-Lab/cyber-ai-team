@@ -5629,3 +5629,22 @@
   - `/home/projects/cyber-team/backend/src/cyber_team/operations/executive.py`.
 - Next step:
   - Build and scan immutable `0.3.11` images, promote backup-first to staging, run live reconciliation and Governor/Observer acceptance, then publish only after public CI is green.
+
+### 2026-08-02T04:02:02Z — STEP-210 — Hardened concurrent Memory Steward remediation
+- Files/services changed:
+  - Made safe Memory Steward remediation idempotent under concurrent scheduler and owner-triggered runs: a losing runner now refetches durable state and reports `already_applied` instead of a false `blocked` result.
+  - Excluded canonical-conflicted, canonical-superseded, and otherwise recall-inactive procedural memories from stale refresh selection while preserving all historical records for audit.
+  - Added `provider_findings_recovered` to the public Memory Steward run response and advanced corrective release metadata to `0.3.12`.
+- Commands run:
+  - Focused Ruff checks for the Memory Steward service, route, and regression tests.
+  - Focused Pytest runs for Memory Steward and Memory API behavior.
+- Result:
+  - All focused Ruff checks passed and all `14` focused tests passed.
+  - Tests prove concurrent application is reported as already applied, inactive canonical memories are not recopied, and provider-recovery counts survive API response validation.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/memory_steward.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/api/routes/memory.py`.
+  - `/home/projects/cyber-team/backend/tests/test_memory_steward.py`.
+  - `/home/projects/cyber-team/backend/tests/test_api_memory.py`.
+- Next step:
+  - Run the complete `0.3.12` quality/release gate, promote backup-first, and finish live Governor/Observer acceptance against the hardened image.

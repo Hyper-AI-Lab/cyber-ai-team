@@ -290,9 +290,20 @@ class MemoryStewardService:
                     plan["result"] = result["action"]["result"] if result else {}
                     counts["actions_applied"] += 1
                 except ValueError as exc:
-                    plan["status"] = "blocked"
-                    plan["reason"] = str(exc)
-                    counts["blocked"] += 1
+                    latest = await self.get_finding(finding["id"])
+                    if latest and (
+                        latest["status"] == "resolved"
+                        or self._action_already_applied(latest, plan["action_type"])
+                    ):
+                        plan["status"] = "already_applied"
+                        last_action = (latest.get("metadata") or {}).get("last_action")
+                        if last_action and last_action.get("result") is not None:
+                            plan["result"] = last_action["result"]
+                        counts["already_applied"] += 1
+                    else:
+                        plan["status"] = "blocked"
+                        plan["reason"] = str(exc)
+                        counts["blocked"] += 1
             elif not plan["autonomous_allowed"] and request_action_approvals:
                 outcome = await self._handle_planned_approval_action(
                     finding,
@@ -973,7 +984,7 @@ class MemoryStewardService:
             entries = [
                 entry
                 for entry in result.scalars().all()
-                if not self._procedural_memory_is_superseded(entry.metadata_ or {})
+                if not self._procedural_memory_is_inactive(entry.metadata_ or {})
             ][:100]
 
         grouped: dict[str, list[MemoryEntry]] = defaultdict(list)
@@ -1123,7 +1134,7 @@ class MemoryStewardService:
             entries = [
                 entry
                 for entry in result.scalars().all()
-                if not self._procedural_memory_is_superseded(entry.metadata_ or {})
+                if not self._procedural_memory_is_inactive(entry.metadata_ or {})
             ]
 
         refreshed: list[dict[str, str]] = []
@@ -1155,7 +1166,7 @@ class MemoryStewardService:
             now = utc_now()
             async with self._session_factory() as session:
                 original = await session.get(MemoryEntry, entry.id)
-                if original and not self._procedural_memory_is_superseded(
+                if original and not self._procedural_memory_is_inactive(
                     original.metadata_ or {}
                 ):
                     original.metadata_ = {
@@ -1562,12 +1573,22 @@ class MemoryStewardService:
         return actions
 
     @staticmethod
-    def _procedural_memory_is_superseded(metadata: dict) -> bool:
-        return (
-            metadata.get("exclude_from_recall_reason")
-            == "procedural_memory_refreshed"
-            or bool(metadata.get("superseded_by_memory_id"))
-        )
+    def _procedural_memory_is_inactive(metadata: dict) -> bool:
+        reason = str(metadata.get("exclude_from_recall_reason") or "")
+        if reason in {
+            "active_memory_canonical_conflict",
+            "canonical_record_preferred",
+            "procedural_memory_refreshed",
+        }:
+            return True
+        if metadata.get("canonical_superseded") is True:
+            return True
+        if metadata.get("canonical_conflict_status") == "active":
+            return True
+        if metadata.get("superseded_by_memory_id"):
+            return True
+        conflicts = metadata.get("canonical_conflicts")
+        return isinstance(conflicts, dict) and bool(conflicts)
 
     @staticmethod
     def _seed_memory_type(finding: dict) -> str:

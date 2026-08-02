@@ -106,3 +106,40 @@ def test_memory_canonical_conflict_routes(monkeypatch):
         note="reviewed",
         actor="owner@example.com",
     )
+
+
+def test_memory_steward_run_exposes_provider_recovery_count(monkeypatch):
+    app = FastAPI()
+    app.include_router(memory_router, prefix="/api/memory")
+    app.state.memory_steward_service = AsyncMock()
+    app.state.memory_steward_service.run_once.return_value = {
+        "reviewed_at": "2026-08-02T04:00:00",
+        "actor": "owner@example.com",
+        "traces_reviewed": 3,
+        "findings_created": 0,
+        "findings_updated": 0,
+        "findings_reclassified": 0,
+        "provider_findings_recovered": 2,
+        "approvals_cancelled": 0,
+        "findings": [],
+        "remediation_plan": None,
+    }
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.memory.require_authorization",
+        mock_require_authorization,
+    )
+    response = TestClient(app).post("/api/memory/steward/run")
+
+    assert response.status_code == 200
+    assert response.json()["provider_findings_recovered"] == 2
+    app.state.memory_steward_service.run_once.assert_awaited_once_with(
+        actor="owner@example.com"
+    )

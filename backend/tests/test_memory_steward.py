@@ -425,6 +425,71 @@ async def test_memory_steward_planner_auto_applies_safe_seed_once(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_memory_steward_planner_reports_concurrent_application_as_applied():
+    now = datetime(2026, 6, 2, 12, 0, 0)
+    engine, session_factory = await build_session_factory()
+    try:
+        async with session_factory() as session:
+            session.add(
+                MemoryStewardFinding(
+                    id="finding-concurrent-refresh",
+                    finding_type="stale_procedural_memory",
+                    severity="medium",
+                    status="open",
+                    memory_namespace="company:acme:operations",
+                    company_namespace="company:acme",
+                    title="Stale procedural memory",
+                    description="A procedure is stale.",
+                    recommendation="Refresh it.",
+                    trace_ids=[],
+                    evidence={"memory_ids": ["stale-procedure"]},
+                    metadata_={"source": "test"},
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+        steward = MemoryStewardService(session_factory=session_factory)
+
+        async def concurrent_application(*_args, **_kwargs):
+            action = {
+                "action_type": "refresh_procedural_memory",
+                "status": "applied",
+                "result": {"refreshed_count": 1},
+            }
+            async with session_factory() as session:
+                finding = await session.get(
+                    MemoryStewardFinding,
+                    "finding-concurrent-refresh",
+                )
+                finding.status = "resolved"
+                finding.resolved_at = now
+                finding.metadata_ = {
+                    **(finding.metadata_ or {}),
+                    "action_history": [action],
+                    "last_action": action,
+                }
+                await session.commit()
+            raise ValueError("Action is no longer available")
+
+        steward.execute_action = concurrent_application
+        result = await steward.plan_remediations(
+            actor="planner",
+            apply_safe_actions=True,
+            request_approvals=False,
+        )
+
+        assert result["actions_applied"] == 0
+        assert result["already_applied"] == 1
+        assert result["blocked"] == 0
+        assert result["plans"][0]["plan"]["status"] == "already_applied"
+        assert result["plans"][0]["plan"]["result"] == {"refreshed_count": 1}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_memory_steward_planner_requests_and_consumes_approval(monkeypatch):
     now = datetime(2026, 6, 2, 12, 0, 0)
     engine, session_factory = await build_session_factory()
@@ -709,7 +774,7 @@ async def test_memory_steward_refreshes_and_supersedes_stale_procedural_memory(
     monkeypatch.setattr(settings, "memory_steward_planner_enabled", True)
     try:
         async with session_factory() as session:
-            session.add(
+            session.add_all([
                 MemoryEntry(
                     id="stale-procedure",
                     agent_id=None,
@@ -719,8 +784,18 @@ async def test_memory_steward_refreshes_and_supersedes_stale_procedural_memory(
                     metadata_={"source": "test"},
                     importance=0.8,
                     created_at=now - timedelta(days=60),
-                )
-            )
+                ),
+                MemoryEntry(
+                    id="inactive-stale-procedure",
+                    agent_id=None,
+                    memory_type="procedural",
+                    namespace="company:acme:operations",
+                    content="An obsolete canonical procedure.",
+                    metadata_={"canonical_superseded": True},
+                    importance=0.8,
+                    created_at=now - timedelta(days=60),
+                ),
+            ])
             await session.commit()
 
         steward = MemoryStewardService(
@@ -737,6 +812,7 @@ async def test_memory_steward_refreshes_and_supersedes_stale_procedural_memory(
         assert memory.writes[0]["metadata"]["refreshed_from_memory_id"] == (
             "stale-procedure"
         )
+        assert len(memory.writes) == 1
         async with session_factory() as session:
             original = await session.get(MemoryEntry, "stale-procedure")
             open_stale = (
