@@ -6,7 +6,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cyber_team.config import settings
 from cyber_team.db import Base
-from cyber_team.db.models import ApprovalRequest, MemoryStewardFinding, MemoryTrace
+from cyber_team.db.models import (
+    ApprovalRequest,
+    MemoryEntry,
+    MemoryStewardFinding,
+    MemoryTrace,
+)
 from cyber_team.operations.memory_steward import MemoryStewardService
 
 
@@ -630,6 +635,125 @@ async def test_llm_provider_health_recovers_after_newer_success(monkeypatch):
         assert health["blocking"] is False
         assert health["recovered"] is True
         assert health["failure_counts"] == {"rate_limited": 1}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_memory_steward_resolves_provider_finding_after_newer_success(
+    monkeypatch,
+):
+    first_run_at = datetime(2026, 6, 2, 12, 0, 0)
+    engine, session_factory = await build_session_factory()
+    monkeypatch.setattr(settings, "memory_steward_trace_lookback_hours", 24)
+    monkeypatch.setattr(settings, "memory_steward_trace_limit", 100)
+    monkeypatch.setattr(settings, "memory_steward_planner_enabled", False)
+
+    try:
+        async with session_factory() as session:
+            session.add(
+                memory_trace(
+                    "trace-provider-failure",
+                    recall_count=1,
+                    errors=["invoke:RateLimitError:rate limit exceeded"],
+                    created_at=first_run_at - timedelta(minutes=1),
+                    scope_results=[],
+                )
+            )
+            await session.commit()
+        steward = MemoryStewardService(session_factory=session_factory)
+        first = await steward.run_once(now=first_run_at, actor="test")
+        assert first["findings_created"] == 1
+
+        async with session_factory() as session:
+            session.add(
+                memory_trace(
+                    "trace-provider-success",
+                    recall_count=1,
+                    created_at=first_run_at + timedelta(minutes=1),
+                    scope_results=[],
+                    metadata={
+                        "protocol_version": "agent-memory-protocol-v1",
+                        "result_excerpt": "Completed advisory review.",
+                    },
+                )
+            )
+            await session.commit()
+
+        recovered = await steward.run_once(
+            now=first_run_at + timedelta(minutes=2),
+            actor="test",
+        )
+        open_findings = await steward.list_findings(status="open")
+        resolved_findings = await steward.list_findings(status="resolved")
+
+        assert recovered["provider_findings_recovered"] == 1
+        assert open_findings == []
+        assert resolved_findings[0]["finding_type"] == "llm_provider_errors"
+        assert (
+            resolved_findings[0]["metadata"]["resolution"]["actor"]
+            == "memory_steward_provider_reconciler"
+        )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_memory_steward_refreshes_and_supersedes_stale_procedural_memory(
+    monkeypatch,
+):
+    now = datetime(2026, 6, 2, 12, 0, 0)
+    engine, session_factory = await build_session_factory()
+    memory = FakeMemoryService()
+    monkeypatch.setattr(settings, "memory_steward_stale_procedural_days", 30)
+    monkeypatch.setattr(settings, "memory_steward_planner_enabled", True)
+    try:
+        async with session_factory() as session:
+            session.add(
+                MemoryEntry(
+                    id="stale-procedure",
+                    agent_id=None,
+                    memory_type="procedural",
+                    namespace="company:acme:operations",
+                    content="Review open operational work every Monday.",
+                    metadata_={"source": "test"},
+                    importance=0.8,
+                    created_at=now - timedelta(days=60),
+                )
+            )
+            await session.commit()
+
+        steward = MemoryStewardService(
+            memory_service=memory,
+            session_factory=session_factory,
+        )
+        result = await steward.run_once(
+            now=now,
+            actor="test",
+            apply_safe_actions=True,
+        )
+
+        assert result["remediation_plan"]["actions_applied"] == 1
+        assert memory.writes[0]["metadata"]["refreshed_from_memory_id"] == (
+            "stale-procedure"
+        )
+        async with session_factory() as session:
+            original = await session.get(MemoryEntry, "stale-procedure")
+            open_stale = (
+                await session.execute(
+                    select(MemoryStewardFinding).where(
+                        MemoryStewardFinding.finding_type
+                        == "stale_procedural_memory",
+                        MemoryStewardFinding.status.in_(("open", "acknowledged")),
+                    )
+                )
+            ).scalars().all()
+        assert original.metadata_["exclude_from_recall_reason"] == (
+            "procedural_memory_refreshed"
+        )
+        assert original.metadata_["superseded_by_memory_id"] == "memory-1"
+        assert open_stale == []
+        assert await steward._stale_procedural_memory_findings(now) == []
     finally:
         await engine.dispose()
 

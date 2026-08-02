@@ -181,10 +181,103 @@ class MultiCompanyERPNext(FakeERPNext):
 
 class FakeAgentManager:
     def __init__(self):
+        self.list_agents = AsyncMock(return_value=[])
         self.list_role_manifests = AsyncMock(return_value=[])
         self.create_role_manifest = AsyncMock()
         self.instantiate_role = AsyncMock()
         self.report_role_gap = AsyncMock()
+
+
+@pytest.mark.asyncio
+async def test_role_gap_reconciliation_closes_fulfilled_snapshot_recommendation():
+    engine, session_factory = await build_session_factory()
+    manager = FakeAgentManager()
+    manager.list_agents.return_value = [
+        {
+            "id": "finance-agent",
+            "role_family": "finance",
+            "role_name": (
+                "Review ERPNext-derived role: Finance & Accounting Agent (Baseline)"
+            ),
+            "status": "active",
+        }
+    ]
+    now = utc_now()
+    snapshot = CompanyContextSnapshot(
+        id="ctx-current",
+        source="erpnext",
+        source_id="erpnext.example.com",
+        source_hash="current-hash",
+        company_namespace="company:acme",
+        normalized_profile={"company_name": "Acme"},
+        erpnext_summary={},
+        operating_model={},
+        status="active",
+        created_by="test",
+        created_at=now,
+    )
+    gap = RoleGap(
+        id="gap-finance",
+        title="Review ERPNext-derived role: Finance & Accounting Agent",
+        description="Review finance role.",
+        status="proposed",
+        severity="medium",
+        source_type="company_context_snapshot",
+        company_namespace="company:acme",
+        capability="finance",
+        requested_tools=["memory_recall"],
+        context={
+            "snapshot_id": snapshot.id,
+            "role_name": "Finance & Accounting Agent",
+            "role_family": "finance",
+        },
+        proposed_role={},
+        resolution={},
+        created_at=now,
+        updated_at=now,
+    )
+    approval = ApprovalRequest(
+        id="approval-finance",
+        action_type="role_gap.apply",
+        action_description="Apply finance role.",
+        action_payload={},
+        requester="system",
+        requester_type="agent",
+        risk_level="medium",
+        target_type="role_gap",
+        target_id=gap.id,
+        status="pending",
+        created_at=now,
+        expires_at=now + timedelta(days=1),
+    )
+    try:
+        async with session_factory() as session:
+            session.add_all([snapshot, gap, approval])
+            await session.commit()
+        service = CompanyContextSyncService(
+            erpnext=FakeERPNext(),
+            agent_manager=manager,
+            memory_service=FakeMemory(),
+            tool_registry=FakeToolRegistry(),
+            session_factory=session_factory,
+        )
+
+        result = await service.reconcile_fulfilled_role_gaps(
+            snapshot_id=snapshot.id,
+            actor="test-reconciler",
+        )
+
+        assert result["role_gap_ids"] == [gap.id]
+        assert result["agent_ids"] == ["finance-agent"]
+        assert result["rejected_approval_ids"] == [approval.id]
+        async with session_factory() as session:
+            stored_gap = await session.get(RoleGap, gap.id)
+            stored_approval = await session.get(ApprovalRequest, approval.id)
+        assert stored_gap.status == "resolved"
+        assert stored_gap.resolution["reason"] == "fulfilled_by_active_equivalent_agent"
+        assert stored_approval.status == "rejected"
+    finally:
+        await engine.dispose()
 
 
 class FakeMemory:

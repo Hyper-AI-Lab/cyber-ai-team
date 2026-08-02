@@ -274,9 +274,12 @@ class ExecutiveCompanyOSService:
             },
             {
                 "key": "memory_findings_bounded",
-                "title": "Open memory steward findings remain bounded",
-                "description": "Memory issues should be low enough for reliable recall.",
-                "kpi_keys": ["open_memory_findings"],
+                "title": "Actionable memory integrity findings remain bounded",
+                "description": (
+                    "Memory integrity findings should remain low; provider incidents "
+                    "are measured separately by provider health."
+                ),
+                "kpi_keys": ["open_memory_integrity_findings"],
                 "rule": {"comparison": "max", "threshold": 5},
                 "severity": "medium",
             },
@@ -325,12 +328,15 @@ class ExecutiveCompanyOSService:
             }
             for definition in definitions:
                 if definition["key"] in existing:
-                    if definition["key"] == "role_backlog_bounded":
+                    if definition["key"] in {
+                        "role_backlog_bounded",
+                        "memory_findings_bounded",
+                    }:
                         existing_definition = (
                             await session.execute(
                                 select(ExecutiveBenchmarkDefinition).where(
                                     ExecutiveBenchmarkDefinition.key
-                                    == "role_backlog_bounded"
+                                    == definition["key"]
                                 )
                             )
                         ).scalar_one_or_none()
@@ -1702,6 +1708,10 @@ class ExecutiveCompanyOSService:
                     ),
                 }
             )
+        elif action["action_type"] == "observe_only":
+            status = "planned" if dry_run else "completed"
+            completed_at = utc_now() if not dry_run else None
+            result["action"] = "operating_observation_recorded"
         elif action["action_type"] == "seed_memory" and auto_apply_low_risk:
             if dry_run:
                 status = "planned"
@@ -2030,6 +2040,14 @@ class ExecutiveCompanyOSService:
         values = {
             "readiness_blockers": float(readiness_blockers),
             "open_memory_findings": float(memory.get("open_findings") or 0),
+            "open_memory_integrity_findings": float(
+                memory.get("actionable_findings")
+                if memory.get("actionable_findings") is not None
+                else memory.get("open_findings") or 0
+            ),
+            "open_llm_provider_findings": float(
+                memory.get("provider_findings") or 0
+            ),
             "open_memory_conflicts": float(
                 memory.get("open_canonical_conflicts") or 0
             ),
@@ -2064,6 +2082,18 @@ class ExecutiveCompanyOSService:
         labels = {
             "readiness_blockers": ("Readiness blockers", "count", "max", 0),
             "open_memory_findings": ("Open memory findings", "count", "max", 5),
+            "open_memory_integrity_findings": (
+                "Open memory integrity findings",
+                "count",
+                "max",
+                5,
+            ),
+            "open_llm_provider_findings": (
+                "Open LLM provider incident findings",
+                "count",
+                "max",
+                0,
+            ),
             "open_memory_conflicts": ("Open memory/canonical conflicts", "count", "max", 0),
             "active_role_gaps": ("Active role gaps", "count", "max", 10),
             "actionable_role_gaps": ("Actionable role gaps", "count", "max", 10),

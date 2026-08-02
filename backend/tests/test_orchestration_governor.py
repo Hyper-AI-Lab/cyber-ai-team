@@ -1,14 +1,18 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from cyber_team.clock import utc_now
 from cyber_team.db import Base
 from cyber_team.db.models import (
     Agent,
+    MemoryStewardFinding,
     OrchestrationToolProposal,
     RoleGap,
+    Workflow,
+    WorkflowRun,
 )
 from cyber_team.operations import governor as governor_module
 from cyber_team.operations.governor import OrchestrationGovernorService
@@ -168,6 +172,101 @@ async def seed_alias_role_gap(factory):
             )
         )
         await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_governor_workflow_failures_use_configured_recent_window(
+    governor_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        governor_module.settings,
+        "governor_workflow_failure_lookback_hours",
+        24,
+    )
+    now = utc_now()
+    async with governor_session_factory() as session:
+        session.add(
+            Workflow(
+                id="workflow-health",
+                name="Workflow health",
+                graph_definition={},
+                status="active",
+            )
+        )
+        session.add_all([
+            WorkflowRun(
+                id="old-failure",
+                workflow_id="workflow-health",
+                status="failed",
+                error="Historical failure",
+                started_at=now - timedelta(days=2),
+                completed_at=now - timedelta(days=2),
+            ),
+            WorkflowRun(
+                id="recent-failure",
+                workflow_id="workflow-health",
+                status="failed",
+                error="Recent failure",
+                started_at=now - timedelta(hours=1),
+                completed_at=now - timedelta(hours=1),
+            ),
+        ])
+        await session.commit()
+        counts = await build_service()._workflow_counts(session)
+
+    assert counts["recent_failed"] == 1
+    assert counts["recent_failed_ids"] == ["recent-failure"]
+    assert counts["historical_failed"] == 2
+    assert counts["failure_lookback_hours"] == 24
+
+
+@pytest.mark.asyncio
+async def test_governor_memory_counts_separate_provider_incidents(
+    governor_session_factory,
+):
+    now = utc_now()
+    async with governor_session_factory() as session:
+        session.add_all([
+            MemoryStewardFinding(
+                id="memory-integrity",
+                finding_type="stale_procedural_memory",
+                severity="medium",
+                status="open",
+                title="Stale procedure",
+                description="Procedure is stale.",
+                recommendation="Refresh it.",
+                trace_ids=[],
+                evidence={},
+                metadata_={},
+                created_at=now,
+                updated_at=now,
+            ),
+            MemoryStewardFinding(
+                id="provider-incident",
+                finding_type="llm_provider_errors",
+                severity="medium",
+                status="open",
+                title="Provider rate limited",
+                description="Provider incident.",
+                recommendation="Wait for recovery.",
+                trace_ids=[],
+                evidence={"category": "rate_limited"},
+                metadata_={"failure_domain": "llm_provider"},
+                created_at=now,
+                updated_at=now,
+            ),
+        ])
+        await session.commit()
+        counts = await build_service()._memory_finding_counts(session)
+
+    assert counts["open_findings"] == 2
+    assert counts["actionable_findings"] == 1
+    assert counts["provider_findings"] == 1
+    assert counts["open_by_type"] == {
+        "llm_provider_errors": 1,
+        "stale_procedural_memory": 1,
+    }
 
 
 def build_service(audit=None, agent_manager=None):

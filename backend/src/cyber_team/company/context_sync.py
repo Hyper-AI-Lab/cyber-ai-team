@@ -208,6 +208,12 @@ class CompanyContextSyncService:
             "task_ids": [],
             "approval_ids": [],
         }
+        fulfilled_role_result = {
+            "count": 0,
+            "role_gap_ids": [],
+            "agent_ids": [],
+            "rejected_approval_ids": [],
+        }
 
         if (
             drift_detected
@@ -228,6 +234,10 @@ class CompanyContextSyncService:
             stale_review_result = await self.reconcile_superseded_snapshot_reviews(
                 current_snapshot_id=candidate_snapshot["id"],
                 current_source_hash=candidate_hash,
+                actor=actor,
+            )
+            fulfilled_role_result = await self.reconcile_fulfilled_role_gaps(
+                snapshot_id=candidate_snapshot["id"],
                 actor=actor,
             )
 
@@ -252,6 +262,7 @@ class CompanyContextSyncService:
             "sync_status": sync_result.get("status"),
             "stale_role_gaps": stale_result,
             "stale_reviews": stale_review_result,
+            "fulfilled_role_gaps": fulfilled_role_result,
             "checked_at": utc_now().isoformat(),
             "dry_run": dry_run,
             "apply_low_risk": apply_low_risk and not dry_run,
@@ -994,6 +1005,10 @@ class CompanyContextSyncService:
         snapshot = await self.get_snapshot(snapshot_id)
         if not snapshot:
             raise ValueError(f"Company context snapshot {snapshot_id} not found")
+        fulfilled = await self.reconcile_fulfilled_role_gaps(
+            snapshot_id=snapshot_id,
+            actor=actor,
+        )
         unsafe_specs = self._unsafe_role_specs(snapshot["operating_model"])
         existing_gap_ids = snapshot.get("role_gap_ids", [])
         if existing_gap_ids:
@@ -1002,9 +1017,20 @@ class CompanyContextSyncService:
                 "already_reported": True,
                 "role_gap_ids": existing_gap_ids,
                 "unsafe_role_count": len(unsafe_specs),
+                "fulfilled_roles": fulfilled,
             }
+        active_agents = await self._active_agents()
+        pending_specs = [
+            skipped
+            for skipped in unsafe_specs
+            if not self._matching_active_agent(
+                active_agents,
+                role_name=skipped.get("name"),
+                role_family=skipped.get("family"),
+            )
+        ]
         created_gap_ids = []
-        for skipped in unsafe_specs:
+        for skipped in pending_specs:
             gap = await self._agent_manager.report_role_gap(
                 SimpleNamespace(
                     title=f"Review ERPNext-derived role: {skipped['name']}",
@@ -1040,15 +1066,143 @@ class CompanyContextSyncService:
             resource_id=snapshot_id,
             metadata={
                 "role_gap_ids": created_gap_ids,
-                "unsafe_role_count": len(unsafe_specs),
+                "unsafe_role_count": len(pending_specs),
+                "fulfilled_role_count": len(unsafe_specs) - len(pending_specs),
             },
         )
         return {
             "snapshot_id": snapshot_id,
             "already_reported": False,
             "role_gap_ids": created_gap_ids,
-            "unsafe_role_count": len(unsafe_specs),
+            "unsafe_role_count": len(pending_specs),
+            "fulfilled_roles": fulfilled,
         }
+
+    async def reconcile_fulfilled_role_gaps(
+        self,
+        *,
+        snapshot_id: str,
+        actor: str = "company_context_reconciler",
+    ) -> dict[str, Any]:
+        """Resolve current snapshot role gaps already covered by active agents."""
+        active_agents = await self._active_agents()
+        if not active_agents:
+            return {"count": 0, "role_gap_ids": [], "agent_ids": []}
+
+        now = utc_now()
+        resolved_ids: list[str] = []
+        matched_agent_ids: list[str] = []
+        rejected_approval_ids: list[str] = []
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(RoleGap).where(
+                    RoleGap.source_type == "company_context_snapshot",
+                    RoleGap.status.in_(("open", "proposed")),
+                )
+            )
+            for gap in result.scalars().all():
+                context = gap.context or {}
+                if context.get("snapshot_id") != snapshot_id:
+                    continue
+                role_name = context.get("role_name") or gap.title.removeprefix(
+                    "Review ERPNext-derived role: "
+                )
+                role_family = context.get("role_family") or gap.capability
+                agent = self._matching_active_agent(
+                    active_agents,
+                    role_name=role_name,
+                    role_family=role_family,
+                )
+                if not agent:
+                    continue
+
+                gap.status = "resolved"
+                gap.resolution = {
+                    **(gap.resolution or {}),
+                    "resolver": actor,
+                    "resolved_at": now.isoformat(),
+                    "reason": "fulfilled_by_active_equivalent_agent",
+                    "agent_id": agent["id"],
+                    "agent_role_name": agent.get("role_name"),
+                    "snapshot_id": snapshot_id,
+                }
+                gap.resolved_at = now
+                gap.updated_at = now
+                resolved_ids.append(gap.id)
+                matched_agent_ids.append(agent["id"])
+
+                approvals = await session.execute(
+                    select(ApprovalRequest).where(
+                        ApprovalRequest.target_type == "role_gap",
+                        ApprovalRequest.target_id == gap.id,
+                        ApprovalRequest.status == "pending",
+                    )
+                )
+                for approval in approvals.scalars().all():
+                    approval.status = "rejected"
+                    approval.reviewer = actor
+                    approval.review_note = (
+                        "Automatically cancelled because an active equivalent agent "
+                        "already fulfills the company-context role."
+                    )
+                    approval.resolved_at = now
+                    rejected_approval_ids.append(approval.id)
+            if resolved_ids or rejected_approval_ids:
+                await session.commit()
+
+        if resolved_ids:
+            await self._record(
+                "company_context.role_gaps_fulfilled",
+                actor=actor,
+                resource_id=snapshot_id,
+                metadata={
+                    "role_gap_ids": resolved_ids,
+                    "agent_ids": sorted(set(matched_agent_ids)),
+                    "rejected_approval_ids": rejected_approval_ids,
+                },
+            )
+        return {
+            "count": len(resolved_ids),
+            "role_gap_ids": resolved_ids,
+            "agent_ids": sorted(set(matched_agent_ids)),
+            "rejected_approval_ids": rejected_approval_ids,
+        }
+
+    async def _active_agents(self) -> list[dict[str, Any]]:
+        reader = getattr(self._agent_manager, "list_agents", None)
+        if not callable(reader):
+            return []
+        return [agent for agent in await reader() if agent.get("status") == "active"]
+
+    @classmethod
+    def _matching_active_agent(
+        cls,
+        agents: list[dict[str, Any]],
+        *,
+        role_name: str | None,
+        role_family: str | None,
+    ) -> dict[str, Any] | None:
+        target_name = cls._normalized_role_identity(role_name)
+        target_family = cls._normalized_role_identity(role_family)
+        if not target_name:
+            return None
+        for agent in agents:
+            if target_family and cls._normalized_role_identity(
+                agent.get("role_family")
+            ) != target_family:
+                continue
+            if cls._normalized_role_identity(agent.get("role_name")) == target_name:
+                return agent
+        return None
+
+    @staticmethod
+    def _normalized_role_identity(value: str | None) -> str:
+        normalized = str(value or "").strip().lower()
+        normalized = re.sub(r"^review\s+erpnext[-\s]+derived\s+role\s*:\s*", "", normalized)
+        normalized = re.sub(r"\s*\(baseline\)\s*$", "", normalized)
+        normalized = re.sub(r"\s+specialist\s*$", "", normalized)
+        normalized = normalized.replace("&", " and ")
+        return re.sub(r"[^a-z0-9]+", " ", normalized).strip()
 
     async def _create_or_execute_snapshot_plan(
         self,

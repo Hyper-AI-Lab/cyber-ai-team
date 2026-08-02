@@ -53,6 +53,10 @@ class MemoryStewardService:
         proposals = self._propose_findings(traces)
         proposals.extend(await self._stale_procedural_memory_findings(now))
         reconciliation = await self._reconcile_reclassified_memory_findings(traces, now)
+        provider_reconciliation = await self._reconcile_recovered_llm_findings(
+            traces,
+            now,
+        )
         findings = []
         created = 0
         updated = 0
@@ -72,7 +76,13 @@ class MemoryStewardService:
             "findings_created": created,
             "findings_updated": updated,
             "findings_reclassified": reconciliation["findings_resolved"],
-            "approvals_cancelled": reconciliation["approvals_rejected"],
+            "provider_findings_recovered": provider_reconciliation[
+                "findings_resolved"
+            ],
+            "approvals_cancelled": (
+                reconciliation["approvals_rejected"]
+                + provider_reconciliation["approvals_rejected"]
+            ),
             "findings": findings,
         }
         if settings.memory_steward_planner_enabled:
@@ -94,7 +104,13 @@ class MemoryStewardService:
                     "findings_created": created,
                     "findings_updated": updated,
                     "findings_reclassified": reconciliation["findings_resolved"],
-                    "approvals_cancelled": reconciliation["approvals_rejected"],
+                    "provider_findings_recovered": provider_reconciliation[
+                        "findings_resolved"
+                    ],
+                    "approvals_cancelled": (
+                        reconciliation["approvals_rejected"]
+                        + provider_reconciliation["approvals_rejected"]
+                    ),
                     "finding_types": [finding["finding_type"] for finding in findings],
                 },
             )
@@ -178,6 +194,11 @@ class MemoryStewardService:
 
         if action_type == "seed_memory":
             action_result = await self._execute_seed_memory(finding, params)
+        elif action_type == "refresh_procedural_memory":
+            action_result = await self._execute_refresh_procedural_memory(
+                finding,
+                params,
+            )
         elif action_type == "report_role_gap":
             action_result = await self._execute_report_role_gap(finding, params, actor)
         else:
@@ -444,9 +465,15 @@ class MemoryStewardService:
                 groups[category].append(trace)
 
         findings = []
+        latest_success_at = self._latest_successful_llm_trace_at(traces)
         for category, grouped in groups.items():
             unique_traces = {trace["id"]: trace for trace in grouped}
             grouped = list(unique_traces.values())
+            latest_failure_at = max(
+                datetime.fromisoformat(trace["created_at"]) for trace in grouped
+            )
+            if latest_success_at and latest_success_at > latest_failure_at:
+                continue
             agent_ids = sorted({
                 trace["agent_id"] for trace in grouped if trace.get("agent_id")
             })
@@ -484,6 +511,103 @@ class MemoryStewardService:
                 },
             })
         return findings
+
+    async def _reconcile_recovered_llm_findings(
+        self,
+        traces: list[dict],
+        now: datetime,
+    ) -> dict:
+        latest_success_at = self._latest_successful_llm_trace_at(traces)
+        if not latest_success_at:
+            return {
+                "findings_resolved": 0,
+                "finding_ids": [],
+                "approvals_rejected": 0,
+                "approval_ids": [],
+            }
+        latest_failures = self._latest_llm_failure_at_by_category(traces)
+        resolved_ids: list[str] = []
+        approval_ids: list[str] = []
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(MemoryStewardFinding).where(
+                    MemoryStewardFinding.finding_type == "llm_provider_errors",
+                    MemoryStewardFinding.status.in_(self.OPEN_STATUSES),
+                )
+            )
+            for finding in result.scalars().all():
+                category = str((finding.evidence or {}).get("category") or "")
+                latest_failure_at = latest_failures.get(category)
+                if latest_failure_at and latest_failure_at >= latest_success_at:
+                    continue
+                metadata = dict(finding.metadata_ or {})
+                metadata["resolution"] = {
+                    "status": "resolved",
+                    "note": (
+                        "Automatically closed after a newer successful persisted LLM "
+                        "completion demonstrated provider recovery."
+                    ),
+                    "actor": "memory_steward_provider_reconciler",
+                    "resolved_at": now.isoformat(),
+                    "recovery_trace_at": latest_success_at.isoformat(),
+                }
+                finding.status = "resolved"
+                finding.metadata_ = metadata
+                finding.updated_at = now
+                finding.resolved_at = now
+                resolved_ids.append(finding.id)
+
+                approvals = await session.execute(
+                    select(ApprovalRequest).where(
+                        ApprovalRequest.target_type == "memory_steward_finding",
+                        ApprovalRequest.target_id == finding.id,
+                        ApprovalRequest.status == "pending",
+                    )
+                )
+                for approval in approvals.scalars().all():
+                    approval.status = "rejected"
+                    approval.reviewer = "memory_steward_provider_reconciler"
+                    approval.review_note = (
+                        "Automatically cancelled because a newer successful LLM "
+                        "completion proved provider recovery."
+                    )
+                    approval.resolved_at = now
+                    approval_ids.append(approval.id)
+            if resolved_ids or approval_ids:
+                await session.commit()
+        return {
+            "findings_resolved": len(resolved_ids),
+            "finding_ids": resolved_ids,
+            "approvals_rejected": len(approval_ids),
+            "approval_ids": approval_ids,
+        }
+
+    @classmethod
+    def _latest_successful_llm_trace_at(
+        cls,
+        traces: list[dict],
+    ) -> datetime | None:
+        successful = [
+            datetime.fromisoformat(trace["created_at"])
+            for trace in traces
+            if (trace.get("metadata") or {}).get("protocol_version")
+            and (trace.get("metadata") or {}).get("result_excerpt")
+            and not cls._llm_error_categories(trace)
+        ]
+        return max(successful, default=None)
+
+    @classmethod
+    def _latest_llm_failure_at_by_category(
+        cls,
+        traces: list[dict],
+    ) -> dict[str, datetime]:
+        latest: dict[str, datetime] = {}
+        for trace in traces:
+            created_at = datetime.fromisoformat(trace["created_at"])
+            for category in cls._llm_error_categories(trace):
+                if category not in latest or created_at > latest[category]:
+                    latest[category] = created_at
+        return latest
 
     async def llm_provider_health(self, *, now: datetime | None = None) -> dict:
         now = now or utc_now()
@@ -844,9 +968,13 @@ class MemoryStewardService:
                 .where(MemoryEntry.memory_type == "procedural")
                 .where(MemoryEntry.created_at < cutoff)
                 .order_by(MemoryEntry.created_at)
-                .limit(100)
+                .limit(500)
             )
-            entries = result.scalars().all()
+            entries = [
+                entry
+                for entry in result.scalars().all()
+                if not self._procedural_memory_is_superseded(entry.metadata_ or {})
+            ][:100]
 
         grouped: dict[str, list[MemoryEntry]] = defaultdict(list)
         for entry in entries:
@@ -879,6 +1007,7 @@ class MemoryStewardService:
                     "oldest_memory_id": oldest.id,
                     "oldest_created_at": oldest.created_at.isoformat(),
                     "memory_count": len(entries_for_namespace),
+                    "memory_ids": [entry.id for entry in entries_for_namespace],
                 },
                 "metadata": {"source": "memory_steward"},
             })
@@ -969,6 +1098,78 @@ class MemoryStewardService:
             "namespace": namespace,
             "memory_type": memory_type,
             "agent_id": agent_id,
+        }
+
+    async def _execute_refresh_procedural_memory(
+        self,
+        finding: dict,
+        params: dict,
+    ) -> dict:
+        if not self._memory:
+            raise ValueError("Memory service is not available")
+        if finding.get("finding_type") != "stale_procedural_memory":
+            raise ValueError("Procedural refresh requires a stale procedural finding")
+        memory_ids = list((finding.get("evidence") or {}).get("memory_ids") or [])
+        if not memory_ids:
+            raise ValueError("The finding does not identify procedural memories to refresh")
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(MemoryEntry).where(
+                    MemoryEntry.id.in_(memory_ids),
+                    MemoryEntry.memory_type == "procedural",
+                )
+            )
+            entries = [
+                entry
+                for entry in result.scalars().all()
+                if not self._procedural_memory_is_superseded(entry.metadata_ or {})
+            ]
+
+        refreshed: list[dict[str, str]] = []
+        for entry in entries:
+            metadata = dict(entry.metadata_ or {})
+            for key in (
+                "exclude_from_recall_reason",
+                "superseded_by_memory_id",
+                "superseded_at",
+            ):
+                metadata.pop(key, None)
+            memory = await self._memory.remember(
+                SimpleNamespace(
+                    agent_id=entry.agent_id,
+                    memory_type="procedural",
+                    namespace=entry.namespace,
+                    content=entry.content,
+                    metadata={
+                        **metadata,
+                        "source": "memory_steward_procedural_refresh",
+                        "finding_id": finding["id"],
+                        "refreshed_from_memory_id": entry.id,
+                        "previous_created_at": entry.created_at.isoformat(),
+                        "action_type": "refresh_procedural_memory",
+                    },
+                    importance=float(params.get("importance") or entry.importance),
+                )
+            )
+            now = utc_now()
+            async with self._session_factory() as session:
+                original = await session.get(MemoryEntry, entry.id)
+                if original and not self._procedural_memory_is_superseded(
+                    original.metadata_ or {}
+                ):
+                    original.metadata_ = {
+                        **(original.metadata_ or {}),
+                        "exclude_from_recall_reason": "procedural_memory_refreshed",
+                        "superseded_by_memory_id": memory["id"],
+                        "superseded_at": now.isoformat(),
+                    }
+                    await session.commit()
+            refreshed.append({"old_memory_id": entry.id, "memory_id": memory["id"]})
+        return {
+            "namespace": finding.get("memory_namespace"),
+            "refreshed_count": len(refreshed),
+            "memories": refreshed,
         }
 
     async def _execute_report_role_gap(
@@ -1161,7 +1362,17 @@ class MemoryStewardService:
             metadata["action_history"] = action_history
             metadata["last_action"] = action_record
             finding.metadata_ = metadata
-            if finding.status == "open":
+            if action_record["action_type"] == "refresh_procedural_memory":
+                finding.status = "resolved"
+                finding.resolved_at = now
+                metadata["resolution"] = {
+                    "status": "resolved",
+                    "note": "Stale procedural memories were refreshed and superseded.",
+                    "actor": action_record["actor"],
+                    "resolved_at": now.isoformat(),
+                }
+                finding.metadata_ = metadata
+            elif finding.status == "open":
                 finding.status = "acknowledged"
             finding.updated_at = now
             await session.commit()
@@ -1198,6 +1409,27 @@ class MemoryStewardService:
                     "without touching external systems."
                 ),
                 "description": self._default_seed_content(finding),
+                "params": {},
+                "planned_at": reviewed_at.isoformat(),
+            }
+        if (
+            finding["finding_type"] == "stale_procedural_memory"
+            and "refresh_procedural_memory" in actions
+        ):
+            return {
+                "id": f"mem_plan_{uuid.uuid4().hex[:12]}",
+                "finding_id": finding["id"],
+                "finding_type": finding["finding_type"],
+                "action_type": "refresh_procedural_memory",
+                "status": "planned",
+                "priority": self._priority_for_finding(finding),
+                "risk_level": "low",
+                "autonomous_allowed": True,
+                "reason": (
+                    "Refreshing an internal procedural memory preserves its content "
+                    "and audit history while renewing its review timestamp."
+                ),
+                "description": finding["recommendation"],
                 "params": {},
                 "planned_at": reviewed_at.isoformat(),
             }
@@ -1313,13 +1545,29 @@ class MemoryStewardService:
                 "label": "Seed Memory",
                 "description": "Write a durable memory entry that guides future recall.",
             })
-        if finding["finding_type"] != "llm_provider_errors":
+        if finding["finding_type"] == "stale_procedural_memory":
+            actions.append({
+                "type": "refresh_procedural_memory",
+                "label": "Refresh Procedures",
+                "description": (
+                    "Create fresh indexed copies and supersede the stale versions."
+                ),
+            })
+        elif finding["finding_type"] != "llm_provider_errors":
             actions.append({
                 "type": "report_role_gap",
                 "label": "Open Gap",
                 "description": "Create a role or capability gap for follow-up.",
             })
         return actions
+
+    @staticmethod
+    def _procedural_memory_is_superseded(metadata: dict) -> bool:
+        return (
+            metadata.get("exclude_from_recall_reason")
+            == "procedural_memory_refreshed"
+            or bool(metadata.get("superseded_by_memory_id"))
+        )
 
     @staticmethod
     def _seed_memory_type(finding: dict) -> str:

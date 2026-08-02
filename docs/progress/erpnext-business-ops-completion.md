@@ -5606,3 +5606,26 @@
   - Executive run `exegov_f31422f48972` and Observer review `obs_70f9369d3c4146db`.
 - Next step:
   - Continue the Autonomous Company Operations v3 canary sequence with evidence-ranked internal domains, beginning with the Observer's bounded memory-findings, role-backlog, and historical-workflow-failure follow-ups rather than choosing a business domain arbitrarily.
+
+### 2026-08-02T02:43:57Z — STEP-209 — Closed false-positive autonomy lifecycle findings
+- Files/services changed:
+  - Added company-context role-gap reconciliation that closes current-snapshot recommendations already fulfilled by equivalent active agents and cancels obsolete pending role-gap approvals.
+  - Added automatic LLM-provider incident recovery reconciliation after newer successful persisted completions, while keeping provider findings separate from memory-integrity benchmarks.
+  - Added safe procedural-memory refresh: fresh canonical/indexed copies supersede stale entries, old records remain auditable, and superseded entries are excluded from recall.
+  - Added a configurable 24-hour workflow-failure benchmark window with historical failure counts retained for transparency.
+  - Prevented observation-only executive cycles from creating approvals when low-risk auto-apply is disabled, and advanced release metadata to `0.3.11`.
+- Commands run:
+  - Focused Ruff/compile checks and database-backed regression tests for company-context, Memory Steward, Governor, and Executive Company OS behavior.
+  - Full quality gate: Ruff, complete Pytest, compileall, Alembic offline SQL, dependency audit, Next.js production build, TypeScript, Vitest, npm audit, Compose validation, secret scan, and FOSS/resource-policy scan.
+  - Real PostgreSQL migration rehearsal against both legacy pre-Alembic and representative seeded schemas.
+- Result:
+  - Full gate passed with `341` backend tests and `24` frontend tests; Python/npm dependency audits found no known vulnerabilities, and secret/FOSS policy scans passed.
+  - Migration rehearsal passed through Alembic head `0015_autonomous_company_ops_v3` for both supported upgrade starting points.
+  - Regression coverage proves fulfilled role work, recovered provider incidents, refreshed procedural memory, expired workflow-failure windows, and observation-only cycles all converge without fake work or unnecessary owner approvals.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/company/context_sync.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/memory_steward.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/governor.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/executive.py`.
+- Next step:
+  - Build and scan immutable `0.3.11` images, promote backup-first to staging, run live reconciliation and Governor/Observer acceptance, then publish only after public CI is green.

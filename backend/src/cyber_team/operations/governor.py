@@ -8,7 +8,7 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from cyber_team.clock import utc_now
@@ -1018,20 +1018,31 @@ class OrchestrationGovernorService:
             select(WorkflowRun.status, func.count()).group_by(WorkflowRun.status)
         )
         by_status = {status: count for status, count in result.all()}
+        lookback_hours = max(1, settings.governor_workflow_failure_lookback_hours)
+        cutoff = utc_now() - timedelta(hours=lookback_hours)
         recent = await session.execute(
             select(WorkflowRun)
+            .where(WorkflowRun.started_at >= cutoff)
             .order_by(desc(WorkflowRun.started_at))
-            .limit(25)
+            .limit(250)
         )
         recent_failed = [
             run.id
             for run in recent.scalars().all()
             if run.status == "failed" or run.error
         ]
+        historical_failed = await session.scalar(
+            select(func.count())
+            .select_from(WorkflowRun)
+            .where(or_(WorkflowRun.status == "failed", WorkflowRun.error.is_not(None)))
+        )
         return {
             "total": sum(by_status.values()),
             "recent_failed": len(recent_failed),
             "recent_failed_ids": recent_failed[:10],
+            "failure_lookback_hours": lookback_hours,
+            "failure_cutoff": cutoff.isoformat(),
+            "historical_failed": int(historical_failed or 0),
             "by_status": by_status,
         }
 
@@ -1078,6 +1089,14 @@ class OrchestrationGovernorService:
             .where(MemoryStewardFinding.status == "open")
             .group_by(MemoryStewardFinding.severity)
         )
+        finding_types = await session.execute(
+            select(MemoryStewardFinding.finding_type, func.count())
+            .where(MemoryStewardFinding.status == "open")
+            .group_by(MemoryStewardFinding.finding_type)
+        )
+        open_by_type = {item: count for item, count in finding_types.all()}
+        provider_findings = open_by_type.get("llm_provider_errors", 0)
+        open_findings = by_status.get("open", 0)
         canonical_statuses = await session.execute(
             select(MemoryCanonicalConflict.status, func.count()).group_by(
                 MemoryCanonicalConflict.status
@@ -1094,7 +1113,10 @@ class OrchestrationGovernorService:
         }
         return {
             "total": sum(by_status.values()),
-            "open_findings": by_status.get("open", 0),
+            "open_findings": open_findings,
+            "actionable_findings": max(0, open_findings - provider_findings),
+            "provider_findings": provider_findings,
+            "open_by_type": open_by_type,
             "by_status": by_status,
             "open_by_severity": {item: count for item, count in severity.all()},
             "open_canonical_conflicts": sum(

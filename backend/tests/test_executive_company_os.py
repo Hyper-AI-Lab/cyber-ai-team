@@ -213,6 +213,33 @@ async def test_executive_run_records_graph_benchmarks_reflection_and_memory(
 
 
 @pytest.mark.asyncio
+async def test_observe_only_never_creates_owner_approval_when_auto_apply_is_off(
+    executive_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        executive_module.settings,
+        "legacy_governor_rule_proposer_enabled",
+        False,
+    )
+    service = build_service()
+
+    result = await service.run_executive_cycle(
+        actor="owner@example.com",
+        dry_run=False,
+        auto_apply_low_risk=False,
+        max_actions=5,
+    )
+
+    assert result["counts"]["by_status"] == {"completed": 1}
+    assert result["autonomous_executions"][0]["action_type"] == "observe_only"
+    assert result["autonomous_executions"][0]["approval_id"] is None
+    async with executive_session_factory() as session:
+        approvals = (await session.execute(select(ApprovalRequest))).scalars().all()
+    assert approvals == []
+
+
+@pytest.mark.asyncio
 async def test_executive_tool_benchmark_ignores_optional_side_effect_tools(
     executive_session_factory,
 ):

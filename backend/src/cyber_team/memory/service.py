@@ -682,6 +682,7 @@ class MemoryService:
         if reason in {
             "active_memory_canonical_conflict",
             "canonical_record_preferred",
+            "procedural_memory_refreshed",
         }:
             return True
         if metadata.get("canonical_superseded") is True:

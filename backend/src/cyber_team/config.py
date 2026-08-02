@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # App
     app_name: str = "Cyber-Team"
-    app_version: str = "0.3.10"
+    app_version: str = "0.3.11"
     build_sha: str = "local"
     environment: str = "development"
     log_level: str = "INFO"
@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     governor_temporal_schedule_id: str = "cyberteam-executive-governor-v1"
     governor_auto_apply_low_risk: bool = True
     governor_max_actions_per_cycle: int = 10
+    governor_workflow_failure_lookback_hours: int = 24
     governor_tool_creation_mode: str = "sandbox_draft"
     legacy_governor_rule_proposer_enabled: bool = False
     autonomy_resource_policy: str = "foss_only"
