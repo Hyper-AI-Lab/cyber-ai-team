@@ -5672,3 +5672,23 @@
   - Work item `work_f9028aecb4924773b9159f97d1e67664`, executive run `exegov_a645011ba6d4`, and Observer review `obs_7ca6f910d9cc4d4b`.
 - Next step:
   - Publish the release and final evidence to the public repository, require green push/manual CI, refresh CI evidence, and confirm public-head readiness.
+
+### 2026-08-02T05:13:03Z — STEP-212 — Published v0.3.12 and verified public CI/readiness
+- Files/services changed:
+  - Published the `0.3.12` implementation and acceptance record to `Hyper-AI-Lab/cyber-ai-team`, pushed annotated tag `v0.3.12`, and created the public GitHub release.
+  - Refreshed GitHub CI evidence consumed by staging readiness after independent push and manual workflow verification.
+  - Rechecked the live executive cadence, Observer review, company-context freshness, operation-graph indexing, and zero-blocker readiness state.
+- Commands run:
+  - Public `main` and tag pushes, GitHub release creation, push-CI watch, independent manual-CI dispatch/watch, and `scripts/github-ci-evidence.py`.
+  - Owner-authenticated `GET /api/operations/readiness?refresh=true` against staging.
+- Result:
+  - Push CI run `30733531348` and manual CI run `30733614122` passed all applicable jobs on public head `2f5ada2a5028c3b850aa40cfd8d86002f71b00bb`; the latest scheduled run is green and the next exact-head cron is pending by definition.
+  - The manual gate additionally passed Compose smoke, immutable image build/scan, and observability validation; the push gate passed backend/frontend, real PostgreSQL migration rehearsal, dependency audits, secrets, and FOSS policy.
+  - Live staging readiness remains `ready` with `blockers=[]`. Hourly executive run `exegov_e2356a1f719d` completed with six passing benchmarks, one internal `observe_only` execution, and no external side effect; Observer review `obs_7e510e4c3d9a4bbf` agreed with zero findings.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/releases/tag/v0.3.12`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30733531348`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30733614122`.
+  - `/home/projects/cyber-team/dist/ci/github-ci-20260802T051216Z.json`.
+- Next step:
+  - Continue normal monitored operation; new company evidence enters the autonomous discovery, work, approval, or outsourcing lifecycle rather than requiring another planned implementation milestone.
