@@ -5746,3 +5746,64 @@
   - `/home/projects/cyber-team/scripts/migration-rehearsal.sh`.
 - Next step:
   - Commit the verified candidate, build and scan immutable images, and pass isolated Compose smoke before backup-first staging promotion.
+
+### 2026-08-03T14:49:02Z — STEP-216 — Released and promoted the immutable v0.3.13 staging candidate
+- Files/services changed:
+  - Committed the verified `0.3.13` source candidate at `0a34c76135676de29da058c36118a6468d439e45`.
+  - Built immutable core and UI images, scanned both images, enabled the bounded-autonomy staging settings, and promoted the candidate backup-first.
+- Commands run:
+  - Formal release gate with isolated Compose smoke, immutable image builds, Trivy scans, and release-manifest generation.
+  - `scripts/configure-autonomy-staging.py`, promotion-policy dry run, and the backup-first staging promotion workflow.
+- Result:
+  - The release manifest records every required check as passed; both images have zero configured HIGH/CRITICAL Trivy findings.
+  - Staging core, worker, and UI now run `0.3.13` at exact build SHA `0a34c76135676de29da058c36118a6468d439e45`.
+  - Public health, owner login, dashboard, WebSocket, and tool-readiness smoke passed; the smoke approval was rejected instead of replaying its email side effect.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.13.json`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.13-20260803-144510.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.13-20260803-144326.dump`.
+- Next step:
+  - Apply the audited backlog stabilizer, remove obsolete pre-fix generated work, and retain both affected domains in fail-closed pause before recovery.
+
+### 2026-08-03T14:49:02Z — STEP-217 — Reset the pre-fix Knowledge and Governance generated backlogs
+- Files/services changed:
+  - Applied the live `0.3.13` invariant stabilizer to Knowledge and Governance.
+  - Cancelled the remaining obsolete generated work append-only through the owner-authorized cancellation API; no database rows were deleted.
+- Commands run:
+  - Authenticated dry-run and applied `POST /api/operations/work-items/stabilize` calls.
+  - Provenance review of all nonterminal work followed by explicit cancellation of only system-generated Knowledge and Governance items.
+  - Post-cleanup work-portfolio and domain-control reconciliation.
+- Result:
+  - The invariant stabilizer found zero depth, semantic-duplicate, or overflow violations under the new policy.
+  - All `33` historical generated items were audit-cancelled: `20` Governance and `13` Knowledge. No owner-created item was present or changed.
+  - Both queues now contain zero nonterminal items, are below the configured limit of `20`, and remain paused with their original grounding-recovery requirement.
+- Evidence:
+  - `/home/projects/cyber-team/dist/canary/autonomy-backlog-stabilization-20260803T1447Z-dry-run.json`.
+  - `/home/projects/cyber-team/dist/canary/autonomy-backlog-stabilization-20260803T144841Z-applied.json`.
+  - `/home/projects/cyber-team/dist/canary/autonomy-backlog-obsolete-cancellations-20260803T144841Z.ndjson`.
+  - `/home/projects/cyber-team/dist/canary/domain-controls-after-cleanup-20260803T144841Z.json`.
+- Next step:
+  - Capture side-effect baselines, then run one fresh grounded Knowledge diagnostic followed by one fresh grounded Governance diagnostic.
+
+### 2026-08-03T14:56:58Z — STEP-218 — Recovered Knowledge and Governance with bounded grounded canaries
+- Files/services changed:
+  - Temporarily stopped the Temporal worker to exclude event-signal races while leaving the public API and UI available.
+  - Created one owner-scoped diagnostic for Knowledge and one for Governance, explicitly activated each domain, executed exactly one item, cancelled canary-generated advisory descendants, and restarted the worker.
+  - Refreshed live readiness after the queued Temporal cycle settled.
+- Commands run:
+  - Owner-authenticated work-item creation, domain activation, single-agent domain-loop execution, descendant cancellation, finding/control reconciliation, and readiness refresh.
+  - PostgreSQL communication, approval, and finding counters before and after the canaries.
+  - Core, worker, and UI recent error-log scan.
+- Result:
+  - Knowledge work item `work_3c495f35adb54412b60855a1f54e260f` completed at confidence `0.95`, passed authoritative grounding, resolved finding `mem_find_e8dc2b043319`, and executed no side effect. Its three bounded advisory descendants were audit-cancelled.
+  - Governance work item `work_02ce35d11fa9475e934873f7d3fe2769` completed at confidence `0.95`, passed authoritative grounding, resolved finding `mem_find_351622cac23e`, and executed no side effect. Its two bounded advisory descendants were audit-cancelled.
+  - After Temporal restart and signal settlement, both domains remain active with zero nonterminal work, no saturation, no recovery requirement, and no recurring open finding.
+  - Communication logs remained `30` and pending approvals remained `0`; staging readiness is `ready` with `blockers=[]` on exact version `0.3.13` / build `0a34c76135676de29da058c36118a6468d439e45`.
+  - Core, worker, and UI each reported zero matching ERROR/CRITICAL/Traceback/Unhandled log entries during the recovery window.
+- Evidence:
+  - `/home/projects/cyber-team/dist/canary/recovery-safety-baseline-20260803T145019Z.json`.
+  - `/home/projects/cyber-team/dist/canary/knowledge-recovery-20260803T145124Z/`.
+  - `/home/projects/cyber-team/dist/canary/governance-recovery-20260803T145302Z/`.
+  - `/home/projects/cyber-team/dist/canary/v0.3.13-recovery-settled-20260803T145633Z/summary.json`.
+- Next step:
+  - Publish the candidate and closure evidence to the public repository, require green push and manual GitHub CI, refresh exact-head CI evidence, and publish the release tag.
