@@ -5807,3 +5807,26 @@
   - `/home/projects/cyber-team/dist/canary/v0.3.13-recovery-settled-20260803T145633Z/summary.json`.
 - Next step:
   - Publish the candidate and closure evidence to the public repository, require green push and manual GitHub CI, refresh exact-head CI evidence, and publish the release tag.
+
+### 2026-08-03T15:06:00Z — STEP-219 — Published v0.3.13 after independent public CI verification
+- Files/services changed:
+  - Pushed implementation commit `0a34c76135676de29da058c36118a6468d439e45` and staging-evidence commit `d4cba81469ace63cfec64d1d86be7d928af4b604` to `Hyper-AI-Lab/cyber-ai-team`.
+  - Published annotated tag and public release `v0.3.13` from the exact verified release commit.
+  - Refreshed GitHub CI evidence consumed by staging readiness.
+- Commands run:
+  - Public `main` push and push-CI watch.
+  - Independent manual CI dispatch/watch with Compose smoke, immutable image scanning, and observability checks enabled.
+  - `scripts/github-ci-evidence.py`, live readiness refresh, annotated tag push, and GitHub release creation.
+- Result:
+  - Push CI run `30825236544` passed backend, frontend, real PostgreSQL upgrades, dependency audits, Compose/config hygiene, secret scanning, Google Cloud isolation, and FOSS/resource policy checks.
+  - Manual CI run `30825547277` passed every job, including Docker Compose smoke, Docker image scans, and observability validation.
+  - Live readiness remains `ready` with zero blockers; exact-head push and manual evidence are green. The latest scheduled run is green and the next exact-head scheduled proof is pending the next GitHub cron by definition.
+  - Public release `v0.3.13` is published from `d4cba81469ace63cfec64d1d86be7d928af4b604`.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30825236544`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30825547277`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/releases/tag/v0.3.13`.
+  - `/home/projects/cyber-team/dist/ci/github-ci-20260803T150531Z.json`.
+  - `/home/projects/cyber-team/dist/canary/v0.3.13-final-readiness-before-release.json`.
+- Next step:
+  - Continue monitored autonomous operation; the bounded queues and grounding circuit breakers now recover through explicit evidence-backed canaries instead of accumulating recursive generated work.
