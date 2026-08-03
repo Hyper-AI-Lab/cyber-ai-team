@@ -23,12 +23,34 @@ The supported version is the latest commit on `main`.
 - Do not expose Docker, PostgreSQL, Redis, Qdrant, Temporal, or internal service ports publicly.
 - Run the quality/release gates before deployment.
 
+## Host And Cloud Isolation
+
+Cyber AI Team does not require the Google Cloud CLI, Application Default
+Credentials, a Google billing account, or a Google Cloud project. The deployed
+containers must not mount host home directories, gcloud configuration, gsutil
+credential stores, browser profiles, or cloud service-account keys.
+
+Interactive cloud login, automatic ADC creation, automatic API enablement, and
+automatic billing-account linking are prohibited in application code, scripts,
+Compose configuration, and CI. This boundary is enforced by:
+
+```bash
+python3 scripts/gcp-isolation-check.py
+```
+
+If a future research or integration requirement genuinely needs GCP, provision
+it as a separate lab with a non-personal identity, dedicated project, separate
+billing account, explicit budget and quota limits, and isolated credentials.
+Do not expose those credentials to Cyber AI Team or to an autonomous coding
+agent with unrestricted host and browser access.
+
 ## Secret Handling
 
 The repository includes a high-confidence secret scanner at `scripts/secret-scan.py`. Run it before commits:
 
 ```bash
 python3 scripts/secret-scan.py
+python3 scripts/gcp-isolation-check.py
 ```
 
 If a secret is accidentally committed, rotate it immediately. Removing it from the latest commit is not enough once the commit has been pushed.

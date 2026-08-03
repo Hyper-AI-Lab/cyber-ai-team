@@ -27,6 +27,22 @@ SECRET_PATTERNS = [
     ("openai-token", re.compile(r"\bsk-[A-Za-z0-9_-]{32,}\b")),
     ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b")),
     ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
+    (
+        "google-oauth-access-token",
+        re.compile(r"\bya29\.[0-9A-Za-z._-]{20,}\b"),
+    ),
+    (
+        "google-oauth-refresh-token",
+        re.compile(r"\b1//[0-9A-Za-z_-]{20,}\b"),
+    ),
+    (
+        "google-authorized-user-credential",
+        re.compile(r'"type"\s*:\s*"authorized_user"'),
+    ),
+    (
+        "google-oauth-client-secret",
+        re.compile(r'"client_secret"\s*:\s*"(?!replace|example|test)[^"\s]{12,}"'),
+    ),
 ]
 
 

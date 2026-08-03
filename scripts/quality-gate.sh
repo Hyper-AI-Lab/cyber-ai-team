@@ -146,6 +146,9 @@ fi
 echo "== Security: secret scan =="
 (cd "$ROOT_DIR" && "$PYTHON_BIN" scripts/secret-scan.py)
 
+echo "== Security: Google Cloud isolation =="
+(cd "$ROOT_DIR" && "$PYTHON_BIN" scripts/gcp-isolation-check.py)
+
 echo "== Policy: FOSS/resource scan =="
 (cd "$ROOT_DIR" && "$PYTHON_BIN" scripts/resource-policy-check.py)
 
