@@ -99,6 +99,17 @@ with a reason and reconsideration time, escalated, or deliberately ignored with 
 Business work items declare an objective, accountable agent, dependencies, expected
 outcome, acceptance criteria, deadline, authority class, and resource budget.
 
+Work generation is bounded independently of model behavior. A domain pause is mediated
+again before leasing and before persisting generated children. Generated proposal trees
+have a configured maximum depth, each domain has a nonterminal backlog limit, and
+semantically equivalent work is reused during a cooldown window even when a later model
+uses different wording. Suppressed proposals are recorded as accounted-for deferrals,
+not failures that recursively create more work. Backlog stabilization preserves
+owner-authored items and history while cancelling generated duplicates, overflow, and
+descendants of cancelled work with audited terminal outcomes. A grounding circuit
+breaker can be cleared only by an explicitly reactivated, evidence-grounded recovery
+item; merely changing a domain control does not erase the finding.
+
 Agents may create declarative workflow specifications containing triggers, preconditions,
 steps, tools, compensations, acceptance tests, and metrics. Specifications are immutable
 once activated. Schema validation, cycle detection, tool readiness, policy evaluation,

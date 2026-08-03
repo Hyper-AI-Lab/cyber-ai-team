@@ -5692,3 +5692,57 @@
   - `/home/projects/cyber-team/dist/ci/github-ci-20260802T051216Z.json`.
 - Next step:
   - Continue normal monitored operation; new company evidence enters the autonomous discovery, work, approval, or outsourcing lifecycle rather than requiring another planned implementation milestone.
+
+### 2026-08-03T13:46:11Z — STEP-213 — Established the v0.3.13 autonomy stabilization baseline
+- Files/services changed:
+  - Inspected the live `0.3.12` staging control plane without mutating runtime state.
+  - Confirmed the Knowledge and Governance domain circuit breakers are paused while Product, Engineering, and Security remain active.
+  - Traced proposal amplification to parent-scoped idempotency, an already-running assessment creating children after a pause, and recursive three-child proposal trees through depth three.
+- Commands run:
+  - Read-only container health, PostgreSQL domain-control, Memory Steward finding, work-portfolio, agent-mandate, and source-code call-path inspection.
+- Result:
+  - Staging core, worker, and UI remain healthy on immutable `0.3.12` at build `6d9f5d5df16043f177d6d1d519955e956d6055e5`.
+  - Findings `mem_find_e8dc2b043319` and `mem_find_351622cac23e` are open at high severity; the corresponding Knowledge and Governance domains correctly fail closed.
+  - Governance retained a large generated advisory backlog after repeated fifteen-minute role-loop cycles. No evidence of an external side effect was found in this baseline inspection.
+- Evidence:
+  - Live `domain_autonomy_controls`, `memory_steward_findings`, and `business_work_items` records in staging PostgreSQL.
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/work_portfolio.py`.
+- Next step:
+  - Add mid-execution pause mediation, bounded proposal depth/backlog/cooldown, domain-wide semantic deduplication, audited backlog stabilization, and grounded finding recovery.
+
+### 2026-08-03T14:03:30Z — STEP-214 — Implemented bounded work generation and grounded recovery
+- Files/services changed:
+  - Added mid-execution domain-state mediation before leasing and before generated follow-up persistence.
+  - Added configurable proposal depth, per-domain nonterminal backlog, semantic cooldown, and duplicate-similarity controls.
+  - Added audited backlog stabilization that preserves owner work and history while cancelling generated depth violations, semantic duplicates, overflow, and affected descendants.
+  - Added automatic finding resolution only after an explicitly reactivated domain completes a fresh authoritative-grounding pass.
+  - Extended autonomous-company readiness and the owner console with domain backlog counts, saturation, and circuit-breaker recovery state; advanced candidate metadata to `0.3.13`.
+- Commands run:
+  - Focused Ruff and compile checks.
+  - Work-portfolio, autonomous-readiness, and Operations API tests; frontend API tests and TypeScript validation.
+- Result:
+  - All focused checks passed: `45` backend tests and `25` frontend API tests.
+  - Regression coverage proves in-flight pauses create no children, recent semantic equivalents are reused, saturated/deep proposals are recorded as suppressed, owner work survives stabilization, generated excess is audit-cancelled, and a grounded canary resolves its matching finding.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/work_portfolio.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/readiness_v3.py`.
+  - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
+  - `/home/projects/cyber-team/frontend/src/components/operations/AutonomousCompanyPanel.tsx`.
+- Next step:
+  - Run the complete quality and release gates, then perform a backup-first staging promotion before live backlog stabilization and bounded domain recovery.
+
+### 2026-08-03T14:13:36Z — STEP-215 — Passed the complete v0.3.13 quality gate
+- Files/services changed:
+  - Verified the complete candidate source tree and both supported PostgreSQL upgrade starting points; no runtime service was changed.
+- Commands run:
+  - `scripts/quality-gate.sh` with complete backend/frontend validation and real migration rehearsal enabled.
+- Result:
+  - Ruff, `350` backend tests, compileall, Alembic offline SQL, `25` frontend tests, production build, TypeScript, Python/npm dependency audits, Compose validation, script/dashboard syntax, secret scan, Google Cloud isolation, FOSS/resource policy, and Git diff hygiene all passed.
+  - Real PostgreSQL migration rehearsal passed from both the legacy pre-Alembic schema and the representative seeded `0001` schema through head `0015_autonomous_company_ops_v3`.
+  - Dependency audits reported no known Python or runtime npm vulnerabilities.
+- Evidence:
+  - Quality-gate terminal record for the `0.3.13` candidate source tree.
+  - `/home/projects/cyber-team/scripts/quality-gate.sh`.
+  - `/home/projects/cyber-team/scripts/migration-rehearsal.sh`.
+- Next step:
+  - Commit the verified candidate, build and scan immutable images, and pass isolated Compose smoke before backup-first staging promotion.

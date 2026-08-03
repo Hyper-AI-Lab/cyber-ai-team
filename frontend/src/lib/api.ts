@@ -915,6 +915,13 @@ class ApiClient {
     return this.request('/api/operations/domain-controls');
   }
 
+  async stabilizeBusinessWorkItems(domains: string[] = [], dryRun: boolean = true) {
+    return this.request('/api/operations/work-items/stabilize', {
+      method: 'POST',
+      body: JSON.stringify({ domains, dry_run: dryRun }),
+    });
+  }
+
   async updateDomainAutonomyControl(domain: string, state: string, reason: string = '') {
     return this.request(`/api/operations/domain-controls/${domain}`, {
       method: 'PUT',

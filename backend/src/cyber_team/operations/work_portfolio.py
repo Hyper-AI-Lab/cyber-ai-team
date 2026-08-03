@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 
 from cyber_team.clock import utc_now
 from cyber_team.config import settings
@@ -121,6 +121,32 @@ NONTERMINAL_WORK_STATUSES = {
     "leased",
     "blocked_dependency",
     "unassigned",
+}
+TERMINAL_WORK_STATUSES = {"completed", "failed", "blocked", "cancelled"}
+PROPOSAL_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "assess",
+    "assessment",
+    "audit",
+    "create",
+    "define",
+    "develop",
+    "draft",
+    "for",
+    "from",
+    "in",
+    "of",
+    "on",
+    "plan",
+    "proposal",
+    "propose",
+    "review",
+    "the",
+    "to",
+    "validate",
+    "with",
 }
 STALE_ROLE_STATE_PATTERNS = (
     re.compile(r"\brole (?:remains|is) (?:unfulfilled|unresolved|missing)\b", re.I),
@@ -401,6 +427,21 @@ class WorkPortfolioService:
                         status="deferred",
                         disposition="deferred",
                         reason=f"No active mandated {family} agent is available.",
+                    )
+                    counts["deferred"] += 1
+                    continue
+                backlog_count = await self._nonterminal_domain_count(session, family)
+                if backlog_count >= self._domain_backlog_limit():
+                    await self._record_disposition(
+                        session,
+                        event,
+                        delivery,
+                        status="deferred",
+                        disposition="deferred",
+                        reason=(
+                            f"Domain {family} has reached its bounded work backlog "
+                            f"({backlog_count}/{self._domain_backlog_limit()})."
+                        ),
                     )
                     counts["deferred"] += 1
                     continue
@@ -716,6 +757,7 @@ class WorkPortfolioService:
             }
         if prepare:
             await self.ensure_active_agent_mandates()
+            await self.stabilize_domain_backlogs()
             await self.route_pending_events()
         results = []
         for _ in range(max(1, min(max_items, 10))):
@@ -732,6 +774,7 @@ class WorkPortfolioService:
 
     async def run_all_domain_loops(self, *, max_items_per_agent: int = 1) -> dict[str, Any]:
         await self.ensure_active_agent_mandates()
+        stabilization = await self.stabilize_domain_backlogs()
         await self.route_pending_events()
         async with async_session() as session:
             agents = [
@@ -766,6 +809,7 @@ class WorkPortfolioService:
             "agents": len(agent_ids),
             "processed": sum(item["processed"] for item in results),
             "results": results,
+            "backlog_stabilization": stabilization,
         }
 
     async def list_domain_controls(self) -> list[dict[str, Any]]:
@@ -777,12 +821,38 @@ class WorkPortfolioService:
                     await session.execute(select(DomainAutonomyControl))
                 ).scalars().all()
             }
+            agent_families = {
+                item.id: self._canonical_family(item.role_family)
+                for item in (
+                    await session.execute(select(Agent))
+                ).scalars().all()
+            }
+            backlog_counts = {domain: 0 for domain in domains}
+            for agent_id, count in (
+                await session.execute(
+                    select(BusinessWorkItem.assigned_agent_id, func.count())
+                    .where(BusinessWorkItem.status.in_(NONTERMINAL_WORK_STATUSES))
+                    .group_by(BusinessWorkItem.assigned_agent_id)
+                )
+            ).all():
+                family = agent_families.get(str(agent_id or ""))
+                if family in backlog_counts:
+                    backlog_counts[family] += int(count or 0)
+        backlog_limit = self._domain_backlog_limit()
         return [
             {
                 "domain": domain,
                 "state": controls[domain].state if domain in controls else "active",
                 "reason": controls[domain].reason if domain in controls else "",
                 "owner": controls[domain].owner if domain in controls else "system",
+                "nonterminal_work_items": backlog_counts[domain],
+                "backlog_limit": backlog_limit,
+                "backlog_saturated": backlog_counts[domain] >= backlog_limit,
+                "recovery_required": bool(
+                    domain in controls
+                    and controls[domain].state == "paused"
+                    and controls[domain].owner == "autonomy_grounding_circuit_breaker"
+                ),
                 "updated_at": (
                     controls[domain].updated_at.isoformat()
                     if domain in controls
@@ -791,6 +861,162 @@ class WorkPortfolioService:
             }
             for domain in domains
         ]
+
+    async def stabilize_domain_backlogs(
+        self,
+        *,
+        domains: list[str] | None = None,
+        actor: str = "work_portfolio_stabilizer",
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Bound generated work by depth, semantic duplication, and domain capacity."""
+        selected_domains = {
+            self._canonical_family(value)
+            for value in (domains or [])
+            if str(value).strip()
+        }
+        unknown = selected_domains - (set(DOMAIN_INPUTS) | set(DOMAIN_OUTPUTS))
+        if unknown:
+            raise ValueError(f"Unknown company operating domain: {sorted(unknown)[0]}")
+        max_depth = self._proposal_max_depth()
+        backlog_limit = self._domain_backlog_limit()
+        now = utc_now()
+        async with async_session() as session:
+            agents = (await session.execute(select(Agent))).scalars().all()
+            agent_families = {
+                item.id: self._canonical_family(item.role_family) for item in agents
+            }
+            generated_by = {item.id for item in agents} | {
+                "mandate_loop",
+                "chief_operating_agent",
+                "business_event_router",
+            }
+            rows = (
+                await session.execute(
+                    select(BusinessWorkItem)
+                    .where(BusinessWorkItem.status.in_(NONTERMINAL_WORK_STATUSES))
+                    .order_by(BusinessWorkItem.created_at, BusinessWorkItem.id)
+                    .with_for_update(skip_locked=True)
+                )
+            ).scalars().all()
+            by_domain: dict[str, list[BusinessWorkItem]] = {}
+            for item in rows:
+                family = agent_families.get(str(item.assigned_agent_id or ""))
+                if family and (not selected_domains or family in selected_domains):
+                    by_domain.setdefault(family, []).append(item)
+
+            cancellations: dict[str, dict[str, Any]] = {}
+            domain_results = []
+            for family, items in sorted(by_domain.items()):
+                kept: list[BusinessWorkItem] = []
+                for item in items:
+                    generated = bool(
+                        (item.payload or {}).get("parent_work_item_id")
+                        or item.created_by in generated_by
+                    )
+                    if not generated:
+                        kept.append(item)
+                        continue
+                    depth = self._proposal_depth(item)
+                    if depth > max_depth:
+                        cancellations[item.id] = {
+                            "classification": "system_cancelled_proposal_depth",
+                            "reason": (
+                                f"Generated proposal depth {depth} exceeds configured "
+                                f"limit {max_depth}."
+                            ),
+                        }
+                        continue
+                    duplicate = self._semantic_duplicate(item, kept)
+                    if duplicate:
+                        cancellations[item.id] = {
+                            "classification": "system_cancelled_semantic_duplicate",
+                            "reason": f"Semantically duplicates work item {duplicate.id}.",
+                            "canonical_work_item_id": duplicate.id,
+                        }
+                        continue
+                    if len(kept) >= backlog_limit:
+                        cancellations[item.id] = {
+                            "classification": "system_cancelled_backlog_overflow",
+                            "reason": (
+                                f"Domain {family} reached its {backlog_limit}-item "
+                                "nonterminal backlog limit."
+                            ),
+                        }
+                        continue
+                    kept.append(item)
+
+                changed = True
+                while changed:
+                    changed = False
+                    for item in items:
+                        if item.id in cancellations:
+                            continue
+                        parent_id = str(
+                            (item.payload or {}).get("parent_work_item_id") or ""
+                        )
+                        if parent_id in cancellations:
+                            cancellations[item.id] = {
+                                "classification": "system_cancelled_parent_stabilized",
+                                "reason": (
+                                    f"Parent work item {parent_id} was cancelled during "
+                                    "backlog stabilization."
+                                ),
+                                "canonical_work_item_id": cancellations[parent_id].get(
+                                    "canonical_work_item_id"
+                                ),
+                            }
+                            changed = True
+                domain_results.append(
+                    {
+                        "domain": family,
+                        "examined": len(items),
+                        "cancelled": sum(
+                            1 for item in items if item.id in cancellations
+                        ),
+                        "retained": sum(
+                            1 for item in items if item.id not in cancellations
+                        ),
+                    }
+                )
+
+            cancelled_ids = sorted(cancellations)
+            if not dry_run:
+                for item in rows:
+                    cancellation = cancellations.get(item.id)
+                    if not cancellation:
+                        continue
+                    item.status = "cancelled"
+                    item.actual_outcome = {
+                        **(item.actual_outcome or {}),
+                        **cancellation,
+                        "cancelled_by": actor[:200],
+                        "cancelled_at": now.isoformat(),
+                        "side_effects_executed": False,
+                    }
+                    item.lease_owner = None
+                    item.lease_expires_at = None
+                    item.updated_at = now
+                    item.completed_at = now
+                await session.commit()
+
+        result = {
+            "status": "dry_run" if dry_run else "completed",
+            "domains": domain_results,
+            "cancelled_count": len(cancelled_ids),
+            "cancelled_ids": cancelled_ids,
+            "proposal_max_depth": max_depth,
+            "domain_backlog_limit": backlog_limit,
+        }
+        if self._audit and not dry_run and cancelled_ids:
+            await self._audit.record_control_evidence(
+                control_id="autonomy.work_portfolio_stabilization",
+                control_area="ai_governance",
+                actor=actor,
+                outcome="success",
+                evidence=result,
+            )
+        return result
 
     async def update_domain_control(
         self,
@@ -957,6 +1183,11 @@ class WorkPortfolioService:
     ) -> BusinessWorkItem | None:
         now = utc_now()
         async with async_session() as session:
+            agent = await session.get(Agent, agent_id)
+            family = self._canonical_family(agent.role_family) if agent else "unknown"
+            control = await session.get(DomainAutonomyControl, family)
+            if control and control.state != "active":
+                return None
             candidates = (
                 await session.execute(
                     select(BusinessWorkItem)
@@ -1102,31 +1333,60 @@ class WorkPortfolioService:
                 )
             )
         proposal_result = (
-            {"created_work_item_ids": [], "rejected_proposals": []}
+            {
+                "created_work_item_ids": [],
+                "reused_work_item_ids": [],
+                "suppressed_proposals": [],
+                "rejected_proposals": [],
+            }
             if grounding["status"] == "blocked"
             else await self._create_agent_proposed_work(item, assessment)
         )
         assessment["rejected_proposals"].extend(proposal_result["rejected_proposals"])
         created_ids = proposal_result["created_work_item_ids"]
-        requested_follow_up = bool(assessment["proposed_work"] or assessment["rejected_proposals"])
+        reused_ids = proposal_result["reused_work_item_ids"]
+        suppressed = proposal_result["suppressed_proposals"]
+        requested_follow_up = bool(
+            assessment["proposed_work"]
+            or assessment["rejected_proposals"]
+            or suppressed
+        )
         follow_up_required = assessment["recommended_action"] in {
             "continue",
             "revise",
             "escalate",
         }
+        follow_up_accounted_for = bool(created_ids or reused_ids or suppressed)
         completion_blocked = grounding["status"] == "blocked" or (
-            requested_follow_up and follow_up_required and not created_ids
+            requested_follow_up
+            and follow_up_required
+            and not follow_up_accounted_for
+        )
+        grounding_recovery = (
+            {"status": "not_attempted"}
+            if grounding["status"] != "passed"
+            else await self._record_grounding_recovery(
+                item,
+                authoritative_context,
+                context_hash=context_hash,
+            )
         )
         outcome = {
             **assessment,
             "created_work_item_ids": created_ids,
+            "reused_work_item_ids": reused_ids,
+            "suppressed_proposals": suppressed,
             "grounding": grounding,
+            "grounding_recovery": grounding_recovery,
             "authoritative_context": authoritative_context,
             "authoritative_context_hash": context_hash,
             "completion_contract": {
                 "follow_up_required": follow_up_required,
                 "requested_follow_up": requested_follow_up,
                 "accepted_follow_up_count": len(created_ids),
+                "reused_follow_up_count": len(reused_ids),
+                "suppressed_follow_up_count": len(suppressed),
+                "accounted_for": follow_up_accounted_for,
                 "satisfied": not completion_blocked,
             },
             "side_effects_executed": False,
@@ -1456,6 +1716,10 @@ class WorkPortfolioService:
             agent_conflict_count = int(
                 prior_evidence.get("agent_conflict_count") or 0
             )
+            if finding and finding.status == "resolved":
+                prior_last_seen = None
+                occurrence_count = 0
+                agent_conflict_count = 0
             if prior_last_seen and not self._within_lookback(
                 str(prior_last_seen),
                 lookback_start,
@@ -1673,48 +1937,387 @@ class WorkPortfolioService:
         assessment: dict[str, Any],
     ) -> dict[str, list[Any]]:
         depth = int((parent.payload or {}).get("proposal_depth", 0))
-        if depth >= 3:
+        max_depth = self._proposal_max_depth()
+        if depth >= max_depth:
             return {
                 "created_work_item_ids": [],
-                "rejected_proposals": [
+                "reused_work_item_ids": [],
+                "suppressed_proposals": [
                     {
                         "index": index,
                         "reason": "proposal_depth_limit",
                         "work_type": proposal["work_type"],
+                        "limit": max_depth,
                     }
                     for index, proposal in enumerate(assessment["proposed_work"][:3])
                 ],
+                "rejected_proposals": [],
             }
-        created_ids = []
-        for index, proposal in enumerate(assessment["proposed_work"][:3]):
-            work_type = proposal["work_type"]
-            key = self._hash(
-                {"parent_id": parent.id, "index": index, "proposal": proposal}
+        created_ids: list[str] = []
+        reused_ids: list[str] = []
+        suppressed: list[dict[str, Any]] = []
+        cooldown_start = utc_now() - timedelta(
+            hours=self._proposal_cooldown_hours()
+        )
+        async with async_session() as session:
+            agent = await session.get(Agent, parent.assigned_agent_id)
+            if not agent:
+                return {
+                    "created_work_item_ids": [],
+                    "reused_work_item_ids": [],
+                    "suppressed_proposals": [],
+                    "rejected_proposals": [
+                        {"reason": "assigned_agent_missing", "index": 0}
+                    ],
+                }
+            family = self._canonical_family(agent.role_family)
+            control = await session.get(DomainAutonomyControl, family)
+            if control and control.state != "active":
+                return {
+                    "created_work_item_ids": [],
+                    "reused_work_item_ids": [],
+                    "suppressed_proposals": [
+                        {
+                            "index": index,
+                            "reason": "domain_not_active",
+                            "domain": family,
+                            "state": control.state,
+                            "work_type": proposal["work_type"],
+                        }
+                        for index, proposal in enumerate(
+                            assessment["proposed_work"][:3]
+                        )
+                    ],
+                    "rejected_proposals": [],
+                }
+            family_agent_ids = [
+                candidate.id
+                for candidate in (
+                    await session.execute(select(Agent))
+                ).scalars().all()
+                if self._canonical_family(candidate.role_family) == family
+            ]
+            recent_items = (
+                await session.execute(
+                    select(BusinessWorkItem)
+                    .where(
+                        BusinessWorkItem.assigned_agent_id.in_(family_agent_ids),
+                        or_(
+                            BusinessWorkItem.status.in_(NONTERMINAL_WORK_STATUSES),
+                            BusinessWorkItem.created_at >= cooldown_start,
+                        ),
+                    )
+                    .order_by(BusinessWorkItem.created_at, BusinessWorkItem.id)
+                    .with_for_update(skip_locked=True)
+                )
+            ).scalars().all()
+            nonterminal_count = sum(
+                item.status in NONTERMINAL_WORK_STATUSES for item in recent_items
             )
-            created = await self.create_work_item(
-                title=proposal["title"],
-                description=proposal["description"],
-                work_type=work_type,
-                company_namespace=parent.company_namespace,
-                assigned_agent_id=parent.assigned_agent_id,
-                payload={
-                    "parent_work_item_id": parent.id,
-                    "proposal_depth": depth + 1,
-                    "evidence_required": True,
-                    "external_text_is_untrusted": True,
-                    "expected_outcome": proposal["expected_outcome"],
-                },
-                acceptance_criteria=proposal["acceptance_criteria"],
-                idempotency_key=key,
-                priority=proposal["priority"],
-                risk_level="low",
-                created_by=parent.assigned_agent_id or "mandate_loop",
+            backlog_limit = self._domain_backlog_limit()
+            mandate = (
+                await session.execute(
+                    select(AgentMandate)
+                    .where(
+                        AgentMandate.agent_id == parent.assigned_agent_id,
+                        AgentMandate.status == "active",
+                    )
+                    .order_by(desc(AgentMandate.version))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if not mandate:
+                return {
+                    "created_work_item_ids": [],
+                    "reused_work_item_ids": [],
+                    "suppressed_proposals": [],
+                    "rejected_proposals": [
+                        {"reason": "active_mandate_missing", "index": 0}
+                    ],
+                }
+            root_id = str(
+                (parent.payload or {}).get("proposal_root_work_item_id")
+                or (parent.payload or {}).get("parent_work_item_id")
+                or parent.id
             )
-            created_ids.append(created["id"])
+            for index, proposal in enumerate(assessment["proposed_work"][:3]):
+                duplicate = self._semantic_duplicate_proposal(proposal, recent_items)
+                if duplicate:
+                    reused_ids.append(duplicate.id)
+                    suppressed.append(
+                        {
+                            "index": index,
+                            "reason": "semantic_duplicate_cooldown",
+                            "work_type": proposal["work_type"],
+                            "existing_work_item_id": duplicate.id,
+                            "cooldown_hours": self._proposal_cooldown_hours(),
+                        }
+                    )
+                    continue
+                if nonterminal_count >= backlog_limit:
+                    suppressed.append(
+                        {
+                            "index": index,
+                            "reason": "domain_backlog_limit",
+                            "work_type": proposal["work_type"],
+                            "domain": family,
+                            "backlog_count": nonterminal_count,
+                            "backlog_limit": backlog_limit,
+                        }
+                    )
+                    continue
+                key = self._hash(
+                    {"parent_id": parent.id, "index": index, "proposal": proposal}
+                )
+                existing = (
+                    await session.execute(
+                        select(BusinessWorkItem).where(
+                            BusinessWorkItem.idempotency_key == key
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing:
+                    reused_ids.append(existing.id)
+                    recent_items.append(existing)
+                    continue
+                item = BusinessWorkItem(
+                    id=f"work_{uuid.uuid4().hex}",
+                    company_namespace=parent.company_namespace,
+                    title=proposal["title"][:240],
+                    description=proposal["description"][:8000],
+                    work_type=proposal["work_type"][:100],
+                    status="ready",
+                    priority=proposal["priority"][:20],
+                    risk_level="low",
+                    assigned_agent_id=parent.assigned_agent_id,
+                    mandate_id=mandate.id,
+                    payload={
+                        "parent_work_item_id": parent.id,
+                        "proposal_root_work_item_id": root_id,
+                        "proposal_depth": depth + 1,
+                        "proposal_signature": self._proposal_signature(
+                            proposal["work_type"], proposal["title"], proposal["description"]
+                        ),
+                        "evidence_required": True,
+                        "external_text_is_untrusted": True,
+                        "expected_outcome": proposal["expected_outcome"],
+                    },
+                    acceptance_criteria=proposal["acceptance_criteria"],
+                    expected_outcome=proposal["expected_outcome"],
+                    actual_outcome={},
+                    policy_decision={
+                        "mode": "advisory_internal",
+                        "allowed": True,
+                    },
+                    idempotency_key=key,
+                    created_by=parent.assigned_agent_id or "mandate_loop",
+                )
+                session.add(item)
+                await session.flush()
+                created_ids.append(item.id)
+                recent_items.append(item)
+                nonterminal_count += 1
+            await session.commit()
         return {
             "created_work_item_ids": created_ids,
+            "reused_work_item_ids": list(dict.fromkeys(reused_ids)),
+            "suppressed_proposals": suppressed,
             "rejected_proposals": [],
         }
+
+    async def _record_grounding_recovery(
+        self,
+        item: BusinessWorkItem,
+        context: dict[str, Any],
+        *,
+        context_hash: str,
+    ) -> dict[str, Any]:
+        """Resolve a circuit-breaker finding only after a fresh grounded execution."""
+        family = str(context.get("role_family") or "operations")
+        dedupe_key = f"authoritative_role_state_conflict:{family}:{item.assigned_agent_id}"
+        finding_id = f"mem_find_{hashlib.sha256(dedupe_key.encode()).hexdigest()[:12]}"
+        now = utc_now()
+        async with async_session() as session:
+            finding = await session.get(MemoryStewardFinding, finding_id)
+            if not finding or finding.status == "resolved":
+                return {"status": "no_open_finding", "finding_id": finding_id}
+            control = await session.get(DomainAutonomyControl, family)
+            if not control or control.state != "active":
+                return {
+                    "status": "domain_not_active",
+                    "finding_id": finding_id,
+                    "domain_state": control.state if control else "active",
+                }
+            evidence = dict(finding.evidence or {})
+            recoveries = list(evidence.get("recoveries") or [])
+            recoveries.append(
+                {
+                    "work_item_id": item.id,
+                    "authoritative_context_hash": context_hash,
+                    "recovered_at": now.isoformat(),
+                    "active_family_agent_count": int(
+                        context.get("active_family_agent_count") or 0
+                    ),
+                    "unresolved_role_gap_ids": [
+                        str(gap.get("id"))
+                        for gap in context.get("unresolved_role_gaps") or []
+                        if gap.get("id")
+                    ],
+                }
+            )
+            finding.evidence = {
+                **evidence,
+                "recoveries": recoveries[-20:],
+                "recovery_work_item_id": item.id,
+                "recovered_at": now.isoformat(),
+            }
+            finding.status = "resolved"
+            finding.resolved_at = now
+            finding.updated_at = now
+            if control.owner == "autonomy_grounding_circuit_breaker":
+                control.reason = (
+                    f"Recovered after grounded work item {item.id}; continuing under "
+                    "bounded backlog controls."
+                )
+                control.owner = "grounding_recovery"
+                control.updated_at = now
+            await session.commit()
+        result = {
+            "status": "resolved",
+            "finding_id": finding_id,
+            "work_item_id": item.id,
+            "domain": family,
+            "recovered_at": now.isoformat(),
+        }
+        if self._audit:
+            await self._audit.record_control_evidence(
+                control_id="memory.authoritative_grounding_recovery",
+                control_area="ai_governance",
+                actor=item.assigned_agent_id or "work_portfolio_grounding_guard",
+                outcome="success",
+                evidence=result,
+            )
+        return result
+
+    async def _nonterminal_domain_count(self, session, family: str) -> int:
+        agent_ids = [
+            item.id
+            for item in (
+                await session.execute(select(Agent))
+            ).scalars().all()
+            if self._canonical_family(item.role_family) == family
+        ]
+        if not agent_ids:
+            return 0
+        return int(
+            (
+                await session.execute(
+                    select(func.count(BusinessWorkItem.id)).where(
+                        BusinessWorkItem.assigned_agent_id.in_(agent_ids),
+                        BusinessWorkItem.status.in_(NONTERMINAL_WORK_STATUSES),
+                    )
+                )
+            ).scalar_one()
+        )
+
+    @classmethod
+    def _semantic_duplicate(
+        cls,
+        candidate: BusinessWorkItem,
+        existing: list[BusinessWorkItem],
+    ) -> BusinessWorkItem | None:
+        for item in existing:
+            if item.work_type != candidate.work_type:
+                continue
+            if cls._proposal_similarity(
+                cls._work_proposal_tokens(candidate),
+                cls._work_proposal_tokens(item),
+            ) >= cls._semantic_duplicate_threshold():
+                return item
+        return None
+
+    @classmethod
+    def _semantic_duplicate_proposal(
+        cls,
+        proposal: dict[str, Any],
+        existing: list[BusinessWorkItem],
+    ) -> BusinessWorkItem | None:
+        candidate_tokens = cls._proposal_tokens(
+            str(proposal.get("title") or ""),
+            str(proposal.get("description") or ""),
+        )
+        for item in existing:
+            if item.work_type != proposal.get("work_type"):
+                continue
+            if cls._proposal_similarity(
+                candidate_tokens,
+                cls._work_proposal_tokens(item),
+            ) >= cls._semantic_duplicate_threshold():
+                return item
+        return None
+
+    @classmethod
+    def _proposal_signature(cls, work_type: str, title: str, description: str) -> str:
+        tokens = sorted(cls._proposal_tokens(title, description))
+        return cls._hash({"work_type": work_type, "tokens": tokens})
+
+    @classmethod
+    def _work_proposal_tokens(cls, item: BusinessWorkItem) -> set[str]:
+        return cls._proposal_tokens(item.title, item.description)
+
+    @staticmethod
+    def _proposal_tokens(title: str, description: str) -> set[str]:
+        words = re.findall(r"[a-z0-9]+", f"{title} {description[:500]}".lower())
+        normalized = set()
+        for word in words:
+            if word in PROPOSAL_STOP_WORDS or len(word) < 3:
+                continue
+            if word.endswith("ies") and len(word) > 4:
+                word = word[:-3] + "y"
+            elif word.endswith("s") and not word.endswith("ss") and len(word) > 4:
+                word = word[:-1]
+            normalized.add(word)
+        return normalized
+
+    @staticmethod
+    def _proposal_similarity(left: set[str], right: set[str]) -> float:
+        if not left or not right:
+            return 0.0
+        intersection = len(left & right)
+        jaccard = intersection / len(left | right)
+        containment = intersection / min(len(left), len(right))
+        if min(len(left), len(right)) < 3:
+            containment = 0.0
+        return max(jaccard, containment * 0.9)
+
+    @staticmethod
+    def _proposal_depth(item: BusinessWorkItem) -> int:
+        try:
+            return max(0, int((item.payload or {}).get("proposal_depth", 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _proposal_max_depth() -> int:
+        return max(1, min(int(settings.autonomy_proposal_max_depth), 10))
+
+    @staticmethod
+    def _domain_backlog_limit() -> int:
+        return max(
+            1,
+            min(int(settings.autonomy_domain_max_nonterminal_work_items), 1_000),
+        )
+
+    @staticmethod
+    def _proposal_cooldown_hours() -> int:
+        return max(1, min(int(settings.autonomy_proposal_cooldown_hours), 24 * 30))
+
+    @staticmethod
+    def _semantic_duplicate_threshold() -> float:
+        return max(
+            0.5,
+            min(float(settings.autonomy_semantic_duplicate_threshold), 1.0),
+        )
 
     @staticmethod
     def _parse_role_result(raw: str) -> dict[str, Any]:

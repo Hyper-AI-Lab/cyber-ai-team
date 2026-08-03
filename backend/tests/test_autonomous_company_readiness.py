@@ -10,10 +10,12 @@ from cyber_team.db.models import (
     Agent,
     AgentMandate,
     BusinessEvent,
+    BusinessWorkItem,
     CompanyModelRevision,
     CompanyObjective,
     CompanyObjectiveRevision,
     CompanySource,
+    DomainAutonomyControl,
     OperatingKPIDefinition,
     OperatingKPIRevision,
 )
@@ -216,3 +218,59 @@ async def test_business_events_only_block_after_processing_window(
     assert stale_events["blocking"] is True
     assert stale_events["in_processing_window"] == 0
     assert stale_events["stale_unexplained"] == 1
+
+
+@pytest.mark.asyncio
+async def test_work_portfolio_reports_backlog_and_grounding_recovery_blockers(
+    readiness_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "autonomy_domain_max_nonterminal_work_items", 1)
+    now = utc_now()
+    async with readiness_session_factory() as session:
+        agent = Agent(
+            id="observer_agent",
+            role_family="governance",
+            role_name="Observer Agent",
+            instructions="Review evidence.",
+            tools=[],
+            memory_namespace="company:test:observer",
+            status="active",
+        )
+        session.add_all(
+            [
+                agent,
+                BusinessWorkItem(
+                    id="work-governance",
+                    company_namespace="company:test",
+                    title="Review evidence",
+                    work_type="analysis",
+                    status="ready",
+                    assigned_agent_id=agent.id,
+                    payload={},
+                    acceptance_criteria=[],
+                    expected_outcome={},
+                    actual_outcome={},
+                    policy_decision={},
+                    idempotency_key="work-governance",
+                    created_at=now,
+                ),
+                DomainAutonomyControl(
+                    domain="governance",
+                    state="paused",
+                    reason="Grounding conflict requires recovery.",
+                    owner="autonomy_grounding_circuit_breaker",
+                ),
+            ]
+        )
+        await session.commit()
+
+    result = await AutonomousCompanyReadinessService(llm_gateway=FakeLLM()).summary()
+    portfolio = result["sections"]["work_portfolio"]
+
+    assert portfolio["status"] == "recovery_required"
+    assert portfolio["blocking"] is True
+    assert portfolio["domain_backlogs"] == {"governance": 1}
+    assert portfolio["saturated_domains"] == ["governance"]
+    assert portfolio["recovery_required_domains"] == ["governance"]
+    assert any(item["area"] == "work_portfolio" for item in result["blockers"])

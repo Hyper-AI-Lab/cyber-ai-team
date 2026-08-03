@@ -1023,4 +1023,24 @@ describe('ApiClient', () => {
       'http://api.test/api/operations/company-cycle/run',
     )
   })
+
+  it('runs bounded work portfolio stabilization', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      status: 'dry_run',
+      cancelled_count: 2,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+    client.setTokens('access-1')
+
+    await client.stabilizeBusinessWorkItems(['knowledge', 'governance'], true)
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://api.test/api/operations/work-items/stabilize',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({
+      domains: ['knowledge', 'governance'],
+      dry_run: true,
+    })
+  })
 })

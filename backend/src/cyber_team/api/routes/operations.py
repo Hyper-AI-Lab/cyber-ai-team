@@ -290,6 +290,11 @@ class BusinessWorkItemCancelRequest(BaseModel):
     include_descendants: bool = True
 
 
+class WorkPortfolioStabilizeRequest(BaseModel):
+    domains: list[str] = Field(default_factory=list, max_length=20)
+    dry_run: bool = False
+
+
 class WorkflowSpecificationCreateRequest(BaseModel):
     spec_key: str = Field(..., min_length=1, max_length=160)
     title: str = Field(..., min_length=1, max_length=240)
@@ -1206,6 +1211,31 @@ async def cancel_business_work_item(
             actor=principal.email,
             include_descendants=data.include_descendants,
         )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/work-items/stabilize")
+async def stabilize_business_work_items(
+    data: WorkPortfolioStabilizeRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "cancel",
+        "business_work_item",
+        context={"domains": data.domains, "dry_run": data.dry_run},
+    )
+    try:
+        result = await request.app.state.work_portfolio_service.stabilize_domain_backlogs(
+            domains=data.domains,
+            actor=principal.email,
+            dry_run=data.dry_run,
+        )
+        _clear_operations_readiness_cache(request)
+        return result
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 

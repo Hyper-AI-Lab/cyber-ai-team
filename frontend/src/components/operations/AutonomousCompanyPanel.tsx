@@ -30,6 +30,9 @@ const tone: Record<string, string> = {
   pending: 'border-amber-500/30 bg-amber-500/10 text-amber-200',
   blocked: 'border-red-500/30 bg-red-500/10 text-red-200',
   failed: 'border-red-500/30 bg-red-500/10 text-red-200',
+  recovery_required: 'border-red-500/30 bg-red-500/10 text-red-200',
+  backlog_saturated: 'border-amber-500/30 bg-amber-500/10 text-amber-200',
+  bounded: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200',
 }
 
 function badge(value: string) {
@@ -137,7 +140,7 @@ export default function AutonomousCompanyPanel({ readiness, onChanged }: Props) 
       <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
         <Metric label="Model" value={section.company_model?.status || 'unavailable'} />
         <Metric label="Mandates" value={`${mandates.length}`} detail={section.mandates?.status} />
-        <Metric label="Open work" value={openWork.length} />
+        <Metric label="Open work" value={openWork.length} detail={section.work_portfolio?.status} />
         <Metric label="Unexplained" value={section.business_events?.unexplained ?? '-'} />
         <Metric label="Workflows" value={specifications.length} />
         <Metric label="Outcomes" value={outcomes.length} />
@@ -151,7 +154,7 @@ export default function AutonomousCompanyPanel({ readiness, onChanged }: Props) 
           <div className="mt-3 divide-y divide-slate-800 border-y border-slate-800">
             {controls.map((control) => (
               <div key={control.domain} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                <div className="min-w-0"><p className="font-medium capitalize text-slate-200">{control.domain.replaceAll('_', ' ')}</p><p className="mt-0.5 truncate text-xs text-slate-500">{control.reason || 'Autonomous operation is active.'}</p></div>
+                <div className="min-w-0"><p className="font-medium capitalize text-slate-200">{control.domain.replaceAll('_', ' ')}</p><p className="mt-0.5 truncate text-xs text-slate-500">{control.reason || 'Autonomous operation is active.'}</p><p className="mt-1 text-xs text-slate-600">{control.nonterminal_work_items ?? 0}/{control.backlog_limit ?? '-'} queued{control.recovery_required ? ' · grounded recovery required' : ''}</p></div>
                 <div className="flex items-center gap-2">
                   <span className={`rounded-full border px-2 py-0.5 text-xs ${badge(control.state)}`}>{control.state}</span>
                   <select aria-label={`${control.domain} autonomy state`} value={control.state} disabled={changingDomain === control.domain} onChange={(event) => changeDomain(control.domain, event.target.value)} className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-slate-200 focus:border-blue-500 focus:outline-none">
@@ -177,13 +180,15 @@ export default function AutonomousCompanyPanel({ readiness, onChanged }: Props) 
         </div>
       </div>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-3">
+      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Health icon={ShieldCheck} title="Evidence and strategy" value={section.source_freshness?.status || 'unavailable'} detail={`${section.company_model?.critical_unknowns?.length || 0} critical unknowns · ${section.strategy?.status || 'strategy unavailable'}`} />
         <Health icon={GitFork} title="Workflow compiler" value={section.workflow_compiler?.status || 'unavailable'} detail={`${specifications.filter((item) => item.status === 'active').length} active immutable specifications`} />
         <Health icon={Clock3} title="Outcome learning" value={section.action_probation?.status || 'unavailable'} detail={`${outcomes.filter((item) => item.recommendation === 'rollback').length} rollback recommendations · latest ${when(section.work_portfolio?.latest_outcome_at)}`} />
+        <Health icon={BriefcaseBusiness} title="Portfolio bounds" value={section.work_portfolio?.status || 'unavailable'} detail={`${(section.work_portfolio?.saturated_domains || []).length} saturated · ${(section.work_portfolio?.recovery_required_domains || []).length} recovery required`} />
       </div>
 
       {events.some((item) => item.status === 'pending') && <div className="mt-4 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /><span>Pending events are waiting for outbox delivery or mandate routing. The next Temporal cycle will reconcile them.</span></div>}
+      {section.work_portfolio?.blocking && <div className="mt-4 flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /><span>{section.work_portfolio.detail || 'The work portfolio requires bounded recovery before domain expansion.'}</span></div>}
     </section>
   )
 }

@@ -149,6 +149,42 @@ def test_run_autonomous_cycle_endpoint(monkeypatch):
     )
 
 
+def test_work_portfolio_stabilization_endpoint_is_owner_authorized(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    app.state.work_portfolio_service = AsyncMock()
+    app.state.work_portfolio_service.stabilize_domain_backlogs.return_value = {
+        "status": "dry_run",
+        "cancelled_count": 2,
+        "cancelled_ids": ["work-2", "work-3"],
+    }
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+
+    response = TestClient(app).post(
+        "/api/operations/work-items/stabilize",
+        json={"domains": ["knowledge", "governance"], "dry_run": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["cancelled_count"] == 2
+    app.state.work_portfolio_service.stabilize_domain_backlogs.assert_awaited_once_with(
+        domains=["knowledge", "governance"],
+        actor="owner@example.com",
+        dry_run=True,
+    )
+
+
 def test_governor_routes_call_service(monkeypatch):
     app = FastAPI()
     app.include_router(operations_router, prefix="/api/operations")

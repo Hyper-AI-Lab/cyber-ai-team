@@ -1,3 +1,4 @@
+import hashlib
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -1064,6 +1065,9 @@ async def test_role_loop_keeps_assessment_but_rejects_unsafe_follow_up(
         "follow_up_required": True,
         "requested_follow_up": True,
         "accepted_follow_up_count": 0,
+        "reused_follow_up_count": 0,
+        "suppressed_follow_up_count": 0,
+        "accounted_for": False,
         "satisfied": False,
     }
     assert outcome["rejected_proposals"] == [
@@ -1076,10 +1080,12 @@ async def test_role_loop_keeps_assessment_but_rejects_unsafe_follow_up(
 
 
 @pytest.mark.asyncio
-async def test_role_loop_blocks_when_proposal_depth_prevents_required_follow_up(
+async def test_role_loop_accounts_for_proposal_depth_suppression(
     portfolio_session_factory,
+    monkeypatch,
 ):
     await seed_agents_and_objective(portfolio_session_factory)
+    monkeypatch.setattr(settings, "autonomy_proposal_max_depth", 2)
     manager = AsyncMock()
     manager.invoke_agent.return_value = json.dumps(
         {
@@ -1111,7 +1117,7 @@ async def test_role_loop_blocks_when_proposal_depth_prevents_required_follow_up(
         work_type="research",
         company_namespace="company:test",
         assigned_agent_id="knowledge-agent",
-        payload={"proposal_depth": 3},
+        payload={"proposal_depth": 2},
         acceptance_criteria=["source_recorded"],
         idempotency_key="work-depth-limit",
     )
@@ -1119,9 +1125,11 @@ async def test_role_loop_blocks_when_proposal_depth_prevents_required_follow_up(
     result = await service.run_domain_loop("knowledge-agent", prepare=False)
 
     outcome = result["items"][0]["actual_outcome"]
-    assert result["items"][0]["status"] == "blocked"
+    assert result["items"][0]["status"] == "completed"
     assert outcome["created_work_item_ids"] == []
-    assert outcome["rejected_proposals"][0]["reason"] == "proposal_depth_limit"
+    assert outcome["rejected_proposals"] == []
+    assert outcome["suppressed_proposals"][0]["reason"] == "proposal_depth_limit"
+    assert outcome["completion_contract"]["accounted_for"] is True
 
 
 @pytest.mark.asyncio
@@ -1235,3 +1243,345 @@ async def test_domain_pause_defers_events_and_stops_role_loop(
         ).scalar_one()
     assert gaps == []
     assert "owner control" in disposition.reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_inflight_pause_suppresses_generated_follow_up(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    service = WorkPortfolioService(company_intelligence_service=FakeIntelligence())
+    manager = AsyncMock()
+
+    async def pause_then_respond(*_args, **_kwargs):
+        await service.update_domain_control(
+            "knowledge",
+            state="paused",
+            reason="Circuit breaker engaged during assessment.",
+            owner="autonomy_grounding_circuit_breaker",
+        )
+        return json.dumps(
+            {
+                "assessment": "The evidence warrants one internal research follow-up.",
+                "confidence": 0.9,
+                "unknowns": [],
+                "recommended_action": "continue",
+                "expected_outcome": {"type": "research"},
+                "proposed_work": [
+                    {
+                        "title": "Research one more source",
+                        "description": "Collect internal evidence only.",
+                        "work_type": "research",
+                        "priority": "low",
+                        "acceptance_criteria": ["source_recorded"],
+                        "expected_outcome": {"type": "evidence"},
+                    }
+                ],
+            }
+        )
+
+    manager.invoke_agent.side_effect = pause_then_respond
+    service._agent_manager = manager
+    await service.ensure_active_agent_mandates()
+    await service.create_work_item(
+        title="Assess evidence before pause",
+        description="Pause while this item is running.",
+        work_type="domain_assessment",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={},
+        acceptance_criteria=["pause_mediated"],
+        idempotency_key="inflight-pause",
+    )
+
+    result = await service.run_domain_loop("knowledge-agent", prepare=False)
+
+    outcome = result["items"][0]["actual_outcome"]
+    assert result["items"][0]["status"] == "completed"
+    assert outcome["created_work_item_ids"] == []
+    assert outcome["suppressed_proposals"][0]["reason"] == "domain_not_active"
+    async with portfolio_session_factory() as session:
+        assert (
+            await session.execute(select(func.count(BusinessWorkItem.id)))
+        ).scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_semantic_cooldown_reuses_recent_equivalent_work(
+    portfolio_session_factory,
+    monkeypatch,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    monkeypatch.setattr(settings, "autonomy_proposal_cooldown_hours", 24)
+    manager = AsyncMock()
+    manager.invoke_agent.return_value = json.dumps(
+        {
+            "assessment": "Customer retention evidence should be researched.",
+            "confidence": 0.9,
+            "unknowns": [],
+            "recommended_action": "continue",
+            "expected_outcome": {"type": "evidence"},
+            "proposed_work": [
+                {
+                    "title": "Investigate customer retention evidence",
+                    "description": "Collect verified customer retention measurements.",
+                    "work_type": "research",
+                    "priority": "medium",
+                    "acceptance_criteria": ["retention_evidence_recorded"],
+                    "expected_outcome": {"type": "evidence"},
+                }
+            ],
+        }
+    )
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        company_intelligence_service=FakeIntelligence(),
+    )
+    await service.ensure_active_agent_mandates()
+    prior = await service.create_work_item(
+        title="Research customer retention evidence",
+        description="Collect verified customer retention measurements.",
+        work_type="research",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={"proposal_depth": 1},
+        acceptance_criteria=["retention_evidence_recorded"],
+        idempotency_key="prior-semantic-work",
+    )
+    async with portfolio_session_factory() as session:
+        prior_item = await session.get(BusinessWorkItem, prior["id"])
+        prior_item.status = "completed"
+        prior_item.completed_at = utc_now()
+        await session.commit()
+    await service.create_work_item(
+        title="Assess retention evidence gap",
+        description="Avoid repeated work.",
+        work_type="domain_assessment",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={},
+        acceptance_criteria=["follow_up_accounted_for"],
+        idempotency_key="semantic-parent",
+    )
+
+    result = await service.run_domain_loop("knowledge-agent", prepare=False)
+
+    outcome = result["items"][0]["actual_outcome"]
+    assert result["items"][0]["status"] == "completed"
+    assert outcome["created_work_item_ids"] == []
+    assert outcome["reused_work_item_ids"] == [prior["id"]]
+    assert outcome["suppressed_proposals"][0]["reason"] == (
+        "semantic_duplicate_cooldown"
+    )
+
+
+@pytest.mark.asyncio
+async def test_domain_backlog_limit_suppresses_new_generated_work(
+    portfolio_session_factory,
+    monkeypatch,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    monkeypatch.setattr(settings, "autonomy_domain_max_nonterminal_work_items", 1)
+    manager = AsyncMock()
+    manager.invoke_agent.return_value = json.dumps(
+        {
+            "assessment": "One follow-up would otherwise be useful.",
+            "confidence": 0.9,
+            "unknowns": [],
+            "recommended_action": "continue",
+            "expected_outcome": {"type": "analysis"},
+            "proposed_work": [
+                {
+                    "title": "Analyze another source",
+                    "description": "Perform bounded internal analysis.",
+                    "work_type": "analysis",
+                    "priority": "low",
+                    "acceptance_criteria": ["analysis_recorded"],
+                    "expected_outcome": {"type": "analysis"},
+                }
+            ],
+        }
+    )
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        company_intelligence_service=FakeIntelligence(),
+    )
+    await service.ensure_active_agent_mandates()
+    await service.create_work_item(
+        title="Fill the bounded backlog",
+        description="The leased parent counts against domain capacity.",
+        work_type="domain_assessment",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={},
+        acceptance_criteria=["capacity_enforced"],
+        idempotency_key="backlog-parent",
+    )
+
+    result = await service.run_domain_loop("knowledge-agent", prepare=False)
+
+    outcome = result["items"][0]["actual_outcome"]
+    assert result["items"][0]["status"] == "completed"
+    assert outcome["created_work_item_ids"] == []
+    assert outcome["suppressed_proposals"][0]["reason"] == "domain_backlog_limit"
+
+
+@pytest.mark.asyncio
+async def test_backlog_stabilizer_preserves_owner_work_and_cancels_generated_excess(
+    portfolio_session_factory,
+    monkeypatch,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    monkeypatch.setattr(settings, "autonomy_domain_max_nonterminal_work_items", 2)
+    monkeypatch.setattr(settings, "autonomy_proposal_max_depth", 1)
+    audit = AsyncMock()
+    service = WorkPortfolioService(audit_service=audit)
+    await service.ensure_active_agent_mandates()
+    owner = await service.create_work_item(
+        title="Owner critical request",
+        description="Owner-authored work must remain available.",
+        work_type="planning",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={},
+        acceptance_criteria=["owner_reviewed"],
+        idempotency_key="owner-work",
+        created_by="owner@example.com",
+    )
+    canonical = await service.create_work_item(
+        title="Research customer retention evidence",
+        description="Collect verified customer retention measurements.",
+        work_type="research",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={"parent_work_item_id": owner["id"], "proposal_depth": 1},
+        acceptance_criteria=["evidence_recorded"],
+        idempotency_key="generated-canonical",
+        created_by="knowledge-agent",
+    )
+    duplicate = await service.create_work_item(
+        title="Investigate customer retention evidence",
+        description="Collect verified customer retention measurements.",
+        work_type="research",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={"parent_work_item_id": owner["id"], "proposal_depth": 1},
+        acceptance_criteria=["evidence_recorded"],
+        idempotency_key="generated-duplicate",
+        created_by="knowledge-agent",
+    )
+    overflow = await service.create_work_item(
+        title="Analyze market position",
+        description="Analyze a separate market question.",
+        work_type="analysis",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={"parent_work_item_id": owner["id"], "proposal_depth": 1},
+        acceptance_criteria=["analysis_recorded"],
+        idempotency_key="generated-overflow",
+        created_by="knowledge-agent",
+    )
+    deep = await service.create_work_item(
+        title="Compile technical references",
+        description="This child exceeds the configured proposal depth.",
+        work_type="research",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={"parent_work_item_id": canonical["id"], "proposal_depth": 2},
+        acceptance_criteria=["references_recorded"],
+        idempotency_key="generated-deep",
+        created_by="knowledge-agent",
+    )
+
+    result = await service.stabilize_domain_backlogs(domains=["knowledge"])
+
+    assert result["cancelled_count"] == 3
+    assert set(result["cancelled_ids"]) == {duplicate["id"], overflow["id"], deep["id"]}
+    async with portfolio_session_factory() as session:
+        owner_item = await session.get(BusinessWorkItem, owner["id"])
+        canonical_item = await session.get(BusinessWorkItem, canonical["id"])
+        cancelled = [
+            await session.get(BusinessWorkItem, item_id)
+            for item_id in result["cancelled_ids"]
+        ]
+    assert owner_item.status == "ready"
+    assert canonical_item.status == "ready"
+    assert all(item.status == "cancelled" for item in cancelled)
+    assert all(item.actual_outcome["side_effects_executed"] is False for item in cancelled)
+    audit.record_control_evidence.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_grounded_recovery_resolves_finding_after_explicit_reactivation(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    manager = AsyncMock()
+    manager.invoke_agent.return_value = json.dumps(
+        {
+            "assessment": "The active Knowledge agents match current role state.",
+            "confidence": 0.98,
+            "unknowns": [],
+            "recommended_action": "no_action",
+            "expected_outcome": {"type": "grounded_recovery"},
+            "proposed_work": [],
+        }
+    )
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        company_intelligence_service=FakeIntelligence(),
+    )
+    await service.ensure_active_agent_mandates()
+    dedupe_key = "authoritative_role_state_conflict:knowledge:knowledge-agent"
+    finding_id = "mem_find_" + hashlib.sha256(dedupe_key.encode()).hexdigest()[:12]
+    async with portfolio_session_factory() as session:
+        session.add_all(
+            [
+                MemoryStewardFinding(
+                    id=finding_id,
+                    finding_type="authoritative_memory_conflict",
+                    severity="high",
+                    status="open",
+                    agent_id="knowledge-agent",
+                    company_namespace="company:test",
+                    title="Authoritative role-state conflict in knowledge",
+                    description="Prior conflict.",
+                    recommendation="Run a grounded recovery canary.",
+                    trace_ids=[],
+                    evidence={
+                        "dedupe_key": dedupe_key,
+                        "agent_conflict_count": 3,
+                    },
+                    metadata_={"source": "work_portfolio_grounding_guard"},
+                ),
+                DomainAutonomyControl(
+                    domain="knowledge",
+                    state="active",
+                    reason="Explicit bounded recovery canary.",
+                    owner="autonomy_grounding_circuit_breaker",
+                ),
+            ]
+        )
+        await session.commit()
+    await service.create_work_item(
+        title="Grounded Knowledge recovery canary",
+        description="Use authoritative current state and create no follow-up.",
+        work_type="diagnostic",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={},
+        acceptance_criteria=["grounding_passed"],
+        idempotency_key="grounding-recovery",
+    )
+
+    result = await service.run_domain_loop("knowledge-agent", prepare=False)
+
+    outcome = result["items"][0]["actual_outcome"]
+    assert outcome["grounding_recovery"]["status"] == "resolved"
+    async with portfolio_session_factory() as session:
+        finding = await session.get(MemoryStewardFinding, finding_id)
+        control = await session.get(DomainAutonomyControl, "knowledge")
+    assert finding.status == "resolved"
+    assert finding.evidence["recovery_work_item_id"] == result["items"][0]["id"]
+    assert control.state == "active"
+    assert control.owner == "grounding_recovery"

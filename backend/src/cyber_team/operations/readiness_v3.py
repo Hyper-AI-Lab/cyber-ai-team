@@ -93,6 +93,21 @@ class AutonomousCompanyReadinessService:
             )
             delivery_counts = await self._counts(session, BusinessEventDelivery.status)
             work_counts = await self._counts(session, BusinessWorkItem.status)
+            domain_work_rows = (
+                await session.execute(
+                    select(Agent.role_family, func.count(BusinessWorkItem.id))
+                    .join(
+                        BusinessWorkItem,
+                        BusinessWorkItem.assigned_agent_id == Agent.id,
+                    )
+                    .where(
+                        BusinessWorkItem.status.in_(
+                            {"proposed", "ready", "leased", "blocked_dependency", "unassigned"}
+                        )
+                    )
+                    .group_by(Agent.role_family)
+                )
+            ).all()
             domain_controls = (
                 await session.execute(select(DomainAutonomyControl))
             ).scalars().all()
@@ -223,6 +238,26 @@ class AutonomousCompanyReadinessService:
                 for item in policies
             ],
         }
+        backlog_limit = max(
+            1,
+            min(int(settings.autonomy_domain_max_nonterminal_work_items), 1_000),
+        )
+        domain_backlogs: dict[str, int] = {}
+        for role_family, count in domain_work_rows:
+            domain = self._canonical_family(str(role_family))
+            domain_backlogs[domain] = domain_backlogs.get(domain, 0) + int(count or 0)
+        saturated_domains = sorted(
+            domain
+            for domain, count in domain_backlogs.items()
+            if count >= backlog_limit
+        )
+        recovery_domains = sorted(
+            item.domain
+            for item in domain_controls
+            if item.state == "paused"
+            and item.owner == "autonomy_grounding_circuit_breaker"
+        )
+        portfolio_blocking = bool(saturated_domains or recovery_domains)
         model_availability = await self._model_availability()
         sections = {
             "company_model": company_model,
@@ -248,10 +283,29 @@ class AutonomousCompanyReadinessService:
             },
             "business_events": events,
             "work_portfolio": {
-                "status": "ready",
-                "blocking": False,
+                "status": (
+                    "recovery_required"
+                    if recovery_domains
+                    else "backlog_saturated"
+                    if saturated_domains
+                    else "bounded"
+                ),
+                "blocking": portfolio_blocking,
                 "counts": work_counts,
+                "domain_backlogs": domain_backlogs,
+                "backlog_limit": backlog_limit,
+                "saturated_domains": saturated_domains,
+                "recovery_required_domains": recovery_domains,
                 "latest_outcome_at": self._timestamp(latest_outcome),
+                "detail": (
+                    "Grounding circuit-breaker recovery is required for: "
+                    + ", ".join(recovery_domains)
+                    if recovery_domains
+                    else "Generated work backlog reached its configured limit for: "
+                    + ", ".join(saturated_domains)
+                    if saturated_domains
+                    else "Every domain work backlog is within its configured bound."
+                ),
             },
             "strategy": strategy,
             "workflow_compiler": workflows,
@@ -277,6 +331,18 @@ class AutonomousCompanyReadinessService:
             "sections": sections,
             "blockers": blockers,
         }
+
+    @staticmethod
+    def _canonical_family(value: str) -> str:
+        aliases = {
+            "compliance": "security",
+            "research": "knowledge",
+            "project_management": "product",
+            "people": "hr",
+            "observer": "governance",
+        }
+        normalized = str(value or "operations").lower().replace(" ", "_")
+        return aliases.get(normalized, normalized)
 
     async def _model_availability(self) -> dict[str, Any]:
         if not self._llm:

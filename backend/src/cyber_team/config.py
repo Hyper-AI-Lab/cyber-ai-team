@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # App
     app_name: str = "Cyber-Team"
-    app_version: str = "0.3.12"
+    app_version: str = "0.3.13"
     build_sha: str = "local"
     environment: str = "development"
     log_level: str = "INFO"
@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     autonomy_side_effect_mode: str = "approval_required"
     autonomy_grounding_conflict_threshold: int = 2
     autonomy_grounding_conflict_lookback_hours: int = 24
+    autonomy_proposal_max_depth: int = 2
+    autonomy_domain_max_nonterminal_work_items: int = 20
+    autonomy_proposal_cooldown_hours: int = 24
+    autonomy_semantic_duplicate_threshold: float = 0.7
     require_live_tool_executors: bool = False
     supervisor_review_enabled: bool = True
     supervisor_review_initial_delay_seconds: int = 60
