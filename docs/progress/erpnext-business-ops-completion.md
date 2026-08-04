@@ -5947,3 +5947,24 @@
   - `/home/projects/cyber-team/dist/canary/v0.3.14-knowledge-grounding-20260804T163639Z/stability-3-run.json`.
 - Next step:
   - Publish the implementation and staging evidence to the public repository, require green push and independent manual CI, refresh exact-head CI evidence, and publish release `v0.3.14`.
+
+### 2026-08-04T16:49:12Z — STEP-226 — Passed public push and manual CI for v0.3.14
+- Files/services changed:
+  - Pushed implementation commit `78cc50c0f6e814917a00bad51cb30fbf0deda108` and staging-evidence commit `93870771aca7b19d3947669deccd75eb8f81abd4` to `Hyper-AI-Lab/cyber-ai-team`.
+  - Refreshed the GitHub CI evidence consumed by staging readiness.
+- Commands run:
+  - Public `main` push and push-CI watch.
+  - Independent exact-head manual CI dispatch/watch, including Compose smoke, observability validation, immutable image builds, and Trivy scans.
+  - `scripts/github-ci-evidence.py` and live readiness refresh.
+- Result:
+  - Push CI run `30930452756` passed backend, frontend, real PostgreSQL upgrades, dependency audits, Compose/config hygiene, secret scanning, Google Cloud isolation, and FOSS/resource policy checks.
+  - Manual CI run `30930687489` passed all six jobs, including Docker Compose smoke, observability, and both Docker image scans.
+  - The newly published PostCSS advisory no longer fails the frontend audit. Current-head push and manual evidence are green; scheduled proof is pending the next GitHub cron by definition.
+  - Live staging remains `ready` with zero blockers on application `0.3.14` / build `78cc50c0f6e814917a00bad51cb30fbf0deda108`.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30930452756`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30930687489`.
+  - `/home/projects/cyber-team/dist/ci/github-ci-20260804T164912Z.json`.
+  - `/home/projects/cyber-team/dist/canary/v0.3.14-final-readiness.json`.
+- Next step:
+  - Publish the final documentation head, require exact-head push/manual CI once more, and tag the verified commit as `v0.3.14`.
