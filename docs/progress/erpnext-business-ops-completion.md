@@ -5830,3 +5830,62 @@
   - `/home/projects/cyber-team/dist/canary/v0.3.13-final-readiness-before-release.json`.
 - Next step:
   - Continue monitored autonomous operation; the bounded queues and grounding circuit breakers now recover through explicit evidence-backed canaries instead of accumulating recursive generated work.
+
+### 2026-08-04T15:30:21Z — STEP-220 — Established the v0.3.14 overnight failure baseline
+- Files/services changed:
+  - None; this was a read-only inspection of public CI, live staging controls, work outcomes, Memory Steward evidence, dependency metadata, and the grounding call path.
+- Commands run:
+  - GitHub scheduled-run/job inspection, live readiness refresh, domain-control and Memory Steward API inspection, and PostgreSQL work/finding evidence queries.
+  - Local `npm audit`, package/lock resolution inspection, and source/test tracing for authoritative grounding.
+- Result:
+  - Exact-head scheduled CI run `30882734973` failed only because a newly published moderate PostCSS advisory affected nested `postcss@8.5.22`; backend, Compose smoke, image scanning, observability, secret scanning, FOSS policy, and Google Cloud isolation passed.
+  - Knowledge correctly remained bounded but paused after two false grounding conflicts. Four nonterminal Knowledge items remain and no external side effect was found.
+  - The two triggering assessments explicitly stated that current role gaps were unrelated or nonblocking. The broad free-text pattern `the unresolved ... role` misclassified those negated statements as missing-role assertions.
+  - Staging services remain healthy on `0.3.13`; readiness is degraded only by the fail-closed Knowledge recovery requirement.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30882734973`.
+  - Finding `mem_find_e8dc2b043319` and work items `work_5e0dc6dfd67a4881affacbe492748dac` / `work_a64b89ae17de41eebb557ae4ec99049e` in staging PostgreSQL.
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/work_portfolio.py`.
+  - `/home/projects/cyber-team/frontend/package-lock.json`.
+- Next step:
+  - Replace free-text role-state circuit inputs with typed current-state claims, keep legacy-memory cleanup negation-aware, and refresh the frontend dependency lock to a patched PostCSS resolution.
+
+### 2026-08-04T15:51:42Z — STEP-221 — Implemented typed grounding and repaired the frontend dependency tree
+- Files/services changed:
+  - Replaced free-text assessment classification as a circuit-breaker input with versioned `role-state-claims-v1` assertions containing exact subject IDs, state, temporal scope, and evidence IDs.
+  - Added deterministic validation against authoritative active-agent and unresolved-role-gap records; only contradictory `current` claims can trip a grounding circuit breaker.
+  - Added a fail-closed non-circuit schema finding when clear present-tense role-state prose omits its required typed claim.
+  - Made legacy-memory cleanup conservative around negated, historical, hypothetical, future, latent, unrelated, and explicitly unblocked statements.
+  - Separated unsupported capability proposals from memory-corruption evidence, added exact `target_role_gap_id` support, documented the invariant, and advanced release surfaces to `0.3.14`.
+  - Updated Next.js to `15.5.22`, forced PostCSS `8.5.25`, regenerated the lockfile, and removed the vulnerable nested PostCSS resolution.
+- Commands run:
+  - Focused Ruff and `36` work-portfolio tests.
+  - Frontend `npm ci`, `25` tests, TypeScript, production build, dependency tree validation, and moderate-level production dependency audit.
+- Result:
+  - All focused checks pass. Repeated negated role-gap prose does not pause a domain, true exact-ID contradictions remain blocked, historical/hypothetical claims are noncurrent, and unsupported role proposals do not create Memory Steward findings.
+  - Next.js `15.5.22` resolves a single deduplicated PostCSS `8.5.25`; `npm audit --omit=dev --audit-level=moderate` reports zero vulnerabilities.
+  - No npm installer process remains, and the running staging application was not changed during local dependency repair.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/work_portfolio.py`.
+  - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
+  - `/home/projects/cyber-team/frontend/package.json` and `/home/projects/cyber-team/frontend/package-lock.json`.
+  - `/home/projects/cyber-team/docs/architecture/autonomous-company-os.md`.
+- Next step:
+  - Run the complete quality and release gates before any staging mutation.
+
+### 2026-08-04T16:07:58Z — STEP-222 — Passed the complete v0.3.14 quality gate
+- Files/services changed:
+  - No runtime services changed; this step verified the full repository candidate after the typed-grounding and dependency updates.
+- Commands run:
+  - `scripts/quality-gate.sh`, including Ruff, full Pytest, compileall, Alembic offline SQL, Python and Node dependency audits, frontend install/build/typecheck/tests, Compose validation, operations syntax checks, secret scanning, Google Cloud isolation, FOSS/resource policy, and Git diff hygiene.
+- Result:
+  - Ruff passed; all `362` backend tests passed with one known upstream Starlette `TestClient` deprecation warning.
+  - Alembic rendered the complete `0001` through `0015` upgrade chain and Python dependency audit found no known vulnerability.
+  - Next.js `15.5.22` built successfully; all `25` frontend tests and TypeScript checks passed; the runtime Node audit found zero vulnerabilities.
+  - Compose, dashboard/script syntax, high-confidence secret scan, Google Cloud isolation, FOSS/resource policy, and diff hygiene all passed.
+- Evidence:
+  - Local quality-gate terminal result at `2026-08-04T16:07:18Z` with exit code `0`.
+  - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
+  - `/home/projects/cyber-team/frontend/package-lock.json`.
+- Next step:
+  - Build the immutable `0.3.14` release candidate, run release policy checks, and promote it to staging backup-first.

@@ -511,6 +511,15 @@ async def test_role_loop_blocks_stale_role_gap_claim_against_live_state(
             "unknowns": [],
             "recommended_action": "revise",
             "expected_outcome": {"type": "role_activation"},
+            "role_state_claims": [
+                {
+                    "subject_type": "role",
+                    "subject_id": "security-agent",
+                    "state": "missing",
+                    "temporal_scope": "current",
+                    "evidence_ids": [],
+                }
+            ],
             "proposed_work": [
                 {
                     "title": "Resolve Security Agent role gap",
@@ -588,6 +597,15 @@ async def test_grounding_conflicts_quarantine_memory_and_pause_repeated_domain(
             "unknowns": [],
             "recommended_action": "escalate",
             "expected_outcome": {"type": "role_activation"},
+            "role_state_claims": [
+                {
+                    "subject_type": "role",
+                    "subject_id": "security-agent",
+                    "state": "missing",
+                    "temporal_scope": "current",
+                    "evidence_ids": [],
+                }
+            ],
             "proposed_work": [],
         }
     )
@@ -859,7 +877,16 @@ def test_authoritative_grounding_matches_specific_current_gap():
     service = WorkPortfolioService()
     context = {
         "observed_at": "2026-08-01T00:00:00",
+        "role_family": "security",
         "active_family_agent_count": 3,
+        "active_family_agents": [
+            {"id": "security-agent", "role_name": "Security & Compliance Agent"}
+        ],
+        "assigned_agent": {
+            "id": "security-agent",
+            "role_name": "Security & Compliance Agent",
+            "status": "active",
+        },
         "unresolved_role_gaps": [
             {
                 "id": "gap-outbound-voice",
@@ -870,11 +897,29 @@ def test_authoritative_grounding_matches_specific_current_gap():
     }
     unsupported = {
         "assessment": "The Security & Compliance Agent role remains unfulfilled.",
+        "role_state_claims": [
+            {
+                "subject_type": "role",
+                "subject_id": "security-agent",
+                "state": "missing",
+                "temporal_scope": "current",
+                "evidence_ids": [],
+            }
+        ],
         "proposed_work": [],
         "rejected_proposals": [],
     }
     supported = {
         "assessment": "The outbound voice role gap persists.",
+        "role_state_claims": [
+            {
+                "subject_type": "role_gap",
+                "subject_id": "gap-outbound-voice",
+                "state": "unresolved",
+                "temporal_scope": "current",
+                "evidence_ids": ["gap-outbound-voice"],
+            }
+        ],
         "proposed_work": [],
         "rejected_proposals": [],
     }
@@ -886,6 +931,290 @@ def test_authoritative_grounding_matches_specific_current_gap():
     assert blocked["findings"][0]["type"] == "authoritative_role_state_conflict"
     assert passed["status"] == "passed"
     assert passed["findings"] == []
+
+
+@pytest.mark.parametrize(
+    "assessment",
+    [
+        "The unresolved role gaps are unrelated to this work item.",
+        "The unresolved role gaps do not directly block this work.",
+        "The unresolved role gaps listed do not pertain to memory governance.",
+        "The Knowledge role is now unblocked; historical role gaps are retained as evidence.",
+        "A hypothetical future role gap would require owner review.",
+    ],
+)
+def test_authoritative_grounding_ignores_explanatory_free_text(assessment):
+    service = WorkPortfolioService()
+    context = {
+        "observed_at": "2026-08-04T00:00:00",
+        "role_family": "knowledge",
+        "active_family_agent_count": 1,
+        "active_family_agents": [
+            {"id": "knowledge-agent", "role_name": "Knowledge Agent"}
+        ],
+        "assigned_agent": {
+            "id": "knowledge-agent",
+            "role_name": "Knowledge Agent",
+            "status": "active",
+        },
+        "unresolved_role_gaps": [],
+    }
+
+    result = service._apply_authoritative_grounding(
+        {
+            "assessment": assessment,
+            "role_state_claims": [],
+            "proposed_work": [],
+            "rejected_proposals": [],
+        },
+        context,
+    )
+
+    assert result["status"] == "passed"
+    assert result["findings"] == []
+
+
+@pytest.mark.parametrize("temporal_scope", ["historical", "hypothetical"])
+def test_authoritative_grounding_ignores_noncurrent_typed_claims(temporal_scope):
+    service = WorkPortfolioService()
+    context = {
+        "observed_at": "2026-08-04T00:00:00",
+        "role_family": "knowledge",
+        "active_family_agent_count": 1,
+        "active_family_agents": [
+            {"id": "knowledge-agent", "role_name": "Knowledge Agent"}
+        ],
+        "assigned_agent": {
+            "id": "knowledge-agent",
+            "role_name": "Knowledge Agent",
+            "status": "active",
+        },
+        "unresolved_role_gaps": [],
+    }
+
+    result = service._apply_authoritative_grounding(
+        {
+            "assessment": "Retain noncurrent state for analysis.",
+            "role_state_claims": [
+                {
+                    "subject_type": "role",
+                    "subject_id": "knowledge-agent",
+                    "state": "missing",
+                    "temporal_scope": temporal_scope,
+                    "evidence_ids": [],
+                }
+            ],
+            "proposed_work": [],
+            "rejected_proposals": [],
+        },
+        context,
+    )
+
+    assert result["status"] == "passed"
+    assert result["findings"] == []
+
+
+def test_authoritative_grounding_blocks_unknown_current_gap_id():
+    service = WorkPortfolioService()
+    context = {
+        "observed_at": "2026-08-04T00:00:00",
+        "role_family": "knowledge",
+        "active_family_agent_count": 1,
+        "active_family_agents": [
+            {"id": "knowledge-agent", "role_name": "Knowledge Agent"}
+        ],
+        "assigned_agent": {
+            "id": "knowledge-agent",
+            "role_name": "Knowledge Agent",
+            "status": "active",
+        },
+        "unresolved_role_gaps": [],
+    }
+
+    result = service._apply_authoritative_grounding(
+        {
+            "assessment": "A current gap exists.",
+            "role_state_claims": [
+                {
+                    "subject_type": "role_gap",
+                    "subject_id": "gap-hallucinated",
+                    "state": "unresolved",
+                    "temporal_scope": "current",
+                    "evidence_ids": ["gap-hallucinated"],
+                }
+            ],
+            "proposed_work": [],
+            "rejected_proposals": [],
+        },
+        context,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["findings"][0]["type"] == "authoritative_role_state_conflict"
+
+
+def test_authoritative_grounding_blocks_present_role_claim_without_typed_contract():
+    service = WorkPortfolioService()
+    context = {
+        "observed_at": "2026-08-04T00:00:00",
+        "role_family": "knowledge",
+        "active_family_agent_count": 1,
+        "active_family_agents": [
+            {"id": "knowledge-agent", "role_name": "Knowledge Agent"}
+        ],
+        "assigned_agent": {
+            "id": "knowledge-agent",
+            "role_name": "Knowledge Agent",
+            "status": "active",
+        },
+        "unresolved_role_gaps": [],
+    }
+
+    result = service._apply_authoritative_grounding(
+        {
+            "assessment": "The Knowledge role remains unfulfilled.",
+            "role_state_claims": [],
+            "proposed_work": [],
+            "rejected_proposals": [],
+        },
+        context,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["findings"] == [
+        {
+            "type": "role_state_claim_contract_missing",
+            "detail": (
+                "Present-tense role-state language requires an explicit typed "
+                "claim tied to authoritative identifiers."
+            ),
+        }
+    ]
+
+
+def test_legacy_memory_conflict_detection_respects_negation_and_history():
+    service = WorkPortfolioService()
+
+    assert service._legacy_memory_role_state_conflict(
+        "The Security role remains unfulfilled."
+    )
+    assert not service._legacy_memory_role_state_conflict(
+        "The unresolved role gaps are unrelated to this work item."
+    )
+    assert not service._legacy_memory_role_state_conflict(
+        "The Knowledge role is now unblocked; historical role gaps remain evidence."
+    )
+
+
+@pytest.mark.asyncio
+async def test_repeated_negated_role_gap_prose_never_pauses_domain(
+    portfolio_session_factory,
+    monkeypatch,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    monkeypatch.setattr(settings, "autonomy_grounding_conflict_threshold", 2)
+    manager = AsyncMock()
+    manager.invoke_agent.return_value = json.dumps(
+        {
+            "assessment": (
+                "The unresolved role gaps are unrelated to this work, do not "
+                "block the active Knowledge Agent, and remain historical evidence."
+            ),
+            "confidence": 0.95,
+            "unknowns": [],
+            "recommended_action": "no_action",
+            "expected_outcome": {"type": "documented_no_action"},
+            "role_state_claims": [],
+            "proposed_work": [],
+        }
+    )
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        company_intelligence_service=FakeIntelligence(),
+    )
+    await service.ensure_active_agent_mandates()
+    for index in range(2):
+        await service.create_work_item(
+            title=f"Negated role-gap assessment {index}",
+            description="Use the current authoritative role state.",
+            work_type="analysis",
+            company_namespace="company:test",
+            assigned_agent_id="knowledge-agent",
+            payload={},
+            acceptance_criteria=["current_state_used"],
+            idempotency_key=f"negated-role-gap-{index}",
+        )
+        result = await service.run_domain_loop("knowledge-agent", prepare=False)
+        assert result["items"][0]["status"] == "completed"
+        assert result["items"][0]["actual_outcome"]["grounding"]["status"] == "passed"
+
+    async with portfolio_session_factory() as session:
+        assert await session.get(DomainAutonomyControl, "knowledge") is None
+        assert (
+            await session.execute(select(func.count(MemoryStewardFinding.id)))
+        ).scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_unsupported_role_gap_proposal_does_not_trip_memory_circuit(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    manager = AsyncMock()
+    manager.invoke_agent.return_value = json.dumps(
+        {
+            "assessment": "Current Knowledge role state is healthy.",
+            "confidence": 0.9,
+            "unknowns": [],
+            "recommended_action": "revise",
+            "expected_outcome": {"type": "proposal_review"},
+            "role_state_claims": [],
+            "proposed_work": [
+                {
+                    "title": "Resolve imaginary Knowledge role gap",
+                    "description": "Deploy a missing role with no current gap ID.",
+                    "work_type": "capability_proposal",
+                    "priority": "medium",
+                    "acceptance_criteria": ["gap_verified"],
+                    "expected_outcome": {"type": "role_activation"},
+                }
+            ],
+        }
+    )
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        company_intelligence_service=FakeIntelligence(),
+    )
+    await service.ensure_active_agent_mandates()
+    await service.create_work_item(
+        title="Review unsupported role proposal",
+        description="Reject unsupported work without contaminating memory state.",
+        work_type="analysis",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={},
+        acceptance_criteria=["proposal_reviewed"],
+        idempotency_key="unsupported-role-proposal-no-circuit",
+    )
+
+    result = await service.run_domain_loop("knowledge-agent", prepare=False)
+
+    item = result["items"][0]
+    assert item["status"] == "blocked"
+    assert item["actual_outcome"]["grounding"]["memory_remediation"] == {
+        "status": "not_applicable",
+        "reason": "No authoritative role-state conflict was asserted.",
+        "circuit_breaker_tripped": False,
+    }
+    assert {
+        finding["type"]
+        for finding in item["actual_outcome"]["grounding"]["findings"]
+    } == {"unsupported_role_gap_proposal"}
+    async with portfolio_session_factory() as session:
+        assert await session.get(DomainAutonomyControl, "knowledge") is None
+        assert (
+            await session.execute(select(func.count(MemoryStewardFinding.id)))
+        ).scalar_one() == 0
 
 
 @pytest.mark.asyncio

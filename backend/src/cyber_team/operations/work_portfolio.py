@@ -154,6 +154,23 @@ STALE_ROLE_STATE_PATTERNS = (
     re.compile(r"\brole gap (?:remains|is|persists)\b", re.I),
     re.compile(r"\bthe unresolved [^.]{0,100}\brole\b", re.I),
 )
+NON_CONFLICTING_ROLE_STATE_PATTERNS = (
+    re.compile(r"\bno unresolved role gaps?\b", re.I),
+    re.compile(r"\bunresolved role gaps? (?:are|do) (?:unrelated|not)\b", re.I),
+    re.compile(r"\bunresolved role gaps? listed do not\b", re.I),
+    re.compile(r"\b(?:now|currently) unblocked\b", re.I),
+    re.compile(r"\b(?:historical|hypothetical|latent|future) (?:role|risk|gap)", re.I),
+)
+CURRENT_ROLE_GAP_PROPOSAL_PATTERNS = (
+    re.compile(r"\bresolve\b[^.]{0,120}\brole gap\b", re.I),
+    re.compile(r"\bdeploy\b[^.]{0,120}\bmissing role\b", re.I),
+)
+ROLE_STATE_CLAIM_STATES = {
+    "role": {"active", "missing", "unknown"},
+    "role_gap": {"resolved", "unresolved", "unknown"},
+}
+ROLE_STATE_CLAIM_SCOPES = {"current", "historical", "hypothetical"}
+ROLE_STATE_CLAIM_CONTRACT_VERSION = "role-state-claims-v1"
 
 
 class WorkPortfolioService:
@@ -1270,9 +1287,17 @@ class WorkPortfolioService:
             "Return only a JSON object with keys assessment (string), confidence "
             "(0..1), unknowns (string array), recommended_action (one of continue, "
             "revise, stop, no_action, escalate), expected_outcome (object), and "
-            "proposed_work (array, maximum 3). Each proposed_work item may contain "
+            "role_state_claims (array, maximum 20), and proposed_work (array, "
+            "maximum 3). Every statement that a role is active/missing or a role "
+            "gap is resolved/unresolved must have a role_state_claims item with "
+            "subject_type (role or role_gap), subject_id (an exact ID from the "
+            "authoritative context), state, temporal_scope (current, historical, "
+            "or hypothetical), and evidence_ids. Use an empty array when making no "
+            "role-state claim. Current unresolved role-gap claims must cite the "
+            "exact gap ID. Each proposed_work item may contain "
             "title, description, work_type, priority, acceptance_criteria, and "
-            "expected_outcome. work_type must be one of: "
+            "expected_outcome, plus optional target_role_gap_id. work_type must be "
+            "one of: "
             f"{', '.join(sorted(SAFE_AGENT_PROPOSED_WORK_TYPES))}. "
             "Never include tool calls, credentials, executable "
             "instructions, or external side effects."
@@ -1291,6 +1316,9 @@ class WorkPortfolioService:
                     "authoritative_context_hash": context_hash,
                     "authoritative_context_at": authoritative_context["observed_at"],
                     "role_family": authoritative_context["role_family"],
+                    "role_state_claim_contract_version": (
+                        ROLE_STATE_CLAIM_CONTRACT_VERSION
+                    ),
                 },
             )
         except Exception as exc:  # noqa: BLE001 - failure is recorded and retried by policy.
@@ -1323,6 +1351,10 @@ class WorkPortfolioService:
             authoritative_context,
         )
         if grounding["status"] == "blocked":
+            role_state_conflict = any(
+                finding.get("type") == "authoritative_role_state_conflict"
+                for finding in grounding["findings"]
+            )
             grounding["memory_remediation"] = (
                 await self._quarantine_authoritative_role_conflicts(
                     item,
@@ -1331,6 +1363,12 @@ class WorkPortfolioService:
                     context_hash=context_hash,
                     circuit_eligible=True,
                 )
+                if role_state_conflict
+                else {
+                    "status": "not_applicable",
+                    "reason": "No authoritative role-state conflict was asserted.",
+                    "circuit_breaker_tripped": False,
+                }
             )
         proposal_result = (
             {
@@ -1548,33 +1586,41 @@ class WorkPortfolioService:
         context: dict[str, Any],
     ) -> dict[str, Any]:
         """Fail closed when role reasoning contradicts current authoritative state."""
-        findings = []
-        has_active_role = int(context.get("active_family_agent_count") or 0) > 0
+        claims = assessment.get("role_state_claims") or []
+        findings = self._validate_role_state_claims(
+            claims,
+            context,
+        )
         assessment_text = str(assessment.get("assessment") or "")
-        unsupported_role_claim = any(
-            pattern.search(assessment_text) for pattern in STALE_ROLE_STATE_PATTERNS
-        ) and not self._matches_unresolved_role_gap(assessment_text, context)
-        if has_active_role and unsupported_role_claim:
+        if not claims and self._legacy_memory_role_state_conflict(assessment_text):
             findings.append(
                 {
-                    "type": "authoritative_role_state_conflict",
+                    "type": "role_state_claim_contract_missing",
                     "detail": (
-                        "Assessment claimed a missing or unresolved role that does "
-                        "not match any current role gap, while the family has active "
-                        "agents."
+                        "Present-tense role-state language requires an explicit "
+                        "typed claim tied to authoritative identifiers."
                     ),
                 }
             )
+        has_active_role = int(context.get("active_family_agent_count") or 0) > 0
         if has_active_role:
             retained = []
             for index, proposal in enumerate(assessment["proposed_work"]):
                 proposal_text = (
                     f"{proposal.get('title', '')} {proposal.get('description', '')}"
                 ).lower()
+                target_gap_id = str(proposal.get("target_role_gap_id") or "").strip()
                 if proposal["work_type"] == "capability_proposal" and (
-                    "role gap" in proposal_text
-                    or "deploy" in proposal_text and "role" in proposal_text
-                ) and not self._matches_unresolved_role_gap(proposal_text, context):
+                    target_gap_id
+                    or any(
+                        pattern.search(proposal_text)
+                        for pattern in CURRENT_ROLE_GAP_PROPOSAL_PATTERNS
+                    )
+                ) and not self._proposal_matches_unresolved_role_gap(
+                    proposal,
+                    proposal_text,
+                    context,
+                ):
                     assessment["rejected_proposals"].append(
                         {
                             "index": index,
@@ -1604,8 +1650,78 @@ class WorkPortfolioService:
         return {
             "status": "blocked" if findings else "passed",
             "findings": findings,
+            "claim_contract_version": ROLE_STATE_CLAIM_CONTRACT_VERSION,
             "authoritative_observed_at": context.get("observed_at"),
         }
+
+    @classmethod
+    def _validate_role_state_claims(
+        cls,
+        claims: list[dict[str, Any]],
+        context: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Compare explicit current-state claims to exact authoritative identifiers."""
+        active_ids = {
+            str(agent.get("id") or "").strip()
+            for agent in context.get("active_family_agents") or []
+            if agent.get("id")
+        }
+        active_names = {
+            cls._normalize_gap_identity(str(agent.get("role_name") or ""))
+            for agent in context.get("active_family_agents") or []
+            if agent.get("role_name")
+        }
+        assigned = context.get("assigned_agent") or {}
+        if assigned.get("id") and assigned.get("status") == "active":
+            active_ids.add(str(assigned["id"]).strip())
+        if assigned.get("role_name") and assigned.get("status") == "active":
+            active_names.add(
+                cls._normalize_gap_identity(str(assigned["role_name"]))
+            )
+        active_markers = {
+            *active_ids,
+            *active_names,
+            cls._normalize_gap_identity(str(context.get("role_family") or "")),
+        }
+        gaps = {
+            str(gap.get("id") or "").strip(): gap
+            for gap in context.get("unresolved_role_gaps") or []
+            if gap.get("id")
+        }
+        findings = []
+        for claim in claims:
+            if claim.get("temporal_scope") != "current":
+                continue
+            subject_type = str(claim.get("subject_type") or "")
+            subject_id = str(claim.get("subject_id") or "").strip()
+            state = str(claim.get("state") or "")
+            evidence_ids = {
+                str(value).strip() for value in claim.get("evidence_ids") or []
+            }
+            conflict = False
+            if subject_type == "role":
+                normalized_id = cls._normalize_gap_identity(subject_id)
+                matches_active = subject_id in active_ids or normalized_id in active_markers
+                supported_gap = bool(evidence_ids.intersection(gaps))
+                conflict = (state == "missing" and (matches_active or not supported_gap)) or (
+                    state == "active" and not matches_active
+                )
+            elif subject_type == "role_gap":
+                conflict = (state == "unresolved" and subject_id not in gaps) or (
+                    state == "resolved" and subject_id in gaps
+                )
+            if conflict:
+                findings.append(
+                    {
+                        "type": "authoritative_role_state_conflict",
+                        "detail": (
+                            f"Current {subject_type} claim {subject_id!r}={state!r} "
+                            "does not match authoritative agent and role-gap records."
+                        ),
+                        "claim": claim,
+                    }
+                )
+        return findings
 
     async def _quarantine_authoritative_role_conflicts(
         self,
@@ -1670,10 +1786,7 @@ class WorkPortfolioService:
                     == "authoritative_role_state_conflict"
                 ):
                     continue
-                if not any(
-                    pattern.search(entry.content)
-                    for pattern in STALE_ROLE_STATE_PATTERNS
-                ):
+                if not self._legacy_memory_role_state_conflict(entry.content):
                     continue
                 if self._matches_unresolved_role_gap(entry.content, context):
                     continue
@@ -2340,7 +2453,8 @@ class WorkPortfolioService:
             "expected_outcome",
             "proposed_work",
         }
-        if set(parsed) != required:
+        optional = {"role_state_claims"}
+        if not required.issubset(parsed) or set(parsed) - required - optional:
             raise ValueError("Agent response did not match the mandate result schema.")
         if not isinstance(parsed["assessment"], str) or not parsed["assessment"].strip():
             raise ValueError("Agent assessment must be a non-empty string.")
@@ -2361,6 +2475,46 @@ class WorkPortfolioService:
             raise ValueError("Agent unknowns must be a string array.")
         if not isinstance(parsed["expected_outcome"], dict):
             raise ValueError("Agent expected_outcome must be an object.")
+        claims = parsed.get("role_state_claims", [])
+        if not isinstance(claims, list) or len(claims) > 20:
+            raise ValueError("Agent role_state_claims must contain at most 20 items.")
+        normalized_claims = []
+        required_claim = {
+            "subject_type",
+            "subject_id",
+            "state",
+            "temporal_scope",
+            "evidence_ids",
+        }
+        for claim in claims:
+            if not isinstance(claim, dict) or set(claim) != required_claim:
+                raise ValueError("Agent role_state_claim did not match its schema.")
+            subject_type = str(claim["subject_type"]).strip().lower()
+            state = str(claim["state"]).strip().lower()
+            temporal_scope = str(claim["temporal_scope"]).strip().lower()
+            subject_id = str(claim["subject_id"]).strip()
+            evidence_ids = claim["evidence_ids"]
+            if subject_type not in ROLE_STATE_CLAIM_STATES:
+                raise ValueError("Agent role_state_claim subject_type is unsupported.")
+            if state not in ROLE_STATE_CLAIM_STATES[subject_type]:
+                raise ValueError("Agent role_state_claim state is unsupported.")
+            if temporal_scope not in ROLE_STATE_CLAIM_SCOPES:
+                raise ValueError("Agent role_state_claim temporal_scope is unsupported.")
+            if not subject_id:
+                raise ValueError("Agent role_state_claim subject_id is required.")
+            if not isinstance(evidence_ids, list) or not all(
+                isinstance(value, str) and value.strip() for value in evidence_ids
+            ):
+                raise ValueError("Agent role_state_claim evidence_ids must be strings.")
+            normalized_claims.append(
+                {
+                    "subject_type": subject_type,
+                    "subject_id": subject_id[:200],
+                    "state": state,
+                    "temporal_scope": temporal_scope,
+                    "evidence_ids": [value[:200] for value in evidence_ids[:50]],
+                }
+            )
         proposals = parsed["proposed_work"]
         if not isinstance(proposals, list) or len(proposals) > 3:
             raise ValueError("Agent proposed_work must contain at most three items.")
@@ -2374,8 +2528,13 @@ class WorkPortfolioService:
             "acceptance_criteria",
             "expected_outcome",
         }
+        optional_proposal = {"target_role_gap_id"}
         for index, proposal in enumerate(proposals):
-            if not isinstance(proposal, dict) or set(proposal) != required_proposal:
+            if (
+                not isinstance(proposal, dict)
+                or not required_proposal.issubset(proposal)
+                or set(proposal) - required_proposal - optional_proposal
+            ):
                 rejected.append(
                     {"index": index, "reason": "proposal_schema_invalid"}
                 )
@@ -2418,6 +2577,15 @@ class WorkPortfolioService:
                     "work_type": work_type,
                     "title": str(proposal["title"])[:240],
                     "description": str(proposal["description"])[:8000],
+                    **(
+                        {
+                            "target_role_gap_id": str(
+                                proposal.get("target_role_gap_id") or ""
+                            )[:64]
+                        }
+                        if proposal.get("target_role_gap_id")
+                        else {}
+                    ),
                 }
             )
         return {
@@ -2426,6 +2594,7 @@ class WorkPortfolioService:
             "unknowns": [item[:1000] for item in parsed["unknowns"][:50]],
             "recommended_action": parsed["recommended_action"],
             "expected_outcome": parsed["expected_outcome"],
+            "role_state_claims": normalized_claims,
             "proposed_work": normalized,
             "rejected_proposals": rejected,
         }
@@ -2783,6 +2952,29 @@ class WorkPortfolioService:
             ):
                 return True
         return False
+
+    @classmethod
+    def _proposal_matches_unresolved_role_gap(
+        cls,
+        proposal: dict[str, Any],
+        proposal_text: str,
+        context: dict[str, Any],
+    ) -> bool:
+        target_id = str(proposal.get("target_role_gap_id") or "").strip()
+        if target_id:
+            return any(
+                str(gap.get("id") or "").strip() == target_id
+                for gap in context.get("unresolved_role_gaps") or []
+            )
+        return cls._matches_unresolved_role_gap(proposal_text, context)
+
+    @staticmethod
+    def _legacy_memory_role_state_conflict(text: str) -> bool:
+        """Conservatively identify legacy stale memories without parsing live output."""
+        value = str(text or "")
+        if any(pattern.search(value) for pattern in NON_CONFLICTING_ROLE_STATE_PATTERNS):
+            return False
+        return any(pattern.search(value) for pattern in STALE_ROLE_STATE_PATTERNS)
 
     @staticmethod
     def _normalize_gap_identity(value: str) -> str:

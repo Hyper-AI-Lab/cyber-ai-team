@@ -59,6 +59,14 @@ domain agent runs the same bounded control cycle within its mandate:
 8. Measure actual effects and guardrail changes.
 9. Reflect, update memory, and recommend continuation, revision, rollback, or escalation.
 
+Role-state grounding is a typed contract, not a prose classifier. Agents must represent
+every current, historical, or hypothetical assertion about a role or role gap as a
+schema-validated claim tied to exact authoritative identifiers. Only contradictory
+`current` claims can trip the grounding circuit breaker. Explanatory prose, negated
+statements, historical evidence, hypothetical risks, and unrelated role gaps cannot
+pause a domain. Legacy memory cleanup remains conservative and never treats those forms
+as current-state contradictions.
+
 ## Epistemic Company Intelligence
 
 Cyber-Team maintains a living company model assembled from ERPNext, company files,
