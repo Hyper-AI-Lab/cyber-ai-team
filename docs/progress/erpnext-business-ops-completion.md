@@ -5889,3 +5889,61 @@
   - `/home/projects/cyber-team/frontend/package-lock.json`.
 - Next step:
   - Build the immutable `0.3.14` release candidate, run release policy checks, and promote it to staging backup-first.
+
+### 2026-08-04T16:31:00Z — STEP-223 — Verified the immutable v0.3.14 release candidate
+- Files/services changed:
+  - Created immutable local images `cyber-team-core:0.3.14` and `cyber-team-ui:0.3.14` from commit `78cc50c0f6e814917a00bad51cb30fbf0deda108`.
+  - Created release manifest `/home/projects/cyber-team/dist/releases/0.3.14.json`; staging remained unchanged.
+- Commands run:
+  - `scripts/release-check.sh` with full quality gate, migration rehearsal, isolated Compose smoke, immutable image build, and Trivy image scans.
+  - A second isolated `scripts/compose-smoke.sh` invocation with explicit `CORE_IMAGE=cyber-team-core:0.3.14` and `UI_IMAGE=cyber-team-ui:0.3.14` to prove the newly built artifacts directly.
+- Result:
+  - The committed candidate repeated all `362` backend and `25` frontend tests successfully.
+  - Legacy pre-Alembic and representative seeded `0001` PostgreSQL upgrades both reached Alembic head.
+  - Trivy found zero vulnerabilities in both immutable images; the patched UI image contains PostCSS `8.5.25`.
+  - The candidate-image smoke passed health, UI, owner login, dashboard, integrations, WebSocket ticket, tool readiness, approval queue, one-time approval replay protection, and communication logging.
+  - All disposable release-smoke containers and their network were removed after verification.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.14.json`.
+  - Core image `sha256:65bfa7b25a1af1839c2efadfca861db818c36e71d1b7f430f6acf23aadba0478`.
+  - UI image `sha256:a84783a649d8cb7f305bd49fedc3739d02ca8fee6ecc795a853fe97f21d3850d`.
+- Next step:
+  - Update the ignored staging version metadata, validate the promotion policy in dry-run mode, then execute backup-first staging promotion.
+
+### 2026-08-04T16:35:00Z — STEP-224 — Promoted v0.3.14 to staging backup-first
+- Files/services changed:
+  - Updated ignored staging release metadata to `0.3.14` without printing or rotating secrets.
+  - Recreated staging core, worker, and UI from the immutable `0.3.14` images after capturing a PostgreSQL custom-format backup.
+- Commands run:
+  - `scripts/configure-autonomy-staging.py`, promotion-policy dry run, and `PROMOTE_DRY_RUN=0 RELEASE_VERSION=0.3.14 ./scripts/promote-staging.sh`.
+- Result:
+  - The promotion policy accepted release `0.3.14` at exact build `78cc50c0f6e814917a00bad51cb30fbf0deda108`.
+  - A `69 MB` staging PostgreSQL backup completed before container replacement.
+  - Public health, UI, owner login, dashboard, integrations, WebSocket, and tool-readiness smoke passed; its approval record was rejected rather than replayed into a live email effect.
+- Evidence:
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.14-20260804-163303.dump`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.14-20260804-163435.json`.
+- Next step:
+  - Preserve the false-positive history, cancel its obsolete generated backlog, and run controlled typed-grounding recovery and stability canaries.
+
+### 2026-08-04T16:42:08Z — STEP-225 — Recovered Knowledge and proved typed-grounding stability under normal orchestration
+- Files/services changed:
+  - Stopped only the Temporal worker while four confirmed system-generated pre-fix Knowledge items were audit-cancelled; no historical row was deleted.
+  - Activated Knowledge for one recovery diagnostic and two repeated stability diagnostics, each bound to the Knowledge & Research review agent and prohibited from external effects.
+  - Restarted the already-promoted worker and allowed buffered Temporal signals to execute a normal evidence-refresh/company cycle.
+- Commands run:
+  - Owner-authenticated work cancellation, creation, domain control, and exact single-agent loop APIs.
+  - Three live Mistral-backed role-loop executions using the old false-positive language: unrelated/nonblocking unresolved gaps plus historical, hypothetical, latent, and future role concerns.
+  - Post-restart domain, portfolio, Memory Steward, readiness, communication, approval, source-freshness, and core/worker/UI log reconciliation.
+- Result:
+  - Recovery item `work_efc506259daa49cb9bf3a62dfa4e2653` completed at confidence `1.0`, returned exact typed role and gap IDs, passed `role-state-claims-v1` with zero findings, resolved `mem_find_e8dc2b043319`, and executed no side effect.
+  - Stability items `work_bdb737446ccd47ac8498e6480a288bc8` and `work_5b41d1f86b4243d5b86d646cf127146a` completed at confidence `1.0` and `0.99`; both passed typed grounding with zero findings and no side effects.
+  - After the queued normal company cycle refreshed ERPNext, IMAP, repository, owner-instruction, company-web, and internal sources, Knowledge remains active with zero runnable work, no saturation, no recovery requirement, and the target finding remains resolved.
+  - Communication logs remained `30`, pending approvals remained `0`, staging readiness is `ready` with `blockers=[]`, and the recent core/worker/UI error scan is empty.
+- Evidence:
+  - `/home/projects/cyber-team/dist/canary/v0.3.14-knowledge-grounding-20260804T163639Z/summary.json`.
+  - `/home/projects/cyber-team/dist/canary/v0.3.14-knowledge-grounding-20260804T163639Z/recovery-run.json`.
+  - `/home/projects/cyber-team/dist/canary/v0.3.14-knowledge-grounding-20260804T163639Z/stability-2-run.json`.
+  - `/home/projects/cyber-team/dist/canary/v0.3.14-knowledge-grounding-20260804T163639Z/stability-3-run.json`.
+- Next step:
+  - Publish the implementation and staging evidence to the public repository, require green push and independent manual CI, refresh exact-head CI evidence, and publish release `v0.3.14`.
