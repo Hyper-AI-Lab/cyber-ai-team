@@ -1490,6 +1490,80 @@ async def test_role_loop_rejects_unstructured_agent_output(
     assert result["items"][0]["actual_outcome"]["classification"] == (
         "structured_output_invalid"
     )
+    assert manager.invoke_agent.await_count == 2
+    assert manager.invoke_agent.await_args_list[0].kwargs["report_role_gap"] is False
+    assert manager.invoke_agent.await_args_list[1].kwargs["report_role_gap"] is False
+
+
+@pytest.mark.asyncio
+async def test_role_loop_repairs_unsupported_typed_claim_once(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    manager = AsyncMock()
+    manager.invoke_agent.side_effect = [
+        json.dumps(
+            {
+                "assessment": "A KPI needs review.",
+                "confidence": 0.8,
+                "unknowns": [],
+                "recommended_action": "no_action",
+                "expected_outcome": {"type": "documented_no_action"},
+                "role_state_claims": [
+                    {
+                        "subject_type": "kpi",
+                        "subject_id": "critical_unknown_facts",
+                        "state": "elevated",
+                        "temporal_scope": "current",
+                        "evidence_ids": ["critical_unknown_facts"],
+                    }
+                ],
+                "proposed_work": [],
+            }
+        ),
+        json.dumps(
+            {
+                "assessment": "The KPI observation needs review; no role state is asserted.",
+                "confidence": 0.8,
+                "unknowns": [],
+                "recommended_action": "no_action",
+                "expected_outcome": {"type": "documented_no_action"},
+                "role_state_claims": [],
+                "proposed_work": [],
+            }
+        ),
+    ]
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        company_intelligence_service=FakeIntelligence(),
+    )
+    await service.ensure_active_agent_mandates()
+    await service.create_work_item(
+        title="Repair one typed claim",
+        description="Keep non-role state outside the role-state contract.",
+        work_type="analysis",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={},
+        acceptance_criteria=["structured_result"],
+        idempotency_key="work-repair-typed-claim",
+    )
+
+    result = await service.run_domain_loop("knowledge-agent", prepare=False)
+
+    item = result["items"][0]
+    assert item["status"] == "completed"
+    assert item["actual_outcome"]["structured_output_repair"] == {
+        "attempted": True,
+        "status": "repaired",
+        "initial_error": "Agent role_state_claim subject_type is unsupported.",
+    }
+    assert item["actual_outcome"]["role_state_claims"] == []
+    assert manager.invoke_agent.await_count == 2
+    repair_call = manager.invoke_agent.await_args_list[1]
+    assert repair_call.kwargs["source_type"] == "agent_mandate_schema_repair"
+    assert repair_call.kwargs["report_role_gap"] is False
+    assert repair_call.kwargs["trace_metadata"]["schema_repair"] is True
 
 
 @pytest.mark.asyncio

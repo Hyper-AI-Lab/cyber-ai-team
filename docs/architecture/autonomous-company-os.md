@@ -67,6 +67,13 @@ statements, historical evidence, hypothetical risks, and unrelated role gaps can
 pause a domain. Legacy memory cleanup remains conservative and never treats those forms
 as current-state contradictions.
 
+Mandate-loop output is validated before it can create follow-up work or capability gaps.
+The prompt publishes the exact role-state vocabulary; one bounded, separately traced
+schema-repair attempt may remove unsupported claims without inventing identifiers. A
+second invalid result fails closed. The legacy raw-text role-gap heuristic is disabled
+for mandate-loop and repair responses so unvalidated model prose cannot mutate the role
+backlog.
+
 ## Epistemic Company Intelligence
 
 Cyber-Team maintains a living company model assembled from ERPNext, company files,

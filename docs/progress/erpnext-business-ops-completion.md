@@ -5968,3 +5968,40 @@
   - `/home/projects/cyber-team/dist/canary/v0.3.14-final-readiness.json`.
 - Next step:
   - Publish the final documentation head, require exact-head push/manual CI once more, and tag the verified commit as `v0.3.14`.
+
+### 2026-08-05T02:28:49Z — STEP-227 — Hardened mandate output after live Observer schema failures
+- Files/services changed:
+  - Inspected live staging readiness, domain controls, mandates, work items, action policies, company-model state, and the current Observer backlog without changing external systems.
+  - Executed the two bounded read-only Observer items already queued in Governance; both failed closed because their generated `role_state_claims` used unsupported subject/state vocabulary.
+  - Updated the mandate prompt with the exact typed vocabulary, added one separately traced schema-repair attempt, and disabled legacy raw-text role-gap inference for mandate-loop and repair output.
+  - Added regression coverage and documented the invariant; advanced release surfaces to `0.3.15`.
+- Commands run:
+  - Owner-authenticated staging API inspection and bounded Observer domain-loop execution.
+  - PostgreSQL mandate/work/memory trace inspection and recent worker log review.
+  - Focused Ruff and the complete work-portfolio test module.
+- Result:
+  - The two live failures were recorded as `structured_output_invalid`; no external side effect or approval was created.
+  - Unvalidated model prose can no longer create role gaps from mandate loops, one valid repair may recover a formatting/vocabulary error, and a second invalid result still fails closed.
+  - Focused Ruff passed and all `37` work-portfolio tests passed with one known upstream Starlette test-client deprecation warning.
+- Evidence:
+  - Failed work items `work_c8eddf5101df45b39ea7c185e93b9448` and `work_5b13e6c6defb4ede8d101d07bcf1edd9` in staging PostgreSQL.
+  - Memory traces `85ab662d-86e3-4fc8-8d69-736e943bd0f0` and `c4eac1ac-1481-4a24-9f2a-da7fb1049c8d`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/work_portfolio.py`.
+  - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
+- Next step:
+  - Run the complete `0.3.15` quality/release gates before backup-first staging promotion and exact live replay.
+
+### 2026-08-05T02:42:47Z — STEP-228 — Passed the complete v0.3.15 quality gate
+- Files/services changed:
+  - No live services changed; this step verified the schema-repair and raw-gap-inference hardening candidate.
+- Commands run:
+  - `scripts/quality-gate.sh`, including environment refresh, Ruff, full Pytest, compileall, Alembic offline SQL, Python and Node dependency audits, frontend install/build/typecheck/tests, Compose validation, operations syntax checks, secret scanning, Google Cloud isolation, FOSS/resource policy, and diff hygiene.
+- Result:
+  - Ruff passed and all `363` backend tests passed with one known upstream Starlette test-client deprecation warning.
+  - The complete Alembic `0001` through `0015` chain rendered successfully and the Python dependency audit found no known vulnerability.
+  - Next.js `15.5.22` built successfully; all `25` frontend tests and TypeScript checks passed; the runtime Node audit found zero vulnerabilities.
+  - Compose, script/dashboard syntax, high-confidence secret scan, Google Cloud isolation, FOSS/resource policy, and diff hygiene all passed.
+- Evidence:
+  - Local quality-gate terminal result at `2026-08-05T02:42:47Z` with exit code `0`.
+- Next step:
+  - Commit the exact candidate, build and scan immutable `0.3.15` images, and run migration and Compose release proofs.
