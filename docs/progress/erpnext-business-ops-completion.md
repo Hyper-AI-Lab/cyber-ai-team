@@ -6060,3 +6060,22 @@
   - Staging domain control `operations` and work item `work_4a93c8cc74f34ef6bfc8e838ac4054ae`.
 - Next step:
   - Commit and publish release/canary evidence, require green exact-head push and manual GitHub CI, refresh CI evidence, and publish `v0.3.15`.
+
+### 2026-08-05T04:00:47Z — STEP-232 — Passed public push and manual CI for v0.3.15
+- Files/services changed:
+  - Pushed implementation commit `d461b68b60a798a303a9cd6dad49692f6edfd781` and rollout-evidence commit `f5edd0a9ea17b0258682ebe40674b06d5ecd4562` to `Hyper-AI-Lab/cyber-ai-team`.
+  - Refreshed the GitHub CI evidence consumed by staging readiness; no runtime service or external business system changed.
+- Commands run:
+  - Public `main` push and exact-head push-CI watch.
+  - Independent exact-head manual CI dispatch/watch.
+  - `scripts/github-ci-evidence.py` with current-head readiness required.
+- Result:
+  - Push CI run `30973590496` passed backend, frontend, real PostgreSQL upgrades, dependency audits, Compose/config hygiene, secret scanning, Google Cloud isolation, and FOSS/resource policy checks.
+  - Manual CI run `30973710425` passed all six jobs, including Docker Compose smoke, observability validation, immutable image builds, and both Trivy scans.
+  - Current-head push and manual evidence are green; scheduled proof remains pending the next GitHub cron by definition.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30973590496`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/30973710425`.
+  - `/home/projects/cyber-team/dist/ci/github-ci-20260805T040031Z.json`.
+- Next step:
+  - Publish this final documentation head, require exact-head push and manual CI once more, then tag and publish release `v0.3.15`.
