@@ -6005,3 +6005,58 @@
   - Local quality-gate terminal result at `2026-08-05T02:42:47Z` with exit code `0`.
 - Next step:
   - Commit the exact candidate, build and scan immutable `0.3.15` images, and run migration and Compose release proofs.
+
+### 2026-08-05T03:25:11Z — STEP-229 — Verified and promoted the immutable v0.3.15 release
+- Files/services changed:
+  - Built immutable `cyber-team-core:0.3.15` and `cyber-team-ui:0.3.15` images from commit `d461b68b60a798a303a9cd6dad49692f6edfd781`.
+  - Updated ignored staging version flags without printing or rotating secrets, captured a PostgreSQL custom-format backup, and recreated only staging core, worker, and UI from the verified images.
+- Commands run:
+  - Full `scripts/release-check.sh` with quality gate, migration rehearsal, isolated Compose smoke, immutable image build, and Trivy scans.
+  - Promotion-policy dry run followed by `PROMOTE_DRY_RUN=0 RELEASE_VERSION=0.3.15 scripts/promote-staging.sh`.
+- Result:
+  - All `363` backend and `25` frontend tests passed; dependency, secret, Google Cloud isolation, FOSS/resource, migration, Compose, and diff checks passed.
+  - Both Trivy image scans reported zero vulnerabilities.
+  - Backup-first public staging promotion passed health, UI, owner login, dashboard, integrations, WebSocket, tool-readiness, and approval-flow smoke. The smoke rejected its live email approval instead of executing it.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.15.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.15-20260805-032523.dump`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.15-20260805-032658.json`.
+  - Core image `sha256:1f979e170c9d38bfb50b884673feb0abf04e1cf8063eb1b61c5468140e0c8dfb`; UI image `sha256:f93a52bac92000d8e7d733eed73c600ec3c3873c9c326165b2f2f21877295d1d`.
+- Next step:
+  - Replay the exact Observer schema failures against the promoted hardening path and verify trace, grounding, and side-effect behavior.
+
+### 2026-08-05T03:30:20Z — STEP-230 — Replayed Observer failures through the hardened mandate contract
+- Files/services changed:
+  - Created two idempotent low-risk Observer replay items linked to the original failed work IDs; no external system was changed.
+  - Cancelled the one proof-only ready descendant after preserving its recommendation in the parent outcome.
+- Commands run:
+  - Owner-authenticated work-item creation, bounded Observer domain-loop runs, work reconciliation, memory-trace inspection, and descendant cancellation.
+- Result:
+  - `work_8d50f8e2bd474b3580d79493f30294a9` completed with valid typed claims and passed authoritative grounding.
+  - `work_bdbc6a853546406c83313461bb6170b0` passed schema validation and then correctly failed closed at grounding because `outbound_voice` was asserted as a role rather than an unresolved capability gap.
+  - Neither replay produced `structured_output_invalid`; both recorded clean recall/write traces, created no approval, and executed no external side effect.
+- Evidence:
+  - Memory traces `5d7f9fda-ce8b-49f6-94c7-373633e339cd` and `c302de3e-796b-4b5d-9c5c-3a5c3226ffcb`.
+  - Staging work items `work_8d50f8e2bd474b3580d79493f30294a9` and `work_bdbc6a853546406c83313461bb6170b0`.
+- Next step:
+  - Select the next paused internal domain from live mandate and tool-readiness evidence, then run one bounded canary.
+
+### 2026-08-05T03:53:33Z — STEP-231 — Activated and proved the Operations advisory canary
+- Files/services changed:
+  - Activated the `operations` domain after verifying zero existing backlog, an active universal-loop mandate, and ten live non-side-effectful tools for the Operations & Procurement baseline agent.
+  - Created and ran one idempotent low-risk baseline item; cancelled its three proof-only follow-ups after preserving the recommendations in the completed parent.
+  - Reconciled company evidence and strategy state without changing the active company-model revision or fabricating missing facts.
+- Commands run:
+  - Owner-authenticated agent, mandate, tool, domain, work, memory, readiness, action-policy, company-discovery, and strategy APIs.
+  - One exact Operations agent loop with `max_items=1`.
+- Result:
+  - `work_4a93c8cc74f34ef6bfc8e838ac4054ae` completed at confidence `0.90`, passed authoritative grounding, wrote one indexed memory, and recorded `side_effects_executed=false` with zero pending approvals.
+  - The result identified evidence-backed procurement-process unknowns and a bounded documentation recommendation; no ERPNext record, vendor contact, or communication was created.
+  - Operations remains active with no nonterminal work. Company discovery was cursor-idempotent, retained model confidence `0.9441` and provenance coverage `1.0`, and preserved eight explicit unknowns. Strategy reconciliation created no duplicate objectives, KPIs, experiments, or work.
+  - Staging readiness remains `ready` with zero blockers. Communication and ERPNext action classes remain in shadow with zero validated cases because no real owner-approved external action occurred.
+- Evidence:
+  - Memory trace `07be127a-2f3b-47c9-a1a2-25f8c87322e4` and memory `205e5fcc-e6cf-4357-9cff-3265f888ac06`.
+  - Company model `cmr_54b3c64b502c46409786aee9ae273854`.
+  - Staging domain control `operations` and work item `work_4a93c8cc74f34ef6bfc8e838ac4054ae`.
+- Next step:
+  - Commit and publish release/canary evidence, require green exact-head push and manual GitHub CI, refresh CI evidence, and publish `v0.3.15`.
