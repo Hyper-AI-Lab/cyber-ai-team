@@ -90,6 +90,55 @@ def test_readiness_compaction_preserves_summary_and_omits_embedded_backlogs():
     assert payload["operating_cadence"]["items"]
 
 
+def test_action_policy_validation_routes_are_owner_authorized(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    app.state.action_policy_service = AsyncMock()
+    app.state.action_policy_service.list_validation_cases.return_value = [
+        {"id": "actcase-1", "mode": "shadow", "status": "validated"}
+    ]
+    app.state.action_policy_service.generate_shadow_suite.return_value = {
+        "action_class": "communications",
+        "case_count": 10,
+        "validated_count": 10,
+    }
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    authorization = AsyncMock(return_value=None)
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        authorization,
+    )
+    client = TestClient(app)
+
+    listed = client.get(
+        "/api/operations/action-class-policies/communications/validation-cases"
+        "?mode=shadow&status=validated&limit=25"
+    )
+    generated = client.post(
+        "/api/operations/action-class-policies/communications/validation-cases/generate"
+    )
+
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["id"] == "actcase-1"
+    assert generated.status_code == 200
+    assert generated.json()["validated_count"] == 10
+    app.state.action_policy_service.list_validation_cases.assert_awaited_once_with(
+        action_class="communications",
+        mode="shadow",
+        status="validated",
+        limit=25,
+    )
+    app.state.action_policy_service.generate_shadow_suite.assert_awaited_once_with(
+        "communications",
+        actor="owner@example.com",
+    )
+    assert authorization.await_count == 2
+
+
 def test_run_autonomous_cycle_endpoint(monkeypatch):
     app = FastAPI()
     app.include_router(operations_router, prefix="/api/operations")
@@ -224,24 +273,37 @@ def test_governor_routes_call_service(monkeypatch):
     )
     client = TestClient(app)
 
-    assert client.post(
-        "/api/operations/governor/run",
-        json={"dry_run": True, "max_actions": 3},
-    ).json()["run_id"] == "govrun_1"
+    assert (
+        client.post(
+            "/api/operations/governor/run",
+            json={"dry_run": True, "max_actions": 3},
+        ).json()["run_id"]
+        == "govrun_1"
+    )
     assert client.get("/api/operations/governor/latest").json()["run_id"] == "govrun_1"
-    assert client.get("/api/operations/governor/runs?limit=5").json()["items"][0][
-        "run_id"
-    ] == "govrun_1"
-    assert client.get(
-        "/api/operations/governor/decisions?status=delegated&limit=5"
-    ).json()["items"][0]["id"] == "govdec_1"
-    assert client.get(
-        "/api/operations/governor/tool-proposals?status=proposed&limit=5"
-    ).json()["items"][0]["id"] == "toolprop_1"
-    assert client.post(
-        "/api/operations/governor/tool-proposals/toolprop_1/approval",
-        json={"note": "review"},
-    ).json()["approval_id"] == "approval_1"
+    assert (
+        client.get("/api/operations/governor/runs?limit=5").json()["items"][0]["run_id"]
+        == "govrun_1"
+    )
+    assert (
+        client.get("/api/operations/governor/decisions?status=delegated&limit=5").json()["items"][
+            0
+        ]["id"]
+        == "govdec_1"
+    )
+    assert (
+        client.get("/api/operations/governor/tool-proposals?status=proposed&limit=5").json()[
+            "items"
+        ][0]["id"]
+        == "toolprop_1"
+    )
+    assert (
+        client.post(
+            "/api/operations/governor/tool-proposals/toolprop_1/approval",
+            json={"note": "review"},
+        ).json()["approval_id"]
+        == "approval_1"
+    )
 
     app.state.orchestration_governor_service.run_once.assert_awaited_once_with(
         actor="owner@example.com",
@@ -261,8 +323,7 @@ def test_governor_routes_call_service(monkeypatch):
         limit=5,
     )
     (
-        app.state.orchestration_governor_service.request_tool_proposal_approval
-        .assert_awaited_once_with(
+        app.state.orchestration_governor_service.request_tool_proposal_approval.assert_awaited_once_with(
             "toolprop_1",
             actor="owner@example.com",
             note="review",
@@ -469,9 +530,7 @@ def test_executive_cadence_route_combines_runtime_and_durable_history(monkeypatc
     assert body["idempotency"]["brief_cooldown"]["cooldown_active"] is True
     assert body["low_risk_remediation"]["completed"] == 2
     assert body["low_risk_remediation"]["approval_required"] == 1
-    brief_loop = next(
-        item for item in body["loops"] if item["loop_id"] == "executive_brief_email"
-    )
+    brief_loop = next(item for item in body["loops"] if item["loop_id"] == "executive_brief_email")
     assert brief_loop["durable_history"]["recent_counts"]["sent"] == 1
 
 
@@ -572,40 +631,49 @@ def test_executive_company_os_routes_call_service(monkeypatch):
     )
     client = TestClient(app)
 
-    assert client.post(
-        "/api/operations/governor/run",
-        json={
-            "mode": "executive",
-            "dry_run": True,
-            "owner_instruction": "Summarize objectives",
-        },
-    ).json()["run_id"] == "exegov_1"
-    assert client.get("/api/operations/executive-brief").json()["latest_run"][
-        "run_id"
-    ] == "exegov_1"
+    assert (
+        client.post(
+            "/api/operations/governor/run",
+            json={
+                "mode": "executive",
+                "dry_run": True,
+                "owner_instruction": "Summarize objectives",
+            },
+        ).json()["run_id"]
+        == "exegov_1"
+    )
+    assert (
+        client.get("/api/operations/executive-brief").json()["latest_run"]["run_id"] == "exegov_1"
+    )
     assert client.get("/api/operations/operation-graph?limit=5").json()["count"] == 1
-    assert client.get("/api/operations/observer/reviews").json()["items"][0][
-        "id"
-    ] == "obs_1"
-    assert client.get("/api/operations/outsourcing-requests").json()["items"][0][
-        "id"
-    ] == "out_1"
-    assert client.post(
-        "/api/operations/outsourcing-requests/deduplicate",
-        json={"dry_run": False},
-    ).json()["duplicate_count"] == 2
+    assert client.get("/api/operations/observer/reviews").json()["items"][0]["id"] == "obs_1"
+    assert client.get("/api/operations/outsourcing-requests").json()["items"][0]["id"] == "out_1"
+    assert (
+        client.post(
+            "/api/operations/outsourcing-requests/deduplicate",
+            json={"dry_run": False},
+        ).json()["duplicate_count"]
+        == 2
+    )
     assert client.get("/api/operations/resource-policy").json()["status"] == "ready"
-    assert client.post(
-        "/api/operations/governor/instruct",
-        json={"instruction": "Review the KPI scorecard."},
-    ).json()["run_id"] == "exegov_1"
-    assert client.post("/api/operations/governor/pause", json={"reason": "test"}).json()[
-        "paused"
-    ] is True
-    assert client.post(
-        "/api/operations/observer/run",
-        json={"run_id": "exegov_1"},
-    ).json()["status"] == "agreed"
+    assert (
+        client.post(
+            "/api/operations/governor/instruct",
+            json={"instruction": "Review the KPI scorecard."},
+        ).json()["run_id"]
+        == "exegov_1"
+    )
+    assert (
+        client.post("/api/operations/governor/pause", json={"reason": "test"}).json()["paused"]
+        is True
+    )
+    assert (
+        client.post(
+            "/api/operations/observer/run",
+            json={"run_id": "exegov_1"},
+        ).json()["status"]
+        == "agreed"
+    )
 
     app.state.executive_company_os_service.run_executive_cycle.assert_any_await(
         actor="owner@example.com",
@@ -922,6 +990,7 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
     app.state.comms_gateway = FakeComms()
     app.state.inbound_email_service = FakeInbound()
     app.state.erpnext = FakeERPNext()
+
     class FakeCompanyContext:
         async def latest_snapshot(self):
             return {
@@ -1059,9 +1128,12 @@ def test_operations_readiness_keeps_optional_disabled_non_blocking(monkeypatch):
     body = response.json()
     assert body["status"] == "ready"
     assert body["tools"]["side_effect_blockers"] == []
-    assert {
-        item["tool_name"] for item in body["tools"]["non_blocking_side_effects"]
-    } == {"sms_send", "call_make", "message_send", "ci_trigger"}
+    assert {item["tool_name"] for item in body["tools"]["non_blocking_side_effects"]} == {
+        "sms_send",
+        "call_make",
+        "message_send",
+        "ci_trigger",
+    }
     assert body["integrations"]["blocking_readiness"] is False
     assert body["integrations"]["optional_disabled"][0]["provider"] == "twilio"
     assert body["company_context"]["status"] == "ready"
@@ -1113,9 +1185,10 @@ def test_plan_scan_forces_manual_only_autonomy(monkeypatch):
 
     assert response.status_code == 200
     app.state.autonomous_planning_service.scan_and_plan.assert_awaited_once()
-    assert app.state.autonomous_planning_service.scan_and_plan.await_args.kwargs[
-        "auto_execute"
-    ] is False
+    assert (
+        app.state.autonomous_planning_service.scan_and_plan.await_args.kwargs["auto_execute"]
+        is False
+    )
 
 
 def test_operating_cadence_routes(monkeypatch):
@@ -1210,16 +1283,12 @@ def test_operating_cadence_routes(monkeypatch):
         "/api/operations/operating-cadence/follow-ups/plan_follow_up_1/resolve",
         json={"action": "dismissed", "note": "No longer relevant."},
     )
-    attention_response = client.get(
-        "/api/operations/owner-attention?status=active&limit=25"
-    )
+    attention_response = client.get("/api/operations/owner-attention?status=active&limit=25")
     notify_response = client.post(
         "/api/operations/owner-attention/notify",
         json={"dry_run": False, "limit": 25},
     )
-    notify_status_response = client.get(
-        "/api/operations/owner-attention/notifications/status"
-    )
+    notify_status_response = client.get("/api/operations/owner-attention/notifications/status")
 
     assert status_response.status_code == 200
     assert status_response.json()["counts"]["due"] == 1

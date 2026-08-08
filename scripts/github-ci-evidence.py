@@ -155,30 +155,34 @@ def main() -> int:
     push_success = bool(push_current and push.get("conclusion") == "success")
     schedule_current = bool(schedule and schedule.get("head_sha") == current_head)
     schedule_success = bool(schedule_current and schedule.get("conclusion") == "success")
+    schedule_failed_current_head = bool(
+        schedule_current
+        and schedule.get("status") == "completed"
+        and schedule.get("conclusion") != "success"
+    )
     manual_success = bool(
         manual
         and manual.get("head_sha") == current_head
         and manual.get("conclusion") == "success"
     )
     schedule_pending_current_head = bool(
-        (push_success or manual_success) and not schedule_success
+        (push_success or manual_success)
+        and not schedule_success
+        and not schedule_failed_current_head
     )
-    ready = manual_success or (push_success and schedule_success)
-    failing_jobs = (
-        [
-            *(push_failures if push_current else []),
-            *manual_failures,
-        ]
-        if schedule_pending_current_head
-        else [
-            *(push_failures if push_current else []),
-            *(schedule_failures if schedule_current else []),
-            *manual_failures,
-        ]
+    ready = not schedule_failed_current_head and (
+        manual_success or (push_success and schedule_success)
     )
+    failing_jobs = [
+        *(push_failures if push_current else []),
+        *(schedule_failures if schedule_current else []),
+        *manual_failures,
+    ]
     detail = "Latest manual full CI run is successful for the current branch head."
     if push_success and schedule_success:
         detail = "Latest push and scheduled CI runs are successful for the current head."
+    elif schedule_failed_current_head:
+        detail = "The latest scheduled CI run failed for the current branch head."
     elif push_success and manual_success and schedule_pending_current_head:
         detail = (
             "Latest push and manual full CI runs are successful; the next scheduled "
@@ -200,6 +204,7 @@ def main() -> int:
             "manual": manual,
             "push_current_head": push_current,
             "schedule_current_head": schedule_current,
+            "schedule_failed_current_head": schedule_failed_current_head,
             "schedule_pending_current_head": schedule_pending_current_head,
             "failing_jobs": failing_jobs,
             "detail": detail,

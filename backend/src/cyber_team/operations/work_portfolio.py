@@ -202,41 +202,55 @@ class WorkPortfolioService:
         now = utc_now()
         async with async_session() as session:
             agents = (
-                await session.execute(
-                    select(Agent)
-                    .where(Agent.status == "active")
-                    .order_by(Agent.role_family, Agent.id)
+                (
+                    await session.execute(
+                        select(Agent)
+                        .where(Agent.status == "active")
+                        .order_by(Agent.role_family, Agent.id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             objectives = (
-                await session.execute(
-                    select(CompanyObjectiveRevision).where(
-                        CompanyObjectiveRevision.status.in_({"active", "probation"})
+                (
+                    await session.execute(
+                        select(CompanyObjectiveRevision).where(
+                            CompanyObjectiveRevision.status.in_({"active", "probation"})
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             kpis = (
-                await session.execute(
-                    select(OperatingKPIDefinition).where(
-                        OperatingKPIDefinition.status.in_({"active", "probation"})
+                (
+                    await session.execute(
+                        select(OperatingKPIDefinition).where(
+                            OperatingKPIDefinition.status.in_({"active", "probation"})
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             manifests = {
                 item.family: item
-                for item in (
-                    await session.execute(select(RoleManifest))
-                ).scalars().all()
+                for item in (await session.execute(select(RoleManifest))).scalars().all()
             }
             active_agent_ids = {agent.id for agent in agents}
             stale = (
-                await session.execute(
-                    select(AgentMandate).where(
-                        AgentMandate.status == "active",
-                        AgentMandate.agent_id.notin_(active_agent_ids),
+                (
+                    await session.execute(
+                        select(AgentMandate).where(
+                            AgentMandate.status == "active",
+                            AgentMandate.agent_id.notin_(active_agent_ids),
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             for item in stale:
                 item.status = "retired"
                 item.retired_at = now
@@ -350,10 +364,14 @@ class WorkPortfolioService:
             if agent_id:
                 query = query.where(AgentMandate.agent_id == agent_id)
             items = (
-                await session.execute(
-                    query.order_by(desc(AgentMandate.created_at)).limit(max(1, min(limit, 500)))
+                (
+                    await session.execute(
+                        query.order_by(desc(AgentMandate.created_at)).limit(max(1, min(limit, 500)))
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             return [self._mandate_to_dict(item) for item in items]
 
     async def route_pending_events(self, *, limit: int = 200) -> dict[str, Any]:
@@ -365,20 +383,24 @@ class WorkPortfolioService:
         async with async_session() as session:
             await self._ensure_outbox_records(session)
             deliveries = (
-                await session.execute(
-                    select(BusinessEventDelivery)
-                    .join(BusinessEvent, BusinessEvent.id == BusinessEventDelivery.event_id)
-                    .where(
-                        BusinessEventDelivery.destination == "work_portfolio",
-                        BusinessEventDelivery.status.in_({"pending", "retry"}),
-                        BusinessEventDelivery.available_at <= utc_now(),
-                        BusinessEvent.status == "pending",
+                (
+                    await session.execute(
+                        select(BusinessEventDelivery)
+                        .join(BusinessEvent, BusinessEvent.id == BusinessEventDelivery.event_id)
+                        .where(
+                            BusinessEventDelivery.destination == "work_portfolio",
+                            BusinessEventDelivery.status.in_({"pending", "retry"}),
+                            BusinessEventDelivery.available_at <= utc_now(),
+                            BusinessEvent.status == "pending",
+                        )
+                        .order_by(BusinessEventDelivery.available_at)
+                        .with_for_update(skip_locked=True)
+                        .limit(max(1, min(limit, 500)))
                     )
-                    .order_by(BusinessEventDelivery.available_at)
-                    .with_for_update(skip_locked=True)
-                    .limit(max(1, min(limit, 500)))
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             for delivery in deliveries:
                 event = await session.get(BusinessEvent, delivery.event_id)
                 if not event:
@@ -411,8 +433,7 @@ class WorkPortfolioService:
                         status="escalated",
                         disposition="owner_escalation",
                         reason=(
-                            "Quarantined or critical evidence requires independent "
-                            "owner review."
+                            "Quarantined or critical evidence requires independent owner review."
                         ),
                         work_item_id=work.id if work else None,
                     )
@@ -471,9 +492,7 @@ class WorkPortfolioService:
                 )
                 existing = (
                     await session.execute(
-                        select(BusinessWorkItem).where(
-                            BusinessWorkItem.idempotency_key == work_key
-                        )
+                        select(BusinessWorkItem).where(BusinessWorkItem.idempotency_key == work_key)
                     )
                 ).scalar_one_or_none()
                 if existing:
@@ -567,9 +586,7 @@ class WorkPortfolioService:
                     .join(BusinessEvent, BusinessEvent.id == BusinessWorkItem.event_id)
                     .join(CompanySignal, CompanySignal.id == BusinessEvent.signal_id)
                     .where(
-                        BusinessWorkItem.status.in_(
-                            {"ready", "retry", "blocked_dependency"}
-                        ),
+                        BusinessWorkItem.status.in_({"ready", "retry", "blocked_dependency"}),
                         BusinessEvent.event_type == "evidence.audit.event",
                     )
                     .order_by(BusinessWorkItem.created_at)
@@ -581,8 +598,7 @@ class WorkPortfolioService:
                 (
                     work,
                     event,
-                    str((signal.redacted_payload or {}).get("outcome") or "success")
-                    .lower(),
+                    str((signal.redacted_payload or {}).get("outcome") or "success").lower(),
                 )
                 for work, event, signal in rows
                 if self._audit_outcome_is_informational(signal.redacted_payload)
@@ -613,7 +629,9 @@ class WorkPortfolioService:
                             BusinessEventDelivery.destination == "work_portfolio",
                         )
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             }
             for work, event, outcome in informational:
                 work.status = "completed"
@@ -802,15 +820,12 @@ class WorkPortfolioService:
             ]
             controls = {
                 item.domain: item.state
-                for item in (
-                    await session.execute(select(DomainAutonomyControl))
-                ).scalars().all()
+                for item in (await session.execute(select(DomainAutonomyControl))).scalars().all()
             }
             agent_ids = [
                 row[0].id
                 for row in agents
-                if controls.get(self._canonical_family(row[0].role_family), "active")
-                == "active"
+                if controls.get(self._canonical_family(row[0].role_family), "active") == "active"
             ]
         results = []
         for agent_id in agent_ids:
@@ -834,15 +849,11 @@ class WorkPortfolioService:
         async with async_session() as session:
             controls = {
                 item.domain: item
-                for item in (
-                    await session.execute(select(DomainAutonomyControl))
-                ).scalars().all()
+                for item in (await session.execute(select(DomainAutonomyControl))).scalars().all()
             }
             agent_families = {
                 item.id: self._canonical_family(item.role_family)
-                for item in (
-                    await session.execute(select(Agent))
-                ).scalars().all()
+                for item in (await session.execute(select(Agent))).scalars().all()
             }
             backlog_counts = {domain: 0 for domain in domains}
             for agent_id, count in (
@@ -871,13 +882,61 @@ class WorkPortfolioService:
                     and controls[domain].owner == "autonomy_grounding_circuit_breaker"
                 ),
                 "updated_at": (
-                    controls[domain].updated_at.isoformat()
-                    if domain in controls
-                    else None
+                    controls[domain].updated_at.isoformat() if domain in controls else None
                 ),
             }
             for domain in domains
         ]
+
+    async def agent_tool_authority(
+        self,
+        agent_id: str,
+        tool_name: str,
+        *,
+        require_active_domain: bool = True,
+    ) -> dict[str, Any]:
+        """Verify the durable agent, mandate, tool, and domain authority boundary."""
+        async with async_session() as session:
+            agent = await session.get(Agent, agent_id)
+            mandate = (
+                await session.execute(
+                    select(AgentMandate)
+                    .where(
+                        AgentMandate.agent_id == agent_id,
+                        AgentMandate.status == "active",
+                    )
+                    .order_by(desc(AgentMandate.version))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            family = self._canonical_family(agent.role_family) if agent else None
+            control = (
+                await session.get(DomainAutonomyControl, family) if family else None
+            )
+        reasons = []
+        if not agent or agent.status != "active":
+            reasons.append("agent_not_active")
+        if not mandate:
+            reasons.append("active_mandate_missing")
+        if agent and tool_name not in (agent.tools or []):
+            reasons.append("agent_tool_not_granted")
+        authority_tools = (
+            ((mandate.authority or {}).get("read_tools") or []) if mandate else []
+        )
+        if mandate and tool_name not in authority_tools:
+            reasons.append("mandate_tool_not_granted")
+        domain_state = control.state if control else "active"
+        if require_active_domain and domain_state != "active":
+            reasons.append(f"domain_{domain_state}")
+        return {
+            "allowed": not reasons,
+            "agent_id": agent_id,
+            "tool_name": tool_name,
+            "role_family": family,
+            "domain_state": domain_state,
+            "mandate_id": mandate.id if mandate else None,
+            "reasons": reasons,
+        }
 
     async def stabilize_domain_backlogs(
         self,
@@ -888,9 +947,7 @@ class WorkPortfolioService:
     ) -> dict[str, Any]:
         """Bound generated work by depth, semantic duplication, and domain capacity."""
         selected_domains = {
-            self._canonical_family(value)
-            for value in (domains or [])
-            if str(value).strip()
+            self._canonical_family(value) for value in (domains or []) if str(value).strip()
         }
         unknown = selected_domains - (set(DOMAIN_INPUTS) | set(DOMAIN_OUTPUTS))
         if unknown:
@@ -900,22 +957,24 @@ class WorkPortfolioService:
         now = utc_now()
         async with async_session() as session:
             agents = (await session.execute(select(Agent))).scalars().all()
-            agent_families = {
-                item.id: self._canonical_family(item.role_family) for item in agents
-            }
+            agent_families = {item.id: self._canonical_family(item.role_family) for item in agents}
             generated_by = {item.id for item in agents} | {
                 "mandate_loop",
                 "chief_operating_agent",
                 "business_event_router",
             }
             rows = (
-                await session.execute(
-                    select(BusinessWorkItem)
-                    .where(BusinessWorkItem.status.in_(NONTERMINAL_WORK_STATUSES))
-                    .order_by(BusinessWorkItem.created_at, BusinessWorkItem.id)
-                    .with_for_update(skip_locked=True)
+                (
+                    await session.execute(
+                        select(BusinessWorkItem)
+                        .where(BusinessWorkItem.status.in_(NONTERMINAL_WORK_STATUSES))
+                        .order_by(BusinessWorkItem.created_at, BusinessWorkItem.id)
+                        .with_for_update(skip_locked=True)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             by_domain: dict[str, list[BusinessWorkItem]] = {}
             for item in rows:
                 family = agent_families.get(str(item.assigned_agent_id or ""))
@@ -969,9 +1028,7 @@ class WorkPortfolioService:
                     for item in items:
                         if item.id in cancellations:
                             continue
-                        parent_id = str(
-                            (item.payload or {}).get("parent_work_item_id") or ""
-                        )
+                        parent_id = str((item.payload or {}).get("parent_work_item_id") or "")
                         if parent_id in cancellations:
                             cancellations[item.id] = {
                                 "classification": "system_cancelled_parent_stabilized",
@@ -988,12 +1045,8 @@ class WorkPortfolioService:
                     {
                         "domain": family,
                         "examined": len(items),
-                        "cancelled": sum(
-                            1 for item in items if item.id in cancellations
-                        ),
-                        "retained": sum(
-                            1 for item in items if item.id not in cancellations
-                        ),
+                        "cancelled": sum(1 for item in items if item.id in cancellations),
+                        "retained": sum(1 for item in items if item.id not in cancellations),
                     }
                 )
 
@@ -1092,10 +1145,16 @@ class WorkPortfolioService:
             if status:
                 query = query.where(BusinessEvent.status == status)
             items = (
-                await session.execute(
-                    query.order_by(desc(BusinessEvent.created_at)).limit(max(1, min(limit, 500)))
+                (
+                    await session.execute(
+                        query.order_by(desc(BusinessEvent.created_at)).limit(
+                            max(1, min(limit, 500))
+                        )
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             return [self._event_to_dict(item) for item in items]
 
     async def list_work_items(
@@ -1112,10 +1171,16 @@ class WorkPortfolioService:
             if agent_id:
                 query = query.where(BusinessWorkItem.assigned_agent_id == agent_id)
             items = (
-                await session.execute(
-                    query.order_by(desc(BusinessWorkItem.created_at)).limit(max(1, min(limit, 500)))
+                (
+                    await session.execute(
+                        query.order_by(desc(BusinessWorkItem.created_at)).limit(
+                            max(1, min(limit, 500))
+                        )
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             return [self._work_to_dict(item) for item in items]
 
     async def cancel_work_item(
@@ -1136,21 +1201,23 @@ class WorkPortfolioService:
             if not target:
                 raise ValueError("Work item not found")
             candidates = (
-                await session.execute(
-                    select(BusinessWorkItem).where(
-                        BusinessWorkItem.status.in_(NONTERMINAL_WORK_STATUSES)
+                (
+                    await session.execute(
+                        select(BusinessWorkItem).where(
+                            BusinessWorkItem.status.in_(NONTERMINAL_WORK_STATUSES)
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             selected_ids = {work_item_id}
             if include_descendants:
                 changed = True
                 while changed:
                     changed = False
                     for item in candidates:
-                        parent_id = str(
-                            (item.payload or {}).get("parent_work_item_id") or ""
-                        )
+                        parent_id = str((item.payload or {}).get("parent_work_item_id") or "")
                         if parent_id in selected_ids and item.id not in selected_ids:
                             selected_ids.add(item.id)
                             changed = True
@@ -1206,32 +1273,38 @@ class WorkPortfolioService:
             if control and control.state != "active":
                 return None
             candidates = (
-                await session.execute(
-                    select(BusinessWorkItem)
-                    .where(
-                        BusinessWorkItem.assigned_agent_id == agent_id,
-                        BusinessWorkItem.status.in_(
-                            {"ready", "leased", "blocked_dependency"}
-                        ),
-                        (BusinessWorkItem.lease_expires_at.is_(None))
-                        | (BusinessWorkItem.lease_expires_at <= now),
+                (
+                    await session.execute(
+                        select(BusinessWorkItem)
+                        .where(
+                            BusinessWorkItem.assigned_agent_id == agent_id,
+                            BusinessWorkItem.status.in_({"ready", "leased", "blocked_dependency"}),
+                            (BusinessWorkItem.lease_expires_at.is_(None))
+                            | (BusinessWorkItem.lease_expires_at <= now),
+                        )
+                        .order_by(BusinessWorkItem.deadline_at, BusinessWorkItem.created_at)
+                        .with_for_update(skip_locked=True)
+                        .limit(20)
                     )
-                    .order_by(BusinessWorkItem.deadline_at, BusinessWorkItem.created_at)
-                    .with_for_update(skip_locked=True)
-                    .limit(20)
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             for item in candidates:
                 dependencies = (
-                    await session.execute(
-                        select(BusinessWorkItem.status)
-                        .join(
-                            BusinessWorkItemDependency,
-                            BusinessWorkItem.id == BusinessWorkItemDependency.depends_on_id,
+                    (
+                        await session.execute(
+                            select(BusinessWorkItem.status)
+                            .join(
+                                BusinessWorkItemDependency,
+                                BusinessWorkItem.id == BusinessWorkItemDependency.depends_on_id,
+                            )
+                            .where(BusinessWorkItemDependency.work_item_id == item.id)
                         )
-                        .where(BusinessWorkItemDependency.work_item_id == item.id)
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 if dependencies and any(status != "completed" for status in dependencies):
                     item.status = "blocked_dependency"
                     continue
@@ -1260,14 +1333,14 @@ class WorkPortfolioService:
         authoritative_context = await self._build_authoritative_context(item)
         preflight_context_hash = self._hash(authoritative_context)
         if int(authoritative_context.get("active_family_agent_count") or 0) > 0:
-            authoritative_context["memory_preflight"] = (
-                await self._quarantine_authoritative_role_conflicts(
-                    item,
-                    authoritative_context,
-                    None,
-                    context_hash=preflight_context_hash,
-                    circuit_eligible=False,
-                )
+            authoritative_context[
+                "memory_preflight"
+            ] = await self._quarantine_authoritative_role_conflicts(
+                item,
+                authoritative_context,
+                None,
+                context_hash=preflight_context_hash,
+                circuit_eligible=False,
             )
         context_hash = self._hash(authoritative_context)
         task = (
@@ -1320,9 +1393,7 @@ class WorkPortfolioService:
                     "authoritative_context_hash": context_hash,
                     "authoritative_context_at": authoritative_context["observed_at"],
                     "role_family": authoritative_context["role_family"],
-                    "role_state_claim_contract_version": (
-                        ROLE_STATE_CLAIM_CONTRACT_VERSION
-                    ),
+                    "role_state_claim_contract_version": (ROLE_STATE_CLAIM_CONTRACT_VERSION),
                 },
                 report_role_gap=False,
             )
@@ -1392,13 +1463,9 @@ class WorkPortfolioService:
                         "event_id": item.event_id,
                         "external_side_effects_allowed": False,
                         "authoritative_context_hash": context_hash,
-                        "authoritative_context_at": authoritative_context[
-                            "observed_at"
-                        ],
+                        "authoritative_context_at": authoritative_context["observed_at"],
                         "role_family": authoritative_context["role_family"],
-                        "role_state_claim_contract_version": (
-                            ROLE_STATE_CLAIM_CONTRACT_VERSION
-                        ),
+                        "role_state_claim_contract_version": (ROLE_STATE_CLAIM_CONTRACT_VERSION),
                         "schema_repair": True,
                         "initial_validation_error": str(initial_exc)[:500],
                     },
@@ -1415,9 +1482,7 @@ class WorkPortfolioService:
                     error=f"Agent schema repair failed: {type(exc).__name__}",
                 )
             if self._intelligence:
-                injection = self._intelligence.classify_untrusted_content(
-                    repaired_result
-                )
+                injection = self._intelligence.classify_untrusted_content(repaired_result)
                 if injection["detected"]:
                     return await self._finish_work(
                         item.id,
@@ -1429,10 +1494,7 @@ class WorkPortfolioService:
                                 "status": "blocked",
                             },
                         },
-                        error=(
-                            "Repaired agent output repeated a policy-override "
-                            "instruction."
-                        ),
+                        error=("Repaired agent output repeated a policy-override instruction."),
                     )
             try:
                 assessment = self._parse_role_result(repaired_result)
@@ -1489,9 +1551,7 @@ class WorkPortfolioService:
         reused_ids = proposal_result["reused_work_item_ids"]
         suppressed = proposal_result["suppressed_proposals"]
         requested_follow_up = bool(
-            assessment["proposed_work"]
-            or assessment["rejected_proposals"]
-            or suppressed
+            assessment["proposed_work"] or assessment["rejected_proposals"] or suppressed
         )
         follow_up_required = assessment["recommended_action"] in {
             "continue",
@@ -1500,9 +1560,7 @@ class WorkPortfolioService:
         }
         follow_up_accounted_for = bool(created_ids or reused_ids or suppressed)
         completion_blocked = grounding["status"] == "blocked" or (
-            requested_follow_up
-            and follow_up_required
-            and not follow_up_accounted_for
+            requested_follow_up and follow_up_required and not follow_up_accounted_for
         )
         grounding_recovery = (
             {"status": "not_attempted"}
@@ -1561,47 +1619,59 @@ class WorkPortfolioService:
             active_agents = [
                 candidate
                 for candidate in (
-                    await session.execute(
-                        select(Agent).where(Agent.status == "active")
-                    )
-                ).scalars().all()
+                    await session.execute(select(Agent).where(Agent.status == "active"))
+                )
+                .scalars()
+                .all()
                 if self._canonical_family(candidate.role_family) == family
             ]
             unresolved_gaps = [
                 gap
                 for gap in (
                     await session.execute(
-                        select(RoleGap).where(
-                            RoleGap.status.in_({"open", "proposed", "deferred"})
-                        )
+                        select(RoleGap).where(RoleGap.status.in_({"open", "proposed", "deferred"}))
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
                 if self._role_gap_family(gap) == family
             ]
             observations = (
-                await session.execute(
-                    select(OperatingKPIObservation)
-                    .order_by(desc(OperatingKPIObservation.observed_at))
-                    .limit(500)
+                (
+                    await session.execute(
+                        select(OperatingKPIObservation)
+                        .order_by(desc(OperatingKPIObservation.observed_at))
+                        .limit(500)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             latest_observations = {}
             for observation in observations:
                 latest_observations.setdefault(observation.kpi_key, observation)
             definitions = (
-                await session.execute(
-                    select(ExecutiveBenchmarkDefinition).where(
-                        ExecutiveBenchmarkDefinition.status == "active"
+                (
+                    await session.execute(
+                        select(ExecutiveBenchmarkDefinition).where(
+                            ExecutiveBenchmarkDefinition.status == "active"
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             results = (
-                await session.execute(
-                    select(ExecutiveBenchmarkResult)
-                    .order_by(desc(ExecutiveBenchmarkResult.created_at))
-                    .limit(500)
+                (
+                    await session.execute(
+                        select(ExecutiveBenchmarkResult)
+                        .order_by(desc(ExecutiveBenchmarkResult.created_at))
+                        .limit(500)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             latest_results = {}
             for result in results:
                 latest_results.setdefault(result.benchmark_key, result)
@@ -1613,9 +1683,7 @@ class WorkPortfolioService:
                     for status, count in (
                         await session.execute(
                             select(BusinessWorkItem.status, func.count())
-                            .where(
-                                BusinessWorkItem.assigned_agent_id.in_(family_agent_ids)
-                            )
+                            .where(BusinessWorkItem.assigned_agent_id.in_(family_agent_ids))
                             .group_by(BusinessWorkItem.status)
                         )
                     ).all()
@@ -1666,13 +1734,9 @@ class WorkPortfolioService:
                         "result_id": latest_results[definition.key].id,
                         "status": latest_results[definition.key].status,
                         "observed_value": latest_results[definition.key].observed_value,
-                        "threshold_value": latest_results[
-                            definition.key
-                        ].threshold_value,
+                        "threshold_value": latest_results[definition.key].threshold_value,
                         "evidence": latest_results[definition.key].evidence,
-                        "observed_at": latest_results[
-                            definition.key
-                        ].created_at.isoformat(),
+                        "observed_at": latest_results[definition.key].created_at.isoformat(),
                     }
                     if definition.key in latest_results
                     else {"status": "not_recorded", "rule": definition.rule}
@@ -1715,16 +1779,20 @@ class WorkPortfolioService:
                     f"{proposal.get('title', '')} {proposal.get('description', '')}"
                 ).lower()
                 target_gap_id = str(proposal.get("target_role_gap_id") or "").strip()
-                if proposal["work_type"] == "capability_proposal" and (
-                    target_gap_id
-                    or any(
-                        pattern.search(proposal_text)
-                        for pattern in CURRENT_ROLE_GAP_PROPOSAL_PATTERNS
+                if (
+                    proposal["work_type"] == "capability_proposal"
+                    and (
+                        target_gap_id
+                        or any(
+                            pattern.search(proposal_text)
+                            for pattern in CURRENT_ROLE_GAP_PROPOSAL_PATTERNS
+                        )
                     )
-                ) and not self._proposal_matches_unresolved_role_gap(
-                    proposal,
-                    proposal_text,
-                    context,
+                    and not self._proposal_matches_unresolved_role_gap(
+                        proposal,
+                        proposal_text,
+                        context,
+                    )
                 ):
                     assessment["rejected_proposals"].append(
                         {
@@ -1780,9 +1848,7 @@ class WorkPortfolioService:
         if assigned.get("id") and assigned.get("status") == "active":
             active_ids.add(str(assigned["id"]).strip())
         if assigned.get("role_name") and assigned.get("status") == "active":
-            active_names.add(
-                cls._normalize_gap_identity(str(assigned["role_name"]))
-            )
+            active_names.add(cls._normalize_gap_identity(str(assigned["role_name"])))
         active_markers = {
             *active_ids,
             *active_names,
@@ -1800,9 +1866,7 @@ class WorkPortfolioService:
             subject_type = str(claim.get("subject_type") or "")
             subject_id = str(claim.get("subject_id") or "").strip()
             state = str(claim.get("state") or "")
-            evidence_ids = {
-                str(value).strip() for value in claim.get("evidence_ids") or []
-            }
+            evidence_ids = {str(value).strip() for value in claim.get("evidence_ids") or []}
             conflict = False
             if subject_type == "role":
                 normalized_id = cls._normalize_gap_identity(subject_id)
@@ -1847,15 +1911,19 @@ class WorkPortfolioService:
         lookback_start = now - timedelta(hours=lookback_hours)
         async with async_session() as session:
             traces = (
-                await session.execute(
-                    select(MemoryTrace)
-                    .where(
-                        MemoryTrace.conversation_id == item.id,
-                        MemoryTrace.source_type == "agent_mandate_loop",
+                (
+                    await session.execute(
+                        select(MemoryTrace)
+                        .where(
+                            MemoryTrace.conversation_id == item.id,
+                            MemoryTrace.source_type == "agent_mandate_loop",
+                        )
+                        .order_by(desc(MemoryTrace.created_at))
                     )
-                    .order_by(desc(MemoryTrace.created_at))
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             trace_ids = [trace.id for trace in traces]
             memory_ids = {
                 str(memory_id)
@@ -1867,20 +1935,28 @@ class WorkPortfolioService:
                 if memory_id
             }
             recent_agent_entries = (
-                await session.execute(
-                    select(MemoryEntry)
-                    .where(MemoryEntry.agent_id == item.assigned_agent_id)
-                    .order_by(desc(MemoryEntry.created_at))
-                    .limit(500)
+                (
+                    await session.execute(
+                        select(MemoryEntry)
+                        .where(MemoryEntry.agent_id == item.assigned_agent_id)
+                        .order_by(desc(MemoryEntry.created_at))
+                        .limit(500)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             entries_by_id = {entry.id: entry for entry in recent_agent_entries}
             if memory_ids:
                 traced_entries = (
-                    await session.execute(
-                        select(MemoryEntry).where(MemoryEntry.id.in_(memory_ids))
+                    (
+                        await session.execute(
+                            select(MemoryEntry).where(MemoryEntry.id.in_(memory_ids))
+                        )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 entries_by_id.update({entry.id: entry for entry in traced_entries})
             quarantined_ids = []
             for entry in entries_by_id.values():
@@ -1899,9 +1975,7 @@ class WorkPortfolioService:
                 metadata.update(
                     {
                         "canonical_superseded": True,
-                        "exclude_from_recall_reason": (
-                            "authoritative_role_state_conflict"
-                        ),
+                        "exclude_from_recall_reason": ("authoritative_role_state_conflict"),
                         "grounding_conflict": {
                             "work_item_id": item.id,
                             "role_family": family,
@@ -1931,9 +2005,7 @@ class WorkPortfolioService:
             prior_evidence = dict(finding.evidence or {}) if finding else {}
             prior_last_seen = prior_evidence.get("last_seen_at")
             occurrence_count = int(prior_evidence.get("occurrence_count") or 0)
-            agent_conflict_count = int(
-                prior_evidence.get("agent_conflict_count") or 0
-            )
+            agent_conflict_count = int(prior_evidence.get("agent_conflict_count") or 0)
             if finding and finding.status == "resolved":
                 prior_last_seen = None
                 occurrence_count = 0
@@ -1949,10 +2021,7 @@ class WorkPortfolioService:
                 agent_conflict_count += 1
             work_item_ids = sorted(
                 {
-                    *[
-                        str(value)
-                        for value in prior_evidence.get("work_item_ids", [])
-                    ],
+                    *[str(value) for value in prior_evidence.get("work_item_ids", [])],
                     item.id,
                 }
             )
@@ -1970,8 +2039,7 @@ class WorkPortfolioService:
             )
             evidence = {
                 "dedupe_key": dedupe_key,
-                "first_seen_at": prior_evidence.get("first_seen_at")
-                or now.isoformat(),
+                "first_seen_at": prior_evidence.get("first_seen_at") or now.isoformat(),
                 "last_seen_at": now.isoformat(),
                 "occurrence_count": occurrence_count,
                 "agent_conflict_count": agent_conflict_count,
@@ -1979,9 +2047,7 @@ class WorkPortfolioService:
                 "work_item_ids": work_item_ids,
                 "quarantined_memory_ids": quarantined_all,
                 "authoritative_context_hash": context_hash,
-                "grounding_findings": (
-                    grounding.get("findings", []) if grounding else []
-                ),
+                "grounding_findings": (grounding.get("findings", []) if grounding else []),
             }
             description = (
                 "Memory contained a role-state claim that contradicted current "
@@ -1989,13 +2055,32 @@ class WorkPortfolioService:
                 "written entries were excluded from future recall."
             )
             if finding:
-                finding.status = "open"
-                finding.severity = (
-                    "high" if agent_conflict_count >= threshold else "medium"
+                metadata = dict(finding.metadata_ or {})
+                prior_resolution = metadata.pop("resolution", None)
+                if prior_resolution:
+                    resolution_history = list(metadata.get("resolution_history") or [])
+                    resolution_history.append(
+                        {
+                            **prior_resolution,
+                            "reopened_at": now.isoformat(),
+                            "reopened_by_work_item_id": item.id,
+                        }
+                    )
+                    metadata["resolution_history"] = resolution_history[-20:]
+                metadata.update(
+                    {
+                        "source": "work_portfolio_grounding_guard",
+                        "reopened_at": now.isoformat(),
+                        "reopen_count": int(metadata.get("reopen_count") or 0) + 1,
+                    }
                 )
+                evidence["recoveries"] = list(prior_evidence.get("recoveries") or [])[-20:]
+                finding.status = "open"
+                finding.severity = "high" if agent_conflict_count >= threshold else "medium"
                 finding.trace_ids = sorted({*(finding.trace_ids or []), *trace_ids})
                 finding.evidence = evidence
                 finding.description = description
+                finding.metadata_ = metadata
                 finding.updated_at = now
                 finding.resolved_at = None
             else:
@@ -2005,9 +2090,7 @@ class WorkPortfolioService:
                     severity="medium",
                     status="open",
                     agent_id=item.assigned_agent_id,
-                    memory_namespace=(
-                        traces[0].memory_namespace if traces else None
-                    ),
+                    memory_namespace=(traces[0].memory_namespace if traces else None),
                     company_namespace=item.company_namespace,
                     title=f"Authoritative role-state conflict in {family}",
                     description=description,
@@ -2055,9 +2138,7 @@ class WorkPortfolioService:
                 "lookback_hours": lookback_hours,
                 "circuit_breaker_tripped": circuit_tripped,
                 "domain_state": (
-                    "paused"
-                    if circuit_tripped
-                    else (control.state if control else "active")
+                    "paused" if circuit_tripped else (control.state if control else "active")
                 ),
             }
         if self._audit:
@@ -2142,9 +2223,7 @@ class WorkPortfolioService:
                 "tool_name": tool_name,
                 "tool_result": result.output,
                 "action_executed": bool(result.success),
-                "side_effects_executed": bool(
-                    result.success and readiness.get("side_effects")
-                ),
+                "side_effects_executed": bool(result.success and readiness.get("side_effects")),
             },
             error=result.error,
         )
@@ -2174,9 +2253,7 @@ class WorkPortfolioService:
         created_ids: list[str] = []
         reused_ids: list[str] = []
         suppressed: list[dict[str, Any]] = []
-        cooldown_start = utc_now() - timedelta(
-            hours=self._proposal_cooldown_hours()
-        )
+        cooldown_start = utc_now() - timedelta(hours=self._proposal_cooldown_hours())
         async with async_session() as session:
             agent = await session.get(Agent, parent.assigned_agent_id)
             if not agent:
@@ -2184,9 +2261,7 @@ class WorkPortfolioService:
                     "created_work_item_ids": [],
                     "reused_work_item_ids": [],
                     "suppressed_proposals": [],
-                    "rejected_proposals": [
-                        {"reason": "assigned_agent_missing", "index": 0}
-                    ],
+                    "rejected_proposals": [{"reason": "assigned_agent_missing", "index": 0}],
                 }
             family = self._canonical_family(agent.role_family)
             control = await session.get(DomainAutonomyControl, family)
@@ -2202,33 +2277,33 @@ class WorkPortfolioService:
                             "state": control.state,
                             "work_type": proposal["work_type"],
                         }
-                        for index, proposal in enumerate(
-                            assessment["proposed_work"][:3]
-                        )
+                        for index, proposal in enumerate(assessment["proposed_work"][:3])
                     ],
                     "rejected_proposals": [],
                 }
             family_agent_ids = [
                 candidate.id
-                for candidate in (
-                    await session.execute(select(Agent))
-                ).scalars().all()
+                for candidate in (await session.execute(select(Agent))).scalars().all()
                 if self._canonical_family(candidate.role_family) == family
             ]
             recent_items = (
-                await session.execute(
-                    select(BusinessWorkItem)
-                    .where(
-                        BusinessWorkItem.assigned_agent_id.in_(family_agent_ids),
-                        or_(
-                            BusinessWorkItem.status.in_(NONTERMINAL_WORK_STATUSES),
-                            BusinessWorkItem.created_at >= cooldown_start,
-                        ),
+                (
+                    await session.execute(
+                        select(BusinessWorkItem)
+                        .where(
+                            BusinessWorkItem.assigned_agent_id.in_(family_agent_ids),
+                            or_(
+                                BusinessWorkItem.status.in_(NONTERMINAL_WORK_STATUSES),
+                                BusinessWorkItem.created_at >= cooldown_start,
+                            ),
+                        )
+                        .order_by(BusinessWorkItem.created_at, BusinessWorkItem.id)
+                        .with_for_update(skip_locked=True)
                     )
-                    .order_by(BusinessWorkItem.created_at, BusinessWorkItem.id)
-                    .with_for_update(skip_locked=True)
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             nonterminal_count = sum(
                 item.status in NONTERMINAL_WORK_STATUSES for item in recent_items
             )
@@ -2249,9 +2324,7 @@ class WorkPortfolioService:
                     "created_work_item_ids": [],
                     "reused_work_item_ids": [],
                     "suppressed_proposals": [],
-                    "rejected_proposals": [
-                        {"reason": "active_mandate_missing", "index": 0}
-                    ],
+                    "rejected_proposals": [{"reason": "active_mandate_missing", "index": 0}],
                 }
             root_id = str(
                 (parent.payload or {}).get("proposal_root_work_item_id")
@@ -2284,14 +2357,10 @@ class WorkPortfolioService:
                         }
                     )
                     continue
-                key = self._hash(
-                    {"parent_id": parent.id, "index": index, "proposal": proposal}
-                )
+                key = self._hash({"parent_id": parent.id, "index": index, "proposal": proposal})
                 existing = (
                     await session.execute(
-                        select(BusinessWorkItem).where(
-                            BusinessWorkItem.idempotency_key == key
-                        )
+                        select(BusinessWorkItem).where(BusinessWorkItem.idempotency_key == key)
                     )
                 ).scalar_one_or_none()
                 if existing:
@@ -2373,9 +2442,7 @@ class WorkPortfolioService:
                     "work_item_id": item.id,
                     "authoritative_context_hash": context_hash,
                     "recovered_at": now.isoformat(),
-                    "active_family_agent_count": int(
-                        context.get("active_family_agent_count") or 0
-                    ),
+                    "active_family_agent_count": int(context.get("active_family_agent_count") or 0),
                     "unresolved_role_gap_ids": [
                         str(gap.get("id"))
                         for gap in context.get("unresolved_role_gaps") or []
@@ -2392,6 +2459,18 @@ class WorkPortfolioService:
             finding.status = "resolved"
             finding.resolved_at = now
             finding.updated_at = now
+            finding.metadata_ = {
+                **(finding.metadata_ or {}),
+                "resolution": {
+                    "status": "resolved",
+                    "note": (
+                        "Resolved automatically after an evidence-grounded recovery "
+                        f"canary completed for work item {item.id}."
+                    ),
+                    "actor": item.assigned_agent_id or "work_portfolio_grounding_guard",
+                    "resolved_at": now.isoformat(),
+                },
+            }
             if control.owner == "autonomy_grounding_circuit_breaker":
                 control.reason = (
                     f"Recovered after grounded work item {item.id}; continuing under "
@@ -2420,9 +2499,7 @@ class WorkPortfolioService:
     async def _nonterminal_domain_count(self, session, family: str) -> int:
         agent_ids = [
             item.id
-            for item in (
-                await session.execute(select(Agent))
-            ).scalars().all()
+            for item in (await session.execute(select(Agent))).scalars().all()
             if self._canonical_family(item.role_family) == family
         ]
         if not agent_ids:
@@ -2447,10 +2524,13 @@ class WorkPortfolioService:
         for item in existing:
             if item.work_type != candidate.work_type:
                 continue
-            if cls._proposal_similarity(
-                cls._work_proposal_tokens(candidate),
-                cls._work_proposal_tokens(item),
-            ) >= cls._semantic_duplicate_threshold():
+            if (
+                cls._proposal_similarity(
+                    cls._work_proposal_tokens(candidate),
+                    cls._work_proposal_tokens(item),
+                )
+                >= cls._semantic_duplicate_threshold()
+            ):
                 return item
         return None
 
@@ -2467,10 +2547,13 @@ class WorkPortfolioService:
         for item in existing:
             if item.work_type != proposal.get("work_type"):
                 continue
-            if cls._proposal_similarity(
-                candidate_tokens,
-                cls._work_proposal_tokens(item),
-            ) >= cls._semantic_duplicate_threshold():
+            if (
+                cls._proposal_similarity(
+                    candidate_tokens,
+                    cls._work_proposal_tokens(item),
+                )
+                >= cls._semantic_duplicate_threshold()
+            ):
                 return item
         return None
 
@@ -2640,9 +2723,7 @@ class WorkPortfolioService:
                 or not required_proposal.issubset(proposal)
                 or set(proposal) - required_proposal - optional_proposal
             ):
-                rejected.append(
-                    {"index": index, "reason": "proposal_schema_invalid"}
-                )
+                rejected.append({"index": index, "reason": "proposal_schema_invalid"})
                 continue
             requested_work_type = str(proposal["work_type"]).strip().lower()
             work_type = SAFE_AGENT_PROPOSED_WORK_TYPE_ALIASES.get(
@@ -2659,22 +2740,15 @@ class WorkPortfolioService:
                 )
                 continue
             if proposal["priority"] not in {"low", "medium", "high"}:
-                rejected.append(
-                    {"index": index, "reason": "priority_not_allowlisted"}
-                )
+                rejected.append({"index": index, "reason": "priority_not_allowlisted"})
                 continue
             if not isinstance(proposal["acceptance_criteria"], list) or not all(
-                isinstance(item, str) and item.strip()
-                for item in proposal["acceptance_criteria"]
+                isinstance(item, str) and item.strip() for item in proposal["acceptance_criteria"]
             ):
-                rejected.append(
-                    {"index": index, "reason": "acceptance_criteria_invalid"}
-                )
+                rejected.append({"index": index, "reason": "acceptance_criteria_invalid"})
                 continue
             if not isinstance(proposal["expected_outcome"], dict):
-                rejected.append(
-                    {"index": index, "reason": "expected_outcome_invalid"}
-                )
+                rejected.append({"index": index, "reason": "expected_outcome_invalid"})
                 continue
             normalized.append(
                 {
@@ -2683,11 +2757,7 @@ class WorkPortfolioService:
                     "title": str(proposal["title"])[:240],
                     "description": str(proposal["description"])[:8000],
                     **(
-                        {
-                            "target_role_gap_id": str(
-                                proposal.get("target_role_gap_id") or ""
-                            )[:64]
-                        }
+                        {"target_role_gap_id": str(proposal.get("target_role_gap_id") or "")[:64]}
                         if proposal.get("target_role_gap_id")
                         else {}
                     ),
@@ -2769,13 +2839,17 @@ class WorkPortfolioService:
     async def _ensure_role_gap(self, session, family: str, event: BusinessEvent) -> None:
         dedupe_key = self._hash({"family": family, "event_type": event.event_type})
         existing = (
-            await session.execute(
-                select(RoleGap).where(
-                    RoleGap.status.in_({"open", "proposed", "deferred"}),
-                    RoleGap.source_type == "business_event",
+            (
+                await session.execute(
+                    select(RoleGap).where(
+                        RoleGap.status.in_({"open", "proposed", "deferred"}),
+                        RoleGap.source_type == "business_event",
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         if any((item.context or {}).get("dedupe_key") == dedupe_key for item in existing):
             return
         session.add(
@@ -2783,8 +2857,7 @@ class WorkPortfolioService:
                 id=f"gap_{uuid.uuid4().hex}",
                 title=f"Missing mandated {family} operating role",
                 description=(
-                    f"Business event {event.id} cannot be assigned to an active "
-                    "mandated role."
+                    f"Business event {event.id} cannot be assigned to an active mandated role."
                 ),
                 status="open",
                 severity="medium",
@@ -2811,9 +2884,7 @@ class WorkPortfolioService:
         work_key = self._hash({"event_id": event.id, "type": "owner_escalation"})
         existing = (
             await session.execute(
-                select(BusinessWorkItem).where(
-                    BusinessWorkItem.idempotency_key == work_key
-                )
+                select(BusinessWorkItem).where(BusinessWorkItem.idempotency_key == work_key)
             )
         ).scalar_one_or_none()
         if existing:
@@ -2951,12 +3022,16 @@ class WorkPortfolioService:
                 continue
             visited.add(current)
             next_ids = (
-                await session.execute(
-                    select(BusinessWorkItemDependency.depends_on_id).where(
-                        BusinessWorkItemDependency.work_item_id == current
+                (
+                    await session.execute(
+                        select(BusinessWorkItemDependency.depends_on_id).where(
+                            BusinessWorkItemDependency.work_item_id == current
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             frontier.extend(next_ids)
         return False
 
@@ -2970,9 +3045,7 @@ class WorkPortfolioService:
 
     @staticmethod
     def _audit_outcome_is_informational(payload: dict[str, Any] | None) -> bool:
-        return str((payload or {}).get("outcome") or "").lower() in (
-            INFORMATIONAL_AUDIT_OUTCOMES
-        )
+        return str((payload or {}).get("outcome") or "").lower() in (INFORMATIONAL_AUDIT_OUTCOMES)
 
     @staticmethod
     def _event_requires_escalation(event: BusinessEvent) -> bool:
@@ -3051,10 +3124,7 @@ class WorkPortfolioService:
                 cls._normalize_gap_identity(str(gap.get("title") or "")),
                 cls._normalize_gap_identity(str(gap.get("capability") or "")),
             }
-            if any(
-                marker and len(marker) >= 5 and marker in normalized_text
-                for marker in markers
-            ):
+            if any(marker and len(marker) >= 5 and marker in normalized_text for marker in markers):
                 return True
         return False
 

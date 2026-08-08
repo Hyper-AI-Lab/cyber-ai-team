@@ -11,6 +11,7 @@ from cyber_team.db import Base
 from cyber_team.db.models import (
     Agent,
     AgentCapabilityGrant,
+    AgentMandate,
     ApprovalRequest,
     RoleGap,
     RoleManifest,
@@ -235,6 +236,151 @@ async def test_team_activation_resolves_safe_only_role_gap(session_factory):
         "approval_request",
         "company_profile_read",
     ]
+
+
+@pytest.mark.asyncio
+async def test_scoped_tool_grant_is_exact_atomic_and_single_use(session_factory):
+    async with session_factory() as session:
+        session.add(
+            Agent(
+                id="communications-agent",
+                role_family="communications",
+                role_name="Communications Agent",
+                instructions="Operate within policy.",
+                tools=["memory_recall"],
+                memory_namespace="company:acme:communications",
+                approval_policy="sensitive",
+                status="active",
+                config={},
+            )
+        )
+        session.add(
+            AgentMandate(
+                id="mandate-communications-v1",
+                agent_id="communications-agent",
+                version=1,
+                status="active",
+                objective_ids=[],
+                authority={"read_tools": ["memory_recall"]},
+                budget={},
+                inputs=[],
+                outputs=[],
+                kpi_keys=[],
+                cadence={},
+                escalation_rules=[],
+                metadata_={},
+                created_by="test",
+                activated_at=utc_now(),
+            )
+        )
+        await session.commit()
+
+    registry = FakeToolRegistry()
+    manager = AgentManager(tool_registry=registry)
+    service = TeamActivationService(agent_manager=manager, tool_registry=registry)
+    requested = await service.request_scoped_tool_grant(
+        agent_id="communications-agent",
+        tool_name="send_email",
+        reason="One-recipient canary only.",
+        actor="owner@example.com",
+    )
+    await manager.resolve_approval(
+        requested["approval_id"],
+        "approved",
+        reviewer="owner@example.com",
+    )
+    applied = await service.apply_scoped_tool_grant(
+        agent_id="communications-agent",
+        tool_name="send_email",
+        approval_id=requested["approval_id"],
+        actor="owner@example.com",
+    )
+
+    assert applied["status"] == "active"
+    assert applied["duplicate"] is False
+    async with session_factory() as session:
+        agent = await session.get(Agent, "communications-agent")
+        mandate = await session.get(AgentMandate, "mandate-communications-v1")
+        approval = await session.get(ApprovalRequest, requested["approval_id"])
+        grant = (
+            await session.execute(
+                select(AgentCapabilityGrant).where(
+                    AgentCapabilityGrant.agent_id == "communications-agent",
+                    AgentCapabilityGrant.tool_name == "send_email",
+                )
+            )
+        ).scalar_one()
+    assert "send_email" in agent.tools
+    assert "send_email" in mandate.authority["read_tools"]
+    assert approval.consumed_at is not None
+    assert grant.state == "active"
+
+    with pytest.raises(ValueError, match="already consumed"):
+        await service.apply_scoped_tool_grant(
+            agent_id="communications-agent",
+            tool_name="send_email",
+            approval_id=requested["approval_id"],
+            actor="owner@example.com",
+        )
+
+
+@pytest.mark.asyncio
+async def test_scoped_tool_grant_rolls_back_approval_when_mandate_is_missing(
+    session_factory,
+):
+    async with session_factory() as session:
+        session.add(
+            Agent(
+                id="communications-agent-no-mandate",
+                role_family="communications",
+                role_name="Communications Agent",
+                instructions="Operate within policy.",
+                tools=["memory_recall"],
+                memory_namespace="company:acme:communications",
+                approval_policy="sensitive",
+                status="active",
+                config={},
+            )
+        )
+        session.add(
+            ApprovalRequest(
+                id="approval-no-mandate",
+                agent_id="communications-agent-no-mandate",
+                action_type="agent.tool_grant",
+                action_description="Grant send_email.",
+                action_payload={
+                    "approval_binding": TeamActivationService._scoped_grant_binding(
+                        "communications-agent-no-mandate",
+                        "send_email",
+                    )
+                },
+                requester="owner@example.com",
+                requester_type="user",
+                risk_level="high",
+                target_type="agent_tool_grant",
+                target_id="communications-agent-no-mandate:send_email",
+                status="approved",
+                reviewer="owner@example.com",
+                resolved_at=utc_now(),
+            )
+        )
+        await session.commit()
+    registry = FakeToolRegistry()
+    manager = AgentManager(tool_registry=registry)
+    service = TeamActivationService(agent_manager=manager, tool_registry=registry)
+
+    with pytest.raises(ValueError, match="Active agent and mandate are required"):
+        await service.apply_scoped_tool_grant(
+            agent_id="communications-agent-no-mandate",
+            tool_name="send_email",
+            approval_id="approval-no-mandate",
+            actor="owner@example.com",
+        )
+    async with session_factory() as session:
+        approval = await session.get(ApprovalRequest, "approval-no-mandate")
+        agent = await session.get(Agent, "communications-agent-no-mandate")
+    assert approval.consumed_at is None
+    assert "send_email" not in agent.tools
 
 
 @pytest.mark.asyncio

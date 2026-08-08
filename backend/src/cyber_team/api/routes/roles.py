@@ -85,6 +85,14 @@ class TeamActivationFamilyReconcileRequest(BaseModel):
     dry_run: bool = True
 
 
+class ScopedToolGrantRequest(BaseModel):
+    reason: str = Field(default="Bounded owner-approved capability.", max_length=2000)
+
+
+class ScopedToolGrantApplyRequest(BaseModel):
+    approval_id: str = Field(..., min_length=1, max_length=64)
+
+
 class SupervisorReviewResponse(BaseModel):
     reviewed_at: str
     actor: str
@@ -103,6 +111,60 @@ def _status_filter(value: str | None) -> list[str] | None:
         for item in value.split(",")
         if item.strip()
     ]
+
+
+@router.post("/agents/{agent_id}/tool-grants/{tool_name}/request")
+async def request_scoped_agent_tool_grant(
+    agent_id: str,
+    tool_name: str,
+    data: ScopedToolGrantRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "request",
+        "agent_tool_grant",
+        f"{agent_id}:{tool_name}",
+        context={"reason": data.reason},
+    )
+    try:
+        return await request.app.state.team_activation_service.request_scoped_tool_grant(
+            agent_id=agent_id,
+            tool_name=tool_name,
+            reason=data.reason,
+            actor=principal.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/agents/{agent_id}/tool-grants/{tool_name}/apply")
+async def apply_scoped_agent_tool_grant(
+    agent_id: str,
+    tool_name: str,
+    data: ScopedToolGrantApplyRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "apply",
+        "agent_tool_grant",
+        f"{agent_id}:{tool_name}",
+        context={"approval_id": data.approval_id},
+    )
+    try:
+        return await request.app.state.team_activation_service.apply_scoped_tool_grant(
+            agent_id=agent_id,
+            tool_name=tool_name,
+            approval_id=data.approval_id,
+            actor=principal.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/catalog", response_model=list[RoleManifestResponse])

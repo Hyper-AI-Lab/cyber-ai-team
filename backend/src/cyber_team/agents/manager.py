@@ -1,6 +1,7 @@
 """Agent Manager — registration, lifecycle, and configuration of agents."""
 
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any
 
@@ -225,17 +226,13 @@ class AgentManager:
 
     async def list_agents(self) -> list[dict]:
         async with async_session() as session:
-            result = await session.execute(
-                select(Agent).where(Agent.status != "deleted")
-            )
+            result = await session.execute(select(Agent).where(Agent.status != "deleted"))
             agents = result.scalars().all()
             return [self._agent_to_dict(a) for a in agents]
 
     async def get_agent(self, agent_id: str) -> dict | None:
         async with async_session() as session:
-            result = await session.execute(
-                select(Agent).where(Agent.id == agent_id)
-            )
+            result = await session.execute(select(Agent).where(Agent.id == agent_id))
             agent = result.scalar_one_or_none()
             return self._agent_to_dict(agent) if agent else None
 
@@ -263,9 +260,7 @@ class AgentManager:
 
     async def update_agent(self, agent_id: str, data) -> dict | None:
         async with async_session() as session:
-            result = await session.execute(
-                select(Agent).where(Agent.id == agent_id)
-            )
+            result = await session.execute(select(Agent).where(Agent.id == agent_id))
             agent = result.scalar_one_or_none()
             if not agent:
                 return None
@@ -552,19 +547,22 @@ class AgentManager:
         if tool_readiness:
             config["tool_readiness"] = tool_readiness
             config["unavailable_tools"] = [
-                item for item in tool_readiness
-                if item["state"] not in {"live", "advisory"}
+                item for item in tool_readiness if item["state"] not in {"live", "advisory"}
             ]
 
-        create_data = type("AgentCreate", (), {
-            "role_family": manifest["family"],
-            "role_name": manifest["name"],
-            "instructions": instructions,
-            "tools": resolved_tools,
-            "memory_namespace": manifest["memory_namespace"],
-            "approval_policy": manifest["approval_policy"],
-            "config": config,
-        })()
+        create_data = type(
+            "AgentCreate",
+            (),
+            {
+                "role_family": manifest["family"],
+                "role_name": manifest["name"],
+                "instructions": instructions,
+                "tools": resolved_tools,
+                "memory_namespace": manifest["memory_namespace"],
+                "approval_policy": manifest["approval_policy"],
+                "config": config,
+            },
+        )()
         return await self.create_agent(create_data)
 
     # ─── Company Builder ──────────────────────────────────────────────
@@ -1041,9 +1039,7 @@ Propose a new role to fill this gap. Return JSON with:
             "dismiss",
         }
         if action not in allowed_actions:
-            raise ValueError(
-                "Action must be one of: " + ", ".join(sorted(allowed_actions))
-            )
+            raise ValueError("Action must be one of: " + ", ".join(sorted(allowed_actions)))
         unique_gap_ids = self._unique(gap_ids)
         results = []
         errors = []
@@ -1139,12 +1135,9 @@ Propose a new role to fill this gap. Return JSON with:
         for agent in agents:
             agent_dict = self._agent_to_dict(agent)
             config = agent_dict.get("config") or {}
-            agent_namespace = (
-                config.get("company_namespace")
-                or self._company_namespace_from_memory_namespace(
-                    agent_dict.get("memory_namespace")
-                )
-            )
+            agent_namespace = config.get(
+                "company_namespace"
+            ) or self._company_namespace_from_memory_namespace(agent_dict.get("memory_namespace"))
             if company_namespace and agent_namespace != company_namespace:
                 continue
             cadence = config.get("activation_cadence") or self._default_operating_cadence(
@@ -1217,9 +1210,7 @@ Propose a new role to fill this gap. Return JSON with:
         if not gap["proposed_role"]:
             gap = await self.propose_role_for_gap(gap_id, company_profile)
         manifest_payload = gap["proposed_role"]["manifest_payload"]
-        high_risk_tools = self._role_gap_high_risk_tools(
-            manifest_payload.get("default_tools", [])
-        )
+        high_risk_tools = self._role_gap_high_risk_tools(manifest_payload.get("default_tools", []))
         if not high_risk_tools:
             raise ValueError(f"Role gap {gap_id} does not require approval")
 
@@ -1298,20 +1289,14 @@ Propose a new role to fill this gap. Return JSON with:
             gap = await self.propose_role_for_gap(gap_id, company_profile)
         proposal = gap["proposed_role"]
         manifest_payload = proposal["manifest_payload"]
-        readiness = self._role_gap_tool_readiness(
-            manifest_payload.get("default_tools", [])
-        )
+        readiness = self._role_gap_tool_readiness(manifest_payload.get("default_tools", []))
         if not readiness["all_ready"]:
-            blocking = ", ".join(
-                item["tool_name"] for item in readiness["blocking_tools"]
-            )
+            blocking = ", ".join(item["tool_name"] for item in readiness["blocking_tools"])
             raise ValueError(
                 "Requested tools are not ready for role creation"
                 + (f": {blocking}" if blocking else "")
             )
-        high_risk_tools = self._role_gap_high_risk_tools(
-            manifest_payload.get("default_tools", [])
-        )
+        high_risk_tools = self._role_gap_high_risk_tools(manifest_payload.get("default_tools", []))
         approval_to_consume = None
         if high_risk_tools:
             if approval_id:
@@ -1357,9 +1342,7 @@ Propose a new role to fill this gap. Return JSON with:
         if existing_manifest:
             manifest = existing_manifest
         else:
-            manifest = await self.create_role_manifest(
-                self._object_from_dict(manifest_payload)
-            )
+            manifest = await self.create_role_manifest(self._object_from_dict(manifest_payload))
 
         agent = await self.instantiate_role(
             manifest["id"],
@@ -1454,6 +1437,7 @@ Propose a new role to fill this gap. Return JSON with:
         # policy == "sensitive": check OPA
         try:
             import httpx
+
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"{settings.opa_api_url}/v1/data/cyberteam/approval/needs_approval",
@@ -1493,6 +1477,7 @@ Propose a new role to fill this gap. Return JSON with:
                 action_type=action_type,
                 target_type=target_type,
                 target_id=target_id,
+                binding_hash=self._approval_binding_hash(payload),
             )
             if existing:
                 return existing.id
@@ -1538,6 +1523,7 @@ Propose a new role to fill this gap. Return JSON with:
         action_type: str,
         target_type: str | None,
         target_id: str | None,
+        binding_hash: str | None = None,
     ) -> ApprovalRequest | None:
         if not target_type or not target_id:
             return None
@@ -1560,6 +1546,8 @@ Propose a new role to fill this gap. Return JSON with:
                 needs_commit = True
                 continue
             if approval.status == "pending":
+                if not self._approval_binding_matches(approval, binding_hash):
+                    continue
                 if needs_commit:
                     await session.commit()
                 return approval
@@ -1567,6 +1555,7 @@ Propose a new role to fill this gap. Return JSON with:
                 approval.status == "approved"
                 and approval.consumed_at is None
                 and (approval.expires_at is None or approval.expires_at >= now)
+                and self._approval_binding_matches(approval, binding_hash)
             ):
                 if needs_commit:
                     await session.commit()
@@ -1640,9 +1629,7 @@ Propose a new role to fill this gap. Return JSON with:
             raise ValueError("Decision must be 'approved' or 'rejected'")
         async with async_session() as session:
             result = await session.execute(
-                select(ApprovalRequest)
-                .where(ApprovalRequest.id == approval_id)
-                .with_for_update()
+                select(ApprovalRequest).where(ApprovalRequest.id == approval_id).with_for_update()
             )
             req = result.scalar_one_or_none()
             if not req:
@@ -1698,6 +1685,7 @@ Propose a new role to fill this gap. Return JSON with:
         approval_id: str | None,
         target_type: str | None = None,
         target_id: str | None = None,
+        binding_hash: str | None = None,
     ) -> bool:
         if not approval_id:
             return False
@@ -1720,6 +1708,8 @@ Propose a new role to fill this gap. Return JSON with:
                 return False
             if target_id and req.target_id and req.target_id != target_id:
                 return False
+            if not self._approval_binding_matches(req, binding_hash):
+                return False
             return True
 
     async def consume_approval(
@@ -1728,7 +1718,31 @@ Propose a new role to fill this gap. Return JSON with:
         consumer: str = "system",
         target_type: str | None = None,
         target_id: str | None = None,
+        binding_hash: str | None = None,
     ) -> None:
+        async def _no_mutation(_session: Any, _request: ApprovalRequest) -> None:
+            return None
+
+        await self.consume_approval_with_mutation(
+            approval_id,
+            consumer=consumer,
+            target_type=target_type,
+            target_id=target_id,
+            binding_hash=binding_hash,
+            mutation=_no_mutation,
+        )
+
+    async def consume_approval_with_mutation(
+        self,
+        approval_id: str,
+        *,
+        consumer: str,
+        target_type: str | None,
+        target_id: str | None,
+        binding_hash: str | None,
+        mutation: Callable[[Any, ApprovalRequest], Awaitable[Any]],
+    ) -> Any:
+        """Consume an approval and commit its internal mutation atomically."""
         async with async_session() as session:
             req = (
                 await session.execute(
@@ -1752,6 +1766,9 @@ Propose a new role to fill this gap. Return JSON with:
                 raise ValueError(f"Approval request {approval_id} is not valid for {target_type}")
             if target_id and req.target_id and req.target_id != target_id:
                 raise ValueError(f"Approval request {approval_id} is not valid for {target_id}")
+            if not self._approval_binding_matches(req, binding_hash):
+                raise ValueError(f"Approval request {approval_id} payload binding does not match")
+            result = await mutation(session, req)
             req.consumed_at = utc_now()
             await session.commit()
         if self._audit:
@@ -1762,10 +1779,32 @@ Propose a new role to fill this gap. Return JSON with:
                 resource_type="approval",
                 resource_id=approval_id,
                 action="consume",
-                metadata={"target_type": target_type, "target_id": target_id},
+                metadata={
+                    "target_type": target_type,
+                    "target_id": target_id,
+                    "binding_hash": binding_hash,
+                },
             )
         if self._metrics:
             self._metrics.record_approval_event("consumed", "success", req.risk_level)
+        return result
+
+    @staticmethod
+    def _approval_binding_hash(payload: dict | None) -> str | None:
+        binding = (payload or {}).get("approval_binding") or {}
+        value = str(binding.get("request_hash") or "").strip()
+        return value or None
+
+    @classmethod
+    def _approval_binding_matches(
+        cls,
+        approval: ApprovalRequest,
+        expected_hash: str | None,
+    ) -> bool:
+        stored_hash = cls._approval_binding_hash(approval.action_payload)
+        if expected_hash:
+            return stored_hash == expected_hash
+        return stored_hash is None
 
     async def approval_status(
         self,
@@ -1799,16 +1838,10 @@ Propose a new role to fill this gap. Return JSON with:
                 "risk_level": approval.risk_level,
                 "target_type": approval.target_type,
                 "target_id": approval.target_id,
-                "consumed_at": (
-                    approval.consumed_at.isoformat() if approval.consumed_at else None
-                ),
-                "expires_at": (
-                    approval.expires_at.isoformat() if approval.expires_at else None
-                ),
+                "consumed_at": (approval.consumed_at.isoformat() if approval.consumed_at else None),
+                "expires_at": (approval.expires_at.isoformat() if approval.expires_at else None),
                 "created_at": approval.created_at.isoformat(),
-                "resolved_at": (
-                    approval.resolved_at.isoformat() if approval.resolved_at else None
-                ),
+                "resolved_at": (approval.resolved_at.isoformat() if approval.resolved_at else None),
             }
 
     # ─── Agent Status ─────────────────────────────────────────────────
@@ -1891,8 +1924,7 @@ Propose a new role to fill this gap. Return JSON with:
         if tool_readiness:
             config["tool_readiness"] = tool_readiness
             config["unavailable_tools"] = [
-                item for item in tool_readiness
-                if item["state"] not in {"live", "advisory"}
+                item for item in tool_readiness if item["state"] not in {"live", "advisory"}
             ]
         else:
             config.pop("tool_readiness", None)
@@ -1902,9 +1934,7 @@ Propose a new role to fill this gap. Return JSON with:
             return agent
 
         async with async_session() as session:
-            result = await session.execute(
-                select(Agent).where(Agent.id == agent["id"])
-            )
+            result = await session.execute(select(Agent).where(Agent.id == agent["id"]))
             db_agent = result.scalar_one_or_none()
             if not db_agent:
                 return agent
@@ -1931,13 +1961,15 @@ Propose a new role to fill this gap. Return JSON with:
             if not get_readiness:
                 continue
             readiness = get_readiness(tool_name)
-            report.append({
-                "tool_name": tool_name,
-                "state": readiness["state"],
-                "reason": readiness["readiness_reason"],
-                "side_effects": readiness["side_effects"],
-                "requires_configuration": readiness["requires_configuration"],
-            })
+            report.append(
+                {
+                    "tool_name": tool_name,
+                    "state": readiness["state"],
+                    "reason": readiness["readiness_reason"],
+                    "side_effects": readiness["side_effects"],
+                    "requires_configuration": readiness["requires_configuration"],
+                }
+            )
         return report
 
     def _role_gap_tool_readiness(self, tool_names: list[str]) -> dict:
@@ -2332,9 +2364,7 @@ Propose a new role to fill this gap. Return JSON with:
             excluded_tools = []
         role_name = self._role_gap_role_name(gap, definition.name)
         company_name = (
-            company_profile.get("name")
-            or company_profile.get("company_name")
-            or settings.app_name
+            company_profile.get("name") or company_profile.get("company_name") or settings.app_name
         )
         company_namespace = gap.get("company_namespace") or "company:default"
         instructions = (
@@ -2477,8 +2507,7 @@ Propose a new role to fill this gap. Return JSON with:
                 *[
                     self.TOOL_ALIASES.get(tool_name, tool_name)
                     for tool_name in default_tools
-                    if self.TOOL_ALIASES.get(tool_name, tool_name)
-                    in self.KNOWLEDGE_SAFE_ROLE_TOOLS
+                    if self.TOOL_ALIASES.get(tool_name, tool_name) in self.KNOWLEDGE_SAFE_ROLE_TOOLS
                 ],
                 *safe_requested_tools,
             ]
@@ -2548,9 +2577,7 @@ Propose a new role to fill this gap. Return JSON with:
                 "risk_level": approval.risk_level,
                 "action_payload": approval.action_payload,
                 "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
-                "consumed_at": (
-                    approval.consumed_at.isoformat() if approval.consumed_at else None
-                ),
+                "consumed_at": (approval.consumed_at.isoformat() if approval.consumed_at else None),
                 "created_at": approval.created_at.isoformat(),
             }
 
@@ -2694,9 +2721,7 @@ Propose a new role to fill this gap. Return JSON with:
         rationale = [f"Mapped the gap to the {family} role family."]
         if gap.get("requested_tools"):
             rationale.append(
-                "The gap explicitly requested tools: "
-                + ", ".join(gap["requested_tools"])
-                + "."
+                "The gap explicitly requested tools: " + ", ".join(gap["requested_tools"]) + "."
             )
         if gap.get("source_agent_id"):
             rationale.append(f"Reported by agent {gap['source_agent_id']}.")
@@ -2709,9 +2734,7 @@ Propose a new role to fill this gap. Return JSON with:
     ) -> dict:
         family = manifest_payload.get("family") or self._role_gap_family(gap)
         default = self._cadence_profile_for_family(str(family))
-        high_risk_tools = self._role_gap_high_risk_tools(
-            manifest_payload.get("default_tools", [])
-        )
+        high_risk_tools = self._role_gap_high_risk_tools(manifest_payload.get("default_tools", []))
         frequency = "daily" if gap.get("severity") in {"high", "critical"} else default["frequency"]
         if high_risk_tools:
             frequency = "daily"
@@ -3035,9 +3058,7 @@ Propose a new role to fill this gap. Return JSON with:
     def _requested_tools_for_text(self, text: str) -> list[str]:
         normalized = str(text or "").lower()
         tools = [
-            tool_name
-            for hint, tool_name in self.TOOL_NAME_HINTS.items()
-            if hint in normalized
+            tool_name for hint, tool_name in self.TOOL_NAME_HINTS.items() if hint in normalized
         ]
         return self._unique(tools)
 
@@ -3166,9 +3187,7 @@ Propose a new role to fill this gap. Return JSON with:
     @staticmethod
     def _org_structure(role_families: list[str]) -> dict:
         specialists = [
-            family
-            for family in role_families
-            if family not in {"company_builder", "supervisor"}
+            family for family in role_families if family not in {"company_builder", "supervisor"}
         ]
         return {
             "company_builder": "provisions and evolves the AI organization",
@@ -3179,4 +3198,5 @@ Propose a new role to fill this gap. Return JSON with:
 
 def slug_id(name: str) -> str:
     from slugify import slugify
+
     return slugify(name, separator="_", max_length=64)

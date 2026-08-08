@@ -9,7 +9,9 @@ from cyber_team.config import settings
 from cyber_team.db import Base
 from cyber_team.db.models import (
     ActionClassPolicy,
+    ActionPolicyValidationCase,
     Agent,
+    ApprovalRequest,
     AuditEvent,
     Workflow,
     WorkflowSpecification,
@@ -128,9 +130,7 @@ def workflow_spec(tool_name="safe_research", *, cycle=False, side_effect=False):
                 "depends_on": ["research"],
             },
         ],
-        "acceptance_tests": [
-            {"type": "state_key_exists", "state_key": "remember_output"}
-        ],
+        "acceptance_tests": [{"type": "state_key_exists", "state_key": "remember_output"}],
         "metrics": ["evidence_coverage"],
         "approval_policy": {"mode": "policy_gated"},
     }
@@ -223,20 +223,14 @@ async def test_policy_calculates_daily_financial_exposure_from_audit_history(
                 resource_type="action_envelope",
                 action="reversible_purchase",
                 outcome="success",
-                metadata_={
-                    "decision": {
-                        "envelope": {"financial_exposure_usd": 1900.0}
-                    }
-                },
+                metadata_={"decision": {"envelope": {"financial_exposure_usd": 1900.0}}},
                 created_at=utc_now(),
             )
         )
         await session.commit()
     service = ActionPolicyService(client_factory=FakeOPAClient)
 
-    decision = await service.evaluate(
-        envelope("research", financial_exposure_usd=200.0)
-    )
+    decision = await service.evaluate(envelope("research", financial_exposure_usd=200.0))
 
     assert decision["allowed"] is False
     assert "financial_daily_limit_exceeded" in decision["reasons"]
@@ -251,6 +245,7 @@ async def test_action_class_promotes_only_after_all_shadow_gates(
     monkeypatch.setattr(settings, "action_policy_shadow_days", 7)
     monkeypatch.setattr(settings, "action_policy_min_validated_cases", 10)
     monkeypatch.setattr(settings, "action_policy_min_evaluator_score", 0.8)
+    monkeypatch.setattr(settings, "action_policy_min_live_canaries", 1)
     async with compiler_session_factory() as session:
         session.add(
             ActionClassPolicy(
@@ -272,12 +267,235 @@ async def test_action_class_promotes_only_after_all_shadow_gates(
     service = ActionPolicyService(client_factory=FakeOPAClient)
 
     result = await service.record_validated_case(
-        "external_communication", compliant=True, evaluator_score=0.9
+        "external_communication",
+        compliant=True,
+        evaluator_score=0.9,
+        execution_mode="live_canary",
     )
 
     assert result["status"] == "active"
     assert result["auto_execute_enabled"] is True
     assert result["validated_cases"] == 10
+    assert result["live_canary_cases"] == 1
+
+
+@pytest.mark.asyncio
+async def test_action_class_does_not_promote_without_live_canary(
+    compiler_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "action_policy_shadow_days", 0)
+    monkeypatch.setattr(settings, "action_policy_min_validated_cases", 10)
+    monkeypatch.setattr(settings, "action_policy_min_evaluator_score", 0.8)
+    monkeypatch.setattr(settings, "action_policy_min_live_canaries", 1)
+    async with compiler_session_factory() as session:
+        session.add(
+            ActionClassPolicy(
+                id="policy-shadow-no-canary",
+                action_class="communications",
+                version=1,
+                status="shadow",
+                permanent_gate=False,
+                auto_execute_enabled=False,
+                thresholds=ActionPolicyService.default_thresholds(),
+                validated_cases=9,
+                hard_policy_compliance=1.0,
+                evaluator_score=0.9,
+                high_severity_findings=0,
+                shadow_started_at=utc_now() - timedelta(days=8),
+                metadata_={"shadow_validated_cases": 9, "live_canary_cases": 0},
+            )
+        )
+        await session.commit()
+    service = ActionPolicyService(client_factory=FakeOPAClient)
+
+    result = await service.record_validated_case(
+        "communications",
+        compliant=True,
+        evaluator_score=1.0,
+        execution_mode="shadow",
+    )
+
+    assert result["status"] == "shadow"
+    assert result["auto_execute_enabled"] is False
+    assert result["validated_cases"] == 10
+    assert result["shadow_validated_cases"] == 10
+    assert result["live_canary_cases"] == 0
+
+
+@pytest.mark.asyncio
+async def test_shadow_suite_is_durable_idempotent_and_side_effect_free(
+    compiler_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "action_policy_shadow_days", 0)
+    monkeypatch.setattr(settings, "action_policy_min_validated_cases", 10)
+    monkeypatch.setattr(settings, "action_policy_min_evaluator_score", 0.8)
+    monkeypatch.setattr(settings, "action_policy_min_live_canaries", 1)
+    service = ActionPolicyService(client_factory=FakeOPAClient)
+
+    first = await service.generate_shadow_suite("communications")
+    second = await service.generate_shadow_suite("communications")
+    cases = await service.list_validation_cases(action_class="communications")
+
+    assert first["case_count"] == 10
+    assert first["validated_count"] == 10
+    assert first["duplicate_count"] == 0
+    assert second["duplicate_count"] == 10
+    assert len(cases) == 10
+    assert all(item["mode"] == "shadow" for item in cases)
+    assert all(item["external_side_effect_executed"] is False for item in cases)
+    assert all(item["compliant"] is True for item in cases)
+    assert all(item["counted_at"] for item in cases)
+    assert first["policy"]["status"] == "shadow"
+    assert first["policy"]["validated_cases"] == 10
+    assert first["policy"]["live_canary_cases"] == 0
+    async with compiler_session_factory() as session:
+        stored_count = await session.scalar(select(func.count(ActionPolicyValidationCase.id)))
+    assert stored_count == 10
+
+
+@pytest.mark.asyncio
+async def test_live_canary_replays_approved_payload_and_promotes_from_durable_case(
+    compiler_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "action_policy_shadow_days", 0)
+    monkeypatch.setattr(settings, "action_policy_min_validated_cases", 1)
+    monkeypatch.setattr(settings, "action_policy_min_evaluator_score", 0.8)
+    monkeypatch.setattr(settings, "action_policy_min_live_canaries", 1)
+    service = ActionPolicyService(client_factory=FakeOPAClient)
+    canary_envelope = envelope(
+        "communications",
+        actor="communications-agent",
+        target_id="send_email",
+        expected_effect="Send one synthetic canary email.",
+        external_side_effect=True,
+        recipients=1,
+        data_sensitivity="synthetic",
+        confidence=0.95,
+    )
+    params = {
+        "to_address": "owner-canary@example.com",
+        "subject": "[Cyber-Team Canary] policy validation",
+        "body": "Synthetic policy canary.",
+    }
+    staged = await service.stage_live_canary_case(
+        "communications",
+        scenario_key="one_recipient_email",
+        action_envelope=canary_envelope,
+        payload_summary={"recipient_count": 1},
+        execution_request={
+            "agent_id": "communications-agent",
+            "tool_name": "send_email",
+            "params": params,
+        },
+        observer_review={"id": "observer-1", "status": "agreed"},
+        actor="owner@example.com",
+        validation_case_id="actcase-live-email",
+    )
+    normalized = service.normalize_envelope(canary_envelope)
+    binding = ToolRegistry._approval_binding("send_email", params, normalized)
+    async with compiler_session_factory() as session:
+        stored = await session.get(ActionPolicyValidationCase, staged["id"])
+        assert stored.execution_request == {
+            "agent_id": "communications-agent",
+            "tool_name": "send_email",
+            "params_hash": ToolRegistry._stable_hash(params),
+        }
+        session.add(
+            ApprovalRequest(
+                id="approval-live-email",
+                agent_id="communications-agent",
+                action_type="tool:send_email",
+                action_description="Execute synthetic canary.",
+                action_payload={
+                    "tool_name": "send_email",
+                    "params": params,
+                    "approval_binding": binding,
+                },
+                requester="communications-agent",
+                requester_type="agent",
+                risk_level="high",
+                target_type="tool",
+                target_id="send_email",
+                status="approved",
+                reviewer="owner@example.com",
+                resolved_at=utc_now(),
+            )
+        )
+        await session.commit()
+    attached = await service.attach_live_canary_approval(
+        staged["id"],
+        approval_id="approval-live-email",
+        approval_binding=binding,
+        actor="owner@example.com",
+    )
+    replay = await service.get_live_canary_execution_request(staged["id"])
+    executed = await service.record_live_canary_execution(
+        staged["id"],
+        execution_result={"success": True, "output": {"status": "sent"}},
+        actor="owner@example.com",
+    )
+    adjudicated = await service.adjudicate_live_canary(
+        staged["id"],
+        compliant=True,
+        evaluator_score=1.0,
+        note="Owner confirmed delivery.",
+        actor="owner@example.com",
+    )
+    cases = await service.list_validation_cases(action_class="communications")
+
+    assert attached["status"] == "awaiting_owner_approval"
+    assert replay["execution_request"]["params"] == params
+    assert executed["status"] == "pending_owner_adjudication"
+    assert adjudicated["status"] == "validated"
+    assert adjudicated["policy"]["status"] == "active"
+    assert adjudicated["policy"]["live_canary_cases"] == 1
+    assert len(cases[0]["events"]) == 5
+    assert "execution_request" not in cases[0]
+    assert cases[0]["external_side_effect_executed"] is True
+
+
+@pytest.mark.asyncio
+async def test_live_canary_rejects_tampered_approval_binding(
+    compiler_session_factory,
+):
+    service = ActionPolicyService(client_factory=FakeOPAClient)
+    canary_envelope = envelope(
+        "erpnext",
+        actor="product-agent",
+        target_id="task_create",
+        external_side_effect=True,
+        data_sensitivity="synthetic",
+    )
+    staged = await service.stage_live_canary_case(
+        "erpnext",
+        scenario_key="synthetic_task",
+        action_envelope=canary_envelope,
+        payload_summary={"record_count": 1},
+        execution_request={
+            "agent_id": "product-agent",
+            "tool_name": "task_create",
+            "params": {"task_data": {"subject": "[CYBERTEAM-CANARY] test"}},
+        },
+        observer_review={"id": "observer-2", "status": "agreed"},
+        actor="owner@example.com",
+    )
+
+    with pytest.raises(ValueError, match="parameters do not match"):
+        await service.attach_live_canary_approval(
+            staged["id"],
+            approval_id="approval-tampered",
+            approval_binding={
+                "params_hash": "wrong",
+                "action_envelope_hash": service._hash(
+                    service.normalize_envelope(canary_envelope)
+                ),
+                "request_hash": "wrong",
+            },
+            actor="owner@example.com",
+        )
 
 
 @pytest.mark.asyncio
@@ -302,9 +520,7 @@ async def test_safe_spec_activates_and_deduplicates(compiler_session_factory):
     assert first["sandbox_result"]["valid"] is True
     assert second["duplicate"] is True
     async with compiler_session_factory() as session:
-        assert (
-            await session.execute(select(func.count(Workflow.id)))
-        ).scalar_one() == 1
+        assert (await session.execute(select(func.count(Workflow.id)))).scalar_one() == 1
         assert (
             await session.execute(select(func.count(WorkflowSpecification.id)))
         ).scalar_one() == 1
@@ -340,7 +556,4 @@ async def test_dependency_cycle_is_blocked(compiler_session_factory):
     )
 
     assert result["status"] == "blocked"
-    assert any(
-        error.startswith("dependency_cycle")
-        for error in result["sandbox_result"]["errors"]
-    )
+    assert any(error.startswith("dependency_cycle") for error in result["sandbox_result"]["errors"])

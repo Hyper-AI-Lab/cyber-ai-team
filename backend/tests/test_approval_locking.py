@@ -247,6 +247,41 @@ async def test_approval_is_executable_locks_row(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_approval_binding_rejects_modified_payload(monkeypatch):
+    request = approval_request()
+    request.action_payload = {"approval_binding": {"request_hash": "approved-payload-hash"}}
+    patch_session(monkeypatch, request)
+
+    result = await AgentManager().approval_is_executable(
+        "approval-1",
+        target_type="tool",
+        target_id="send_email",
+        binding_hash="modified-payload-hash",
+    )
+
+    assert result is False
+    assert request.consumed_at is None
+
+
+@pytest.mark.asyncio
+async def test_consume_approval_requires_exact_payload_binding(monkeypatch):
+    request = approval_request()
+    request.action_payload = {"approval_binding": {"request_hash": "approved-payload-hash"}}
+    patch_session(monkeypatch, request)
+
+    with pytest.raises(ValueError, match="payload binding does not match"):
+        await AgentManager().consume_approval(
+            "approval-1",
+            consumer="tool:send_email",
+            target_type="tool",
+            target_id="send_email",
+            binding_hash="modified-payload-hash",
+        )
+
+    assert request.consumed_at is None
+
+
+@pytest.mark.asyncio
 async def test_consume_approval_locks_row(monkeypatch):
     request = approval_request()
     session = patch_session(monkeypatch, request)

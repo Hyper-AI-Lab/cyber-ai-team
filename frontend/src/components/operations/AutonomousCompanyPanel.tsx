@@ -14,6 +14,7 @@ import {
   TriangleAlert,
 } from 'lucide-react'
 import { api } from '@/lib/api'
+import ActionPolicyValidationPanel from './ActionPolicyValidationPanel'
 
 interface Props {
   readiness?: any
@@ -189,6 +190,7 @@ export default function AutonomousCompanyPanel({ readiness, onChanged }: Props) 
 
       {events.some((item) => item.status === 'pending') && <div className="mt-4 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /><span>Pending events are waiting for outbox delivery or mandate routing. The next Temporal cycle will reconcile them.</span></div>}
       {section.work_portfolio?.blocking && <div className="mt-4 flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /><span>{section.work_portfolio.detail || 'The work portfolio requires bounded recovery before domain expansion.'}</span></div>}
+      <ActionPolicyValidationPanel onChanged={onChanged} />
     </section>
   )
 }

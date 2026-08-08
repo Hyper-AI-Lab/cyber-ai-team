@@ -128,7 +128,8 @@ class OutcomeLearningService:
         await self._record_graph(work, result)
         policy = work.policy_decision or {}
         action_class = policy.get("action_class")
-        if action_class and policy.get("external_side_effect"):
+        validation_case_id = str(policy.get("validation_case_id") or "").strip()
+        if action_class and policy.get("external_side_effect") and validation_case_id:
             result["action_policy"] = await self._policy.record_validated_case(
                 action_class,
                 compliant=not guardrails,
@@ -136,7 +137,14 @@ class OutcomeLearningService:
                 high_severity_findings=sum(
                     1 for item in guardrails if item.get("severity") == "high"
                 ),
+                validation_case_id=validation_case_id,
+                execution_mode=str(policy.get("validation_execution_mode") or "live_canary"),
             )
+        elif action_class and policy.get("external_side_effect"):
+            result["action_policy"] = {
+                "status": "not_counted",
+                "reason": "durable_validation_case_required",
+            }
         if self._audit:
             await self._audit.record_control_evidence(
                 control_id="autonomy.outcome_assessment",

@@ -837,6 +837,64 @@ describe('ApiClient', () => {
     })
   })
 
+  it('lists and generates durable action-policy validation cases', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'actcase-1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ case_count: 10, validated_count: 10 }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'actcase-live', approval_id: 'approval-1' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'actcase-live', status: 'pending_owner_adjudication' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'actcase-live', status: 'validated' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+
+    client.setTokens('access-1')
+    await client.listActionPolicyValidationCases('communications', {
+      mode: 'shadow',
+      status: 'validated',
+      limit: 25,
+    })
+    await client.generateActionPolicyShadowSuite('communications')
+    await client.stageActionPolicyLiveCanary('communications', {
+      scenario_key: 'one_recipient_email',
+      agent_id: 'communications-agent',
+      tool_name: 'send_email',
+      params: { to_address: 'canary@example.com' },
+      expected_effect: 'Send one synthetic email.',
+      evidence_ids: ['evidence-1'],
+    })
+    await client.executeActionPolicyLiveCanary('actcase-live')
+    await client.adjudicateActionPolicyLiveCanary('actcase-live', {
+      compliant: true,
+      evaluator_score: 1,
+      note: 'Owner confirmed delivery.',
+    })
+
+    const url = new URL(fetchMock.mock.calls[0][0] as string)
+    expect(url.pathname).toBe(
+      '/api/operations/action-class-policies/communications/validation-cases',
+    )
+    expect(url.searchParams.get('mode')).toBe('shadow')
+    expect(url.searchParams.get('status')).toBe('validated')
+    expect(url.searchParams.get('limit')).toBe('25')
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/operations/action-class-policies/communications'
+      + '/validation-cases/generate',
+    )
+    expect(fetchMock.mock.calls[1][1]?.method).toBe('POST')
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/operations/action-class-policies/communications'
+      + '/validation-cases/canary',
+    )
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      'http://api.test/api/operations/action-class-policies/validation-cases/'
+      + 'actcase-live/execute',
+    )
+    expect(fetchMock.mock.calls[4][0]).toBe(
+      'http://api.test/api/operations/action-class-policies/validation-cases/'
+      + 'actcase-live/adjudicate',
+    )
+  })
+
   it('manages role gaps through the authenticated API client', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'gap-1' }]))

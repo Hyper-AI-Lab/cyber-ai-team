@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
@@ -38,12 +38,14 @@ async def test_approved_tool_execution_consumes_single_use_approval():
         "approval-1",
         target_type="tool",
         target_id="send_email",
+        binding_hash=ANY,
     )
     manager.consume_approval.assert_awaited_once_with(
         "approval-1",
         consumer="tool:send_email",
         target_type="tool",
         target_id="send_email",
+        binding_hash=ANY,
     )
 
 
@@ -72,6 +74,9 @@ async def test_tool_execution_requests_approval_before_sensitive_side_effect():
     assert result.output["tool_name"] == "send_email"
     assert result.output["risk_level"] == "high"
     assert result.output["target"] == {"type": "tool", "id": "send_email"}
+    assert result.output["approval_binding"]["version"] == ("tool-approval-binding-v1")
+    request_payload = manager._request_approval.await_args.args[3]
+    assert request_payload["approval_binding"] == result.output["approval_binding"]
     assert result.output["replay_instructions"]["path"] == "/api/tools/execute"
     assert comms.sent == []
     manager._request_approval.assert_awaited_once()
@@ -108,6 +113,7 @@ async def test_invalid_explicit_approval_blocks_without_creating_replacement():
         "expired-approval",
         target_type="tool",
         target_id="send_email",
+        binding_hash=ANY,
     )
     manager._request_approval.assert_not_awaited()
 

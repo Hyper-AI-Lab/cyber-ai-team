@@ -232,7 +232,19 @@ class AutonomousCompanyReadinessService:
                     "status": item.status,
                     "validated_cases": item.validated_cases,
                     "required_cases": settings.action_policy_min_validated_cases,
+                    "shadow_validated_cases": int(
+                        (item.metadata_ or {}).get("shadow_validated_cases") or 0
+                    ),
+                    "live_canary_cases": int(
+                        (item.metadata_ or {}).get("live_canary_cases") or 0
+                    ),
+                    "required_live_canaries": settings.action_policy_min_live_canaries,
                     "evaluator_score": item.evaluator_score,
+                    "minimum_evaluator_score": (
+                        settings.action_policy_min_evaluator_score
+                    ),
+                    "hard_policy_compliance": item.hard_policy_compliance,
+                    "high_severity_findings": item.high_severity_findings,
                     "permanent_gate": item.permanent_gate,
                 }
                 for item in policies

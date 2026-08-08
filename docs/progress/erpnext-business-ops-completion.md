@@ -6079,3 +6079,95 @@
   - `/home/projects/cyber-team/dist/ci/github-ci-20260805T040031Z.json`.
 - Next step:
   - Publish this final documentation head, require exact-head push and manual CI once more, then tag and publish release `v0.3.15`.
+
+### 2026-08-08T04:19:31Z — STEP-233 — Hardened grounding-finding recovery and tool authority checks
+- Files/services changed:
+  - Updated the work-portfolio grounding lifecycle so a reopened authoritative-memory finding archives its prior resolution, clears stale resolved metadata, and records a fresh recovery history.
+  - Added a durable agent/mandate/domain tool-authority check used by bounded live canaries.
+- Commands run:
+  - Focused Ruff, compileall, and work-portfolio regression tests.
+- Result:
+  - Reopened findings can no longer appear resolved while actively blocking a domain, and canary agents must hold the exact tool in both their active agent record and active mandate.
+  - Focused work-portfolio and authority tests passed as part of the `103`-test control-plane suite.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/work_portfolio.py`.
+  - `/home/projects/cyber-team/backend/tests/test_work_portfolio.py`.
+- Next step:
+  - Persist individual action-policy validation cases and prevent aggregate or synthetic evidence from silently promoting action classes.
+
+### 2026-08-08T04:19:31Z — STEP-234 — Added durable redacted action-policy validation evidence
+- Files/services changed:
+  - Added Alembic revision `0016` and the `action_policy_validation_cases` and append-only `action_policy_validation_events` models.
+  - Added idempotent ten-case deterministic shadow suites for communications and ERPNext plus a reviewed live-canary lifecycle.
+  - Validation cases retain parameter hashes and bounded summaries; exact replay payloads remain in the owner approval record and are not duplicated in policy evidence.
+  - Ordinary outcome assessments without a durable validation-case ID are explicitly not counted toward action-class promotion.
+- Commands run:
+  - Focused Ruff, compileall, action-policy, outcome-learning, and migration-source checks.
+- Result:
+  - Shadow generation is idempotent and side-effect free; live evidence requires Observer agreement, exact approval replay, successful execution, and owner adjudication.
+  - Direct policy lifecycle tests passed, including redaction, event ordering, tamper rejection, and the live-canary promotion gate.
+- Evidence:
+  - `/home/projects/cyber-team/backend/alembic/versions/0016_action_policy_validation_cases.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/operations/action_policy.py`.
+  - `/home/projects/cyber-team/backend/tests/test_action_policy_and_workflow_compiler.py`.
+- Next step:
+  - Bind owner approvals to exact tool parameters/action envelopes and provide a one-tool scoped communications grant path.
+
+### 2026-08-08T04:19:31Z — STEP-235 — Bound approvals to exact payloads and made scoped grants atomic
+- Files/services changed:
+  - Added stable hashes for validated tool parameters and normalized action envelopes to every approval-gated tool request.
+  - Hardened approval selection, executable checks, consumption, replay rejection, and mismatch handling against the exact binding.
+  - Added scoped agent tool-grant request/apply APIs and atomically consume approval while updating the agent, mandate, and capability-grant record under row locks.
+- Commands run:
+  - Focused Ruff and approval/tool/team-activation regression tests.
+- Result:
+  - Missing, expired, consumed, wrong-target, or payload-mismatched approvals fail closed.
+  - Scoped grants cannot partially mutate authority if their mandate or approval validation fails, and approvals are single use.
+  - The focused control-plane suite passed `103` tests with one known upstream Starlette test-client deprecation warning.
+- Evidence:
+  - `/home/projects/cyber-team/backend/src/cyber_team/tools/registry.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/agents/manager.py`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/roles/team_activation.py`.
+  - `/home/projects/cyber-team/backend/tests/test_team_activation.py`.
+- Next step:
+  - Expose validation evidence and owner-controlled canary execution/adjudication in Operations.
+
+### 2026-08-08T04:19:31Z — STEP-236 — Completed owner-visible action validation controls
+- Files/services changed:
+  - Added owner-authorized APIs to list/generate validation cases, stage bounded communications/ERPNext canaries, execute an exactly approved canary, and record owner adjudication.
+  - Added Operations UI policy evidence, shadow-suite controls, live-canary status, approved execution, and confirm/fail actions.
+  - Extended readiness with per-class shadow/live counts, thresholds, evaluator scores, compliance, and findings.
+- Commands run:
+  - `npm test -- --run src/lib/api.test.ts`.
+  - `npx tsc --noEmit`.
+  - `npm run build`.
+- Result:
+  - All `26` frontend API-client tests passed, direct TypeScript validation passed, and the Next.js `15.5.22` production build completed successfully.
+  - The UI exposes only redacted validation records; exact payload execution remains server-side and approval-bound.
+- Evidence:
+  - `/home/projects/cyber-team/frontend/src/components/operations/ActionPolicyValidationPanel.tsx`.
+  - `/home/projects/cyber-team/frontend/src/lib/api.ts`.
+  - `/home/projects/cyber-team/backend/src/cyber_team/api/routes/operations.py`.
+- Next step:
+  - Run the complete quality and migration gates, build the immutable release, and deploy backup-first before generating live staging shadow evidence.
+
+### 2026-08-08T04:50:17Z — STEP-237 — Closed dependency, migration, and scheduled-CI evidence failures
+- Files/services changed:
+  - Pinned the MIT-licensed `nanoid` transitive dependency to patched version `3.3.17` through the frontend override and lockfile.
+  - Shortened Alembic revision `0016` to fit the standard PostgreSQL `alembic_version.version_num` width.
+  - Corrected GitHub CI evidence classification so a completed failed scheduled run is degraded, not pending/ready, and its failing jobs remain visible.
+  - Advanced release metadata to `0.3.16` and reclaimed only Docker build cache unused for more than 24 hours; no runtime image, container, volume, or application data was removed.
+- Commands run:
+  - Full quality gate attempts, `npm audit`, `npm ci`, direct package-tree verification, real PostgreSQL migration rehearsal, `docker builder prune --filter until=24h`, GitHub run inspection, and focused CI-evidence regression test.
+- Result:
+  - Frontend runtime audit now reports zero vulnerabilities and installs `nanoid@3.3.17`; the same correction addresses the scheduled Trivy image finding.
+  - Real PostgreSQL migration rehearsals passed both legacy pre-Alembic and representative seeded `0001` upgrade paths through `0016`.
+  - CI evidence now truthfully reports the exact-head August 8 scheduled run as degraded with Frontend and Docker Image Scan failures; the candidate dependency fix must pass a new public run before readiness can return to green.
+  - Docker free space increased from `5.9 GB` to `17 GB` without touching persistent data.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31239512300`.
+  - `/home/projects/cyber-team/dist/ci/github-ci-20260808T045007Z.json`.
+  - `/home/projects/cyber-team/backend/tests/test_github_ci_evidence.py`.
+  - `/home/projects/cyber-team/frontend/package-lock.json`.
+- Next step:
+  - Commit the exact `0.3.16` candidate, pass public push/manual CI and immutable release scans, then promote backup-first to staging.

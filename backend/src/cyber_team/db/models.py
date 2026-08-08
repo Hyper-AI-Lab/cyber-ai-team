@@ -664,9 +664,7 @@ class CompanyObjective(Base):
 
 class OperatingKPIDefinition(Base):
     __tablename__ = "operating_kpi_definitions"
-    __table_args__ = (
-        UniqueConstraint("key", name="uq_operating_kpi_definitions_key"),
-    )
+    __table_args__ = (UniqueConstraint("key", name="uq_operating_kpi_definitions_key"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     key: Mapped[str] = mapped_column(String(120), index=True)
@@ -698,9 +696,7 @@ class OperatingKPIObservation(Base):
 
 class ExecutiveBenchmarkDefinition(Base):
     __tablename__ = "executive_benchmark_definitions"
-    __table_args__ = (
-        UniqueConstraint("key", name="uq_executive_benchmark_definitions_key"),
-    )
+    __table_args__ = (UniqueConstraint("key", name="uq_executive_benchmark_definitions_key"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     key: Mapped[str] = mapped_column(String(120), index=True)
@@ -979,9 +975,7 @@ class EvidenceArtifact(Base):
 
 class CompanyClaim(Base):
     __tablename__ = "company_claims"
-    __table_args__ = (
-        UniqueConstraint("claim_hash", name="uq_company_claims_claim_hash"),
-    )
+    __table_args__ = (UniqueConstraint("claim_hash", name="uq_company_claims_claim_hash"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     company_namespace: Mapped[str] = mapped_column(String(200), index=True)
@@ -1450,6 +1444,95 @@ class ActionClassPolicy(Base):
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class ActionPolicyValidationCase(Base):
+    """Durable evidence for one shadow or live-canary policy decision."""
+
+    __tablename__ = "action_policy_validation_cases"
+    __table_args__ = (
+        UniqueConstraint(
+            "idempotency_key",
+            name="uq_action_policy_validation_cases_idempotency_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    action_class: Mapped[str] = mapped_column(String(120), index=True)
+    scenario_key: Mapped[str] = mapped_column(String(160), index=True)
+    mode: Mapped[str] = mapped_column(String(30), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="proposed", index=True)
+    action_envelope: Mapped[dict] = mapped_column(JSON, default=dict)
+    payload_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    expected_decision: Mapped[str] = mapped_column(String(30))
+    expected_reasons: Mapped[list] = mapped_column(JSON, default=list)
+    policy_decision: Mapped[dict] = mapped_column(JSON, default=dict)
+    observer_review: Mapped[dict] = mapped_column(JSON, default=dict)
+    owner_adjudication: Mapped[dict] = mapped_column(JSON, default=dict)
+    execution_request: Mapped[dict] = mapped_column(JSON, default=dict)
+    execution_result: Mapped[dict] = mapped_column(JSON, default=dict)
+    evaluator_score: Mapped[float] = mapped_column(Float, default=0.0)
+    compliant: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    high_severity_findings: Mapped[int] = mapped_column(Integer, default=0)
+    external_side_effect_executed: Mapped[bool] = mapped_column(Boolean, default=False)
+    work_item_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("business_work_items.id"),
+        nullable=True,
+        index=True,
+    )
+    approval_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("approval_requests.id"),
+        nullable=True,
+        index=True,
+    )
+    outcome_assessment_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("outcome_assessments.id"),
+        nullable=True,
+        index=True,
+    )
+    counted_policy_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("action_class_policies.id"),
+        nullable=True,
+        index=True,
+    )
+    evidence_ids: Mapped[list] = mapped_column(JSON, default=list)
+    idempotency_key: Mapped[str] = mapped_column(String(240), index=True)
+    created_by: Mapped[str] = mapped_column(String(200), default="policy_validator")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    assessed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    counted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class ActionPolicyValidationEvent(Base):
+    """Append-only lifecycle evidence for an action-policy validation case."""
+
+    __tablename__ = "action_policy_validation_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "validation_case_id",
+            "sequence",
+            name="uq_action_policy_validation_events_case_sequence",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    validation_case_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("action_policy_validation_cases.id"),
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    event_type: Mapped[str] = mapped_column(String(80), index=True)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    actor: Mapped[str] = mapped_column(String(200))
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
 
 
 class AutonomousPlan(Base):

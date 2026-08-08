@@ -952,6 +952,64 @@ class ApiClient {
     return this.request('/api/operations/action-class-policies');
   }
 
+  async listActionPolicyValidationCases(actionClass: string, filters: {
+    mode?: 'shadow' | 'live_canary';
+    status?: string;
+    limit?: number;
+  } = {}) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 200) });
+    if (filters.mode) params.set('mode', filters.mode);
+    if (filters.status) params.set('status', filters.status);
+    return this.request(
+      `/api/operations/action-class-policies/${encodeURIComponent(actionClass)}`
+      + `/validation-cases?${params.toString()}`,
+    );
+  }
+
+  async generateActionPolicyShadowSuite(actionClass: string) {
+    return this.request(
+      `/api/operations/action-class-policies/${encodeURIComponent(actionClass)}`
+      + '/validation-cases/generate',
+      { method: 'POST' },
+    );
+  }
+
+  async stageActionPolicyLiveCanary(actionClass: string, payload: {
+    scenario_key: string;
+    agent_id: string;
+    tool_name: 'send_email' | 'task_create';
+    params: Record<string, any>;
+    expected_effect: string;
+    evidence_ids: string[];
+    confidence?: number;
+  }) {
+    return this.request(
+      `/api/operations/action-class-policies/${encodeURIComponent(actionClass)}`
+      + '/validation-cases/canary',
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+  }
+
+  async executeActionPolicyLiveCanary(validationCaseId: string) {
+    return this.request(
+      `/api/operations/action-class-policies/validation-cases/`
+      + `${encodeURIComponent(validationCaseId)}/execute`,
+      { method: 'POST' },
+    );
+  }
+
+  async adjudicateActionPolicyLiveCanary(validationCaseId: string, payload: {
+    compliant: boolean;
+    evaluator_score: number;
+    note?: string;
+  }) {
+    return this.request(
+      `/api/operations/action-class-policies/validation-cases/`
+      + `${encodeURIComponent(validationCaseId)}/adjudicate`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+  }
+
   async updateCompanyObjectives(objectives: any[]) {
     return this.request('/api/operations/company-objectives', {
       method: 'PUT',

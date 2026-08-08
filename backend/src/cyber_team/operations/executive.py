@@ -1071,6 +1071,133 @@ class ExecutiveCompanyOSService:
         )
         return review
 
+    async def review_action_validation_case(
+        self,
+        *,
+        actor: str,
+        validation_case_id: str,
+        action_envelope: dict[str, Any],
+        policy_decision: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Review one external-action canary with read-only Observer authority."""
+        await self.ensure_observer_agent()
+        findings = []
+        if action_envelope.get("prompt_injection_suspected"):
+            findings.append(
+                {
+                    "severity": "high",
+                    "type": "prompt_injection",
+                    "detail": "The canary envelope contains injection-like evidence.",
+                }
+            )
+        if not action_envelope.get("external_side_effect"):
+            findings.append(
+                {
+                    "severity": "high",
+                    "type": "not_live_evidence",
+                    "detail": "The proposed live canary has no external side effect.",
+                }
+            )
+        if not action_envelope.get("evidence_ids"):
+            findings.append(
+                {
+                    "severity": "medium",
+                    "type": "missing_evidence",
+                    "detail": "The canary is not linked to durable evidence.",
+                }
+            )
+        if float(action_envelope.get("confidence") or 0) < settings.governor_min_confidence:
+            findings.append(
+                {
+                    "severity": "medium",
+                    "type": "low_confidence",
+                    "detail": "Canary confidence is below the autonomy threshold.",
+                }
+            )
+        for field, finding_type in (
+            ("benchmark_fresh", "stale_benchmark"),
+            ("memory_coverage_fresh", "stale_memory_coverage"),
+        ):
+            if not action_envelope.get(field):
+                findings.append(
+                    {
+                        "severity": "medium",
+                        "type": finding_type,
+                        "detail": f"Required {field.replace('_', ' ')} evidence is stale.",
+                    }
+                )
+        reasons = set(policy_decision.get("reasons") or [])
+        if policy_decision.get("source") == "fail_closed":
+            findings.append(
+                {
+                    "severity": "high",
+                    "type": "policy_unavailable",
+                    "detail": "OPA did not return an authoritative decision.",
+                }
+            )
+        if "permanent_owner_gate" in reasons:
+            findings.append(
+                {
+                    "severity": "high",
+                    "type": "permanent_gate",
+                    "detail": "Permanent-gate actions cannot be used as autonomy canaries.",
+                }
+            )
+        unresolved = [
+            item for item in findings if item["severity"] in {"high", "critical"}
+        ]
+        status = "agreed" if not findings else "escalated" if unresolved else "disagreed"
+        critique = (
+            "Observer agrees that the exact canary is bounded and owner-gated."
+            if status == "agreed"
+            else "Observer found unresolved canary evidence or policy concerns."
+        )
+        now = utc_now()
+        async with async_session() as session:
+            review = ObserverReview(
+                id=f"obs_{uuid.uuid4().hex[:16]}",
+                run_id=None,
+                status=status,
+                critique=critique,
+                findings=findings,
+                consensus_log=[
+                    {
+                        "speaker": "observer_agent",
+                        "message": (
+                            "Reviewed the immutable action envelope with no "
+                            "side-effect authority."
+                        ),
+                    },
+                    {
+                        "speaker": "chief_operating_agent",
+                        "message": "Execution remains paused pending exact owner approval.",
+                    },
+                ],
+                unresolved_objections=unresolved,
+                confidence=0.96 if status == "agreed" else 0.74,
+                metadata_={
+                    "validation_case_id": validation_case_id,
+                    "action_class": action_envelope.get("action_class"),
+                    "actions_reviewed": 1,
+                    "side_effect_authority": "none",
+                    "reviewed_at": now.isoformat(),
+                },
+            )
+            session.add(review)
+            await session.commit()
+            result = self._observer_review_to_dict(review)
+        await self._record_audit(
+            event_type="observer.action_validation_review",
+            actor=actor,
+            resource_id=review.id,
+            metadata={
+                "validation_case_id": validation_case_id,
+                "status": status,
+                "findings": len(findings),
+            },
+        )
+        return result
+
     async def observer_status(self) -> dict[str, Any]:
         async with async_session() as session:
             agent = await session.get(Agent, self.OBSERVER_AGENT_ID)

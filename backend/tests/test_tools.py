@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
@@ -29,7 +29,7 @@ async def test_contract_draft_success():
             "query": "Define equity split and IP assignment.",
             "context": {"description": "Initial cofounder alignment."},
             "content": " C-Corp split 50/50.",
-        }
+        },
     )
 
     assert result.success is True
@@ -60,7 +60,7 @@ async def test_policy_draft_success():
             "query": "Specify core working hours.",
             "context": {"description": "Transitioning to fully remote operations."},
             "content": "Core hours are 10:00 to 16:00 UTC.",
-        }
+        },
     )
 
     assert result.success is True
@@ -89,7 +89,7 @@ async def test_legal_tools_path_traversal_blocked():
         {
             "topic": "../../../etc/passwd",
             "query": "malicious query",
-        }
+        },
     )
     assert result_contract.success is False
     assert "Path traversal detected" in result_contract.error
@@ -99,7 +99,7 @@ async def test_legal_tools_path_traversal_blocked():
         {
             "topic": "../../../etc/passwd",
             "query": "malicious query",
-        }
+        },
     )
     assert result_policy.success is False
     assert "Path traversal detected" in result_policy.error
@@ -191,8 +191,7 @@ async def test_erpnext_business_tool_is_config_required_when_unconfigured(monkey
     monkeypatch.setattr("cyber_team.tools.registry.settings.erpnext_api_secret", "")
     registry = ToolRegistry()
     contract = next(
-        tool for tool in registry.list_tool_contracts()
-        if tool["name"] == "task_create"
+        tool for tool in registry.list_tool_contracts() if tool["name"] == "task_create"
     )
 
     assert contract["state"] == "configuration_required"
@@ -310,12 +309,14 @@ async def test_alias_email_tool_delegates_with_alias_approval_target():
         "approval-1",
         target_type="tool",
         target_id="email_send",
+        binding_hash=ANY,
     )
     manager.consume_approval.assert_awaited_once_with(
         "approval-1",
         consumer="tool:email_send",
         target_type="tool",
         target_id="email_send",
+        binding_hash=ANY,
     )
 
 
@@ -357,12 +358,14 @@ async def test_alias_crm_lead_create_delegates_to_erpnext(monkeypatch):
         "approval-2",
         target_type="tool",
         target_id="crm_lead_create",
+        binding_hash=ANY,
     )
     manager.consume_approval.assert_awaited_once_with(
         "approval-2",
         consumer="tool:crm_lead_create",
         target_type="tool",
         target_id="crm_lead_create",
+        binding_hash=ANY,
     )
 
 

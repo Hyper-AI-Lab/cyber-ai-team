@@ -131,9 +131,7 @@ async def test_all_active_agents_receive_versioned_idempotent_mandates(
     assert second["created"] == 0
     assert second["unchanged"] == 2
     async with portfolio_session_factory() as session:
-        assert (
-            await session.execute(select(func.count(AgentMandate.id)))
-        ).scalar_one() == 2
+        assert (await session.execute(select(func.count(AgentMandate.id)))).scalar_one() == 2
 
 
 @pytest.mark.asyncio
@@ -158,16 +156,10 @@ async def test_events_are_routed_once_or_deferred_with_capability_gap(
     assert first["counts"]["deferred"] == 1
     assert second["processed"] == 0
     async with portfolio_session_factory() as session:
-        works = (
-            await session.execute(select(BusinessWorkItem))
-        ).scalars().all()
+        works = (await session.execute(select(BusinessWorkItem))).scalars().all()
         gaps = (await session.execute(select(RoleGap))).scalars().all()
-        deliveries = (
-            await session.execute(select(BusinessEventDelivery))
-        ).scalars().all()
-        dispositions = (
-            await session.execute(select(BusinessEventDisposition))
-        ).scalars().all()
+        deliveries = (await session.execute(select(BusinessEventDelivery))).scalars().all()
+        dispositions = (await session.execute(select(BusinessEventDisposition))).scalars().all()
     assert len(works) == 1
     assert works[0].assigned_agent_id == "knowledge-agent"
     assert len(gaps) == 1
@@ -200,9 +192,7 @@ async def test_completed_audit_event_is_documented_as_no_action(
     assert result["counts"]["no_action"] == 1
     async with portfolio_session_factory() as session:
         works = (await session.execute(select(BusinessWorkItem))).scalars().all()
-        disposition = (
-            await session.execute(select(BusinessEventDisposition))
-        ).scalar_one()
+        disposition = (await session.execute(select(BusinessEventDisposition))).scalar_one()
     assert works == []
     assert disposition.disposition == "no_action"
 
@@ -285,16 +275,18 @@ async def test_historical_successful_audit_work_is_reconciled_but_failure_remain
         failed_work = await session.get(BusinessWorkItem, "work-failed")
         success_event = await session.get(BusinessEvent, "event-success")
         success_dispositions = (
-            await session.execute(
-                select(BusinessEventDisposition)
-                .where(BusinessEventDisposition.event_id == "event-success")
-                .order_by(BusinessEventDisposition.sequence)
+            (
+                await session.execute(
+                    select(BusinessEventDisposition)
+                    .where(BusinessEventDisposition.event_id == "event-success")
+                    .order_by(BusinessEventDisposition.sequence)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     assert success_work.status == "completed"
-    assert success_work.actual_outcome["classification"] == (
-        "informational_audit_no_action"
-    )
+    assert success_work.actual_outcome["classification"] == ("informational_audit_no_action")
     assert failed_work.status == "ready"
     assert success_event.status == "resolved"
     assert [item.disposition for item in success_dispositions] == [
@@ -364,9 +356,7 @@ async def test_dependency_blocked_work_wakes_after_predecessor_completion(
 
     leased_first = await service._lease_next("knowledge-agent", lease_seconds=60)
     assert leased_first.id == first["id"]
-    await service._finish_work(
-        first["id"], status="completed", outcome={"ok": True}, error=None
-    )
+    await service._finish_work(first["id"], status="completed", outcome={"ok": True}, error=None)
     leased_second = await service._lease_next("knowledge-agent", lease_seconds=60)
 
     assert second["status"] == "blocked_dependency"
@@ -410,9 +400,7 @@ async def test_role_loop_completes_advisory_work_without_side_effects(
         idempotency_key="work-advisory",
     )
 
-    result = await service.run_domain_loop(
-        "knowledge-agent", max_items=1, prepare=False
-    )
+    result = await service.run_domain_loop("knowledge-agent", max_items=1, prepare=False)
 
     assert result["processed"] == 1
     assert result["items"][0]["status"] == "completed"
@@ -554,18 +542,13 @@ async def test_role_loop_blocks_stale_role_gap_claim_against_live_state(
     assert item["status"] == "blocked"
     assert item["actual_outcome"]["created_work_item_ids"] == []
     assert item["actual_outcome"]["grounding"]["status"] == "blocked"
-    assert {
-        finding["type"]
-        for finding in item["actual_outcome"]["grounding"]["findings"]
-    } == {
+    assert {finding["type"] for finding in item["actual_outcome"]["grounding"]["findings"]} == {
         "authoritative_role_state_conflict",
         "unsupported_role_gap_proposal",
     }
     assert item["actual_outcome"]["completion_contract"]["satisfied"] is False
     async with portfolio_session_factory() as session:
-        assert (
-            await session.execute(select(func.count(BusinessWorkItem.id)))
-        ).scalar_one() == 1
+        assert (await session.execute(select(func.count(BusinessWorkItem.id)))).scalar_one() == 1
 
 
 @pytest.mark.asyncio
@@ -676,9 +659,9 @@ async def test_grounding_conflicts_quarantine_memory_and_pause_repeated_domain(
     first_remediation = first_result["items"][0]["actual_outcome"]["grounding"][
         "memory_remediation"
     ]
-    first_preflight = first_result["items"][0]["actual_outcome"][
-        "authoritative_context"
-    ]["memory_preflight"]
+    first_preflight = first_result["items"][0]["actual_outcome"]["authoritative_context"][
+        "memory_preflight"
+    ]
     assert first_result["items"][0]["status"] == "blocked"
     assert first_preflight["quarantined_memory_ids"] == [
         "memory-stale-recalled",
@@ -692,14 +675,10 @@ async def test_grounding_conflicts_quarantine_memory_and_pause_repeated_domain(
     async with portfolio_session_factory() as session:
         stale = await session.get(MemoryEntry, "memory-stale-recalled")
         valid = await session.get(MemoryEntry, "memory-valid")
-        finding = (
-            await session.execute(select(MemoryStewardFinding))
-        ).scalar_one()
+        finding = (await session.execute(select(MemoryStewardFinding))).scalar_one()
         control = await session.get(DomainAutonomyControl, "security")
     assert stale.metadata_["canonical_superseded"] is True
-    assert stale.metadata_["exclude_from_recall_reason"] == (
-        "authoritative_role_state_conflict"
-    )
+    assert stale.metadata_["exclude_from_recall_reason"] == ("authoritative_role_state_conflict")
     assert "canonical_superseded" not in valid.metadata_
     assert finding.finding_type == "authoritative_memory_conflict"
     assert finding.evidence["occurrence_count"] == 2
@@ -756,9 +735,7 @@ async def test_grounding_conflicts_quarantine_memory_and_pause_repeated_domain(
     assert second_remediation["domain_state"] == "paused"
     async with portfolio_session_factory() as session:
         control = await session.get(DomainAutonomyControl, "security")
-        finding = (
-            await session.execute(select(MemoryStewardFinding))
-        ).scalar_one()
+        finding = (await session.execute(select(MemoryStewardFinding))).scalar_one()
     assert control.state == "paused"
     assert control.owner == "autonomy_grounding_circuit_breaker"
     assert finding.severity == "high"
@@ -848,9 +825,7 @@ async def test_memory_preflight_heals_stale_memory_when_agent_reasoning_is_corre
     result = await service.run_domain_loop("security-agent", prepare=False)
 
     item = result["items"][0]
-    preflight = item["actual_outcome"]["authoritative_context"][
-        "memory_preflight"
-    ]
+    preflight = item["actual_outcome"]["authoritative_context"]["memory_preflight"]
     assert item["status"] == "completed"
     assert item["actual_outcome"]["grounding"]["status"] == "passed"
     assert preflight["quarantined_memory_ids"] == ["memory-stale-preflight"]
@@ -862,9 +837,7 @@ async def test_memory_preflight_heals_stale_memory_when_agent_reasoning_is_corre
             MemoryEntry,
             "memory-current-capability-gap",
         )
-        finding = (
-            await session.execute(select(MemoryStewardFinding))
-        ).scalar_one()
+        finding = (await session.execute(select(MemoryStewardFinding))).scalar_one()
         control = await session.get(DomainAutonomyControl, "security")
     assert memory.metadata_["canonical_superseded"] is True
     assert "canonical_superseded" not in current_gap_memory.metadata_
@@ -949,9 +922,7 @@ def test_authoritative_grounding_ignores_explanatory_free_text(assessment):
         "observed_at": "2026-08-04T00:00:00",
         "role_family": "knowledge",
         "active_family_agent_count": 1,
-        "active_family_agents": [
-            {"id": "knowledge-agent", "role_name": "Knowledge Agent"}
-        ],
+        "active_family_agents": [{"id": "knowledge-agent", "role_name": "Knowledge Agent"}],
         "assigned_agent": {
             "id": "knowledge-agent",
             "role_name": "Knowledge Agent",
@@ -981,9 +952,7 @@ def test_authoritative_grounding_ignores_noncurrent_typed_claims(temporal_scope)
         "observed_at": "2026-08-04T00:00:00",
         "role_family": "knowledge",
         "active_family_agent_count": 1,
-        "active_family_agents": [
-            {"id": "knowledge-agent", "role_name": "Knowledge Agent"}
-        ],
+        "active_family_agents": [{"id": "knowledge-agent", "role_name": "Knowledge Agent"}],
         "assigned_agent": {
             "id": "knowledge-agent",
             "role_name": "Knowledge Agent",
@@ -1020,9 +989,7 @@ def test_authoritative_grounding_blocks_unknown_current_gap_id():
         "observed_at": "2026-08-04T00:00:00",
         "role_family": "knowledge",
         "active_family_agent_count": 1,
-        "active_family_agents": [
-            {"id": "knowledge-agent", "role_name": "Knowledge Agent"}
-        ],
+        "active_family_agents": [{"id": "knowledge-agent", "role_name": "Knowledge Agent"}],
         "assigned_agent": {
             "id": "knowledge-agent",
             "role_name": "Knowledge Agent",
@@ -1059,9 +1026,7 @@ def test_authoritative_grounding_blocks_present_role_claim_without_typed_contrac
         "observed_at": "2026-08-04T00:00:00",
         "role_family": "knowledge",
         "active_family_agent_count": 1,
-        "active_family_agents": [
-            {"id": "knowledge-agent", "role_name": "Knowledge Agent"}
-        ],
+        "active_family_agents": [{"id": "knowledge-agent", "role_name": "Knowledge Agent"}],
         "assigned_agent": {
             "id": "knowledge-agent",
             "role_name": "Knowledge Agent",
@@ -1095,9 +1060,7 @@ def test_authoritative_grounding_blocks_present_role_claim_without_typed_contrac
 def test_legacy_memory_conflict_detection_respects_negation_and_history():
     service = WorkPortfolioService()
 
-    assert service._legacy_memory_role_state_conflict(
-        "The Security role remains unfulfilled."
-    )
+    assert service._legacy_memory_role_state_conflict("The Security role remains unfulfilled.")
     assert not service._legacy_memory_role_state_conflict(
         "The unresolved role gaps are unrelated to this work item."
     )
@@ -1206,10 +1169,9 @@ async def test_unsupported_role_gap_proposal_does_not_trip_memory_circuit(
         "reason": "No authoritative role-state conflict was asserted.",
         "circuit_breaker_tripped": False,
     }
-    assert {
-        finding["type"]
-        for finding in item["actual_outcome"]["grounding"]["findings"]
-    } == {"unsupported_role_gap_proposal"}
+    assert {finding["type"] for finding in item["actual_outcome"]["grounding"]["findings"]} == {
+        "unsupported_role_gap_proposal"
+    }
     async with portfolio_session_factory() as session:
         assert await session.get(DomainAutonomyControl, "knowledge") is None
         assert (
@@ -1274,19 +1236,15 @@ async def test_cancel_generated_work_cancels_descendants_and_records_evidence(
     )
 
     assert result["cancelled_count"] == 3
-    assert result["cancelled_ids"] == sorted(
-        [parent["id"], child["id"], grandchild["id"]]
-    )
+    assert result["cancelled_ids"] == sorted([parent["id"], child["id"], grandchild["id"]])
     async with portfolio_session_factory() as session:
         cancelled = [
-            await session.get(BusinessWorkItem, item_id)
-            for item_id in result["cancelled_ids"]
+            await session.get(BusinessWorkItem, item_id) for item_id in result["cancelled_ids"]
         ]
         independent = await session.get(BusinessWorkItem, unrelated["id"])
     assert all(item.status == "cancelled" for item in cancelled)
     assert all(
-        item.actual_outcome["classification"]
-        == "owner_cancelled_invalid_generated_work"
+        item.actual_outcome["classification"] == "owner_cancelled_invalid_generated_work"
         for item in cancelled
     )
     assert independent.status == "ready"
@@ -1487,9 +1445,7 @@ async def test_role_loop_rejects_unstructured_agent_output(
     result = await service.run_domain_loop("knowledge-agent", prepare=False)
 
     assert result["items"][0]["status"] == "failed"
-    assert result["items"][0]["actual_outcome"]["classification"] == (
-        "structured_output_invalid"
-    )
+    assert result["items"][0]["actual_outcome"]["classification"] == ("structured_output_invalid")
     assert manager.invoke_agent.await_count == 2
     assert manager.invoke_agent.await_args_list[0].kwargs["report_role_gap"] is False
     assert manager.invoke_agent.await_args_list[1].kwargs["report_role_gap"] is False
@@ -1641,9 +1597,7 @@ async def test_domain_pause_defers_events_and_stops_role_loop(
     assert loop["processed"] == 0
     async with portfolio_session_factory() as session:
         gaps = (await session.execute(select(RoleGap))).scalars().all()
-        disposition = (
-            await session.execute(select(BusinessEventDisposition))
-        ).scalar_one()
+        disposition = (await session.execute(select(BusinessEventDisposition))).scalar_one()
     assert gaps == []
     assert "owner control" in disposition.reason.lower()
 
@@ -1704,9 +1658,7 @@ async def test_inflight_pause_suppresses_generated_follow_up(
     assert outcome["created_work_item_ids"] == []
     assert outcome["suppressed_proposals"][0]["reason"] == "domain_not_active"
     async with portfolio_session_factory() as session:
-        assert (
-            await session.execute(select(func.count(BusinessWorkItem.id)))
-        ).scalar_one() == 1
+        assert (await session.execute(select(func.count(BusinessWorkItem.id)))).scalar_one() == 1
 
 
 @pytest.mark.asyncio
@@ -1773,9 +1725,7 @@ async def test_semantic_cooldown_reuses_recent_equivalent_work(
     assert result["items"][0]["status"] == "completed"
     assert outcome["created_work_item_ids"] == []
     assert outcome["reused_work_item_ids"] == [prior["id"]]
-    assert outcome["suppressed_proposals"][0]["reason"] == (
-        "semantic_duplicate_cooldown"
-    )
+    assert outcome["suppressed_proposals"][0]["reason"] == ("semantic_duplicate_cooldown")
 
 
 @pytest.mark.asyncio
@@ -1904,8 +1854,7 @@ async def test_backlog_stabilizer_preserves_owner_work_and_cancels_generated_exc
         owner_item = await session.get(BusinessWorkItem, owner["id"])
         canonical_item = await session.get(BusinessWorkItem, canonical["id"])
         cancelled = [
-            await session.get(BusinessWorkItem, item_id)
-            for item_id in result["cancelled_ids"]
+            await session.get(BusinessWorkItem, item_id) for item_id in result["cancelled_ids"]
         ]
     assert owner_item.status == "ready"
     assert canonical_item.status == "ready"
@@ -1955,7 +1904,15 @@ async def test_grounded_recovery_resolves_finding_after_explicit_reactivation(
                         "dedupe_key": dedupe_key,
                         "agent_conflict_count": 3,
                     },
-                    metadata_={"source": "work_portfolio_grounding_guard"},
+                    metadata_={
+                        "source": "work_portfolio_grounding_guard",
+                        "resolution_history": [
+                            {
+                                "status": "resolved",
+                                "note": "Earlier recovery.",
+                            }
+                        ],
+                    },
                 ),
                 DomainAutonomyControl(
                     domain="knowledge",
@@ -1986,5 +1943,94 @@ async def test_grounded_recovery_resolves_finding_after_explicit_reactivation(
         control = await session.get(DomainAutonomyControl, "knowledge")
     assert finding.status == "resolved"
     assert finding.evidence["recovery_work_item_id"] == result["items"][0]["id"]
+    assert finding.metadata_["resolution"]["status"] == "resolved"
+    assert finding.metadata_["resolution"]["actor"] == "knowledge-agent"
+    assert finding.metadata_["resolution_history"] == [
+        {"status": "resolved", "note": "Earlier recovery."}
+    ]
     assert control.state == "active"
     assert control.owner == "grounding_recovery"
+
+
+@pytest.mark.asyncio
+async def test_reopened_grounding_finding_archives_stale_resolution_metadata(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    service = WorkPortfolioService(company_intelligence_service=FakeIntelligence())
+    await service.ensure_active_agent_mandates()
+    work = await service.create_work_item(
+        title="Reopened Knowledge conflict",
+        description="Exercise finding lifecycle consistency.",
+        work_type="diagnostic",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={},
+        acceptance_criteria=["conflict_recorded"],
+        idempotency_key="grounding-reopen-metadata",
+    )
+    dedupe_key = "authoritative_role_state_conflict:knowledge:knowledge-agent"
+    finding_id = "mem_find_" + hashlib.sha256(dedupe_key.encode()).hexdigest()[:12]
+    resolved_at = utc_now()
+    async with portfolio_session_factory() as session:
+        session.add(
+            MemoryStewardFinding(
+                id=finding_id,
+                finding_type="authoritative_memory_conflict",
+                severity="high",
+                status="resolved",
+                agent_id="knowledge-agent",
+                company_namespace="company:test",
+                title="Authoritative role-state conflict in knowledge",
+                description="Prior conflict.",
+                recommendation="Run a grounded recovery canary.",
+                trace_ids=[],
+                evidence={
+                    "dedupe_key": dedupe_key,
+                    "agent_conflict_count": 1,
+                    "occurrence_count": 1,
+                    "recoveries": [{"work_item_id": "work-prior-recovery"}],
+                },
+                metadata_={
+                    "source": "work_portfolio_grounding_guard",
+                    "resolution": {
+                        "status": "resolved",
+                        "note": "Prior grounded recovery.",
+                        "actor": "owner@example.com",
+                        "resolved_at": resolved_at.isoformat(),
+                    },
+                },
+                resolved_at=resolved_at,
+            )
+        )
+        await session.commit()
+        item = await session.get(BusinessWorkItem, work["id"])
+
+    result = await service._quarantine_authoritative_role_conflicts(
+        item,
+        {
+            "role_family": "knowledge",
+            "active_family_agent_count": 1,
+        },
+        {
+            "findings": [
+                {
+                    "type": "authoritative_role_state_conflict",
+                    "detail": "Fresh contradiction.",
+                }
+            ]
+        },
+        context_hash="reopened-context-hash",
+        circuit_eligible=True,
+    )
+
+    assert result["agent_conflict_count"] == 1
+    async with portfolio_session_factory() as session:
+        finding = await session.get(MemoryStewardFinding, finding_id)
+    assert finding.status == "open"
+    assert finding.resolved_at is None
+    assert "resolution" not in finding.metadata_
+    assert finding.metadata_["reopen_count"] == 1
+    assert finding.metadata_["resolution_history"][0]["note"] == ("Prior grounded recovery.")
+    assert finding.metadata_["resolution_history"][0]["reopened_by_work_item_id"] == (work["id"])
+    assert finding.evidence["recoveries"] == [{"work_item_id": "work-prior-recovery"}]

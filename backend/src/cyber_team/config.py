@@ -1,6 +1,5 @@
 """Cyber-Team configuration via environment variables."""
 
-
 from urllib.parse import quote
 
 from pydantic_settings import BaseSettings
@@ -9,7 +8,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # App
     app_name: str = "Cyber-Team"
-    app_version: str = "0.3.15"
+    app_version: str = "0.3.16"
     build_sha: str = "local"
     environment: str = "development"
     log_level: str = "INFO"
@@ -150,6 +149,8 @@ class Settings(BaseSettings):
     action_policy_shadow_days: int = 7
     action_policy_min_validated_cases: int = 10
     action_policy_min_evaluator_score: float = 0.8
+    action_policy_min_live_canaries: int = 1
+    action_policy_canary_email_recipient: str = ""
     tool_sandbox_enabled: bool = False
     tool_sandbox_image: str = "cyber-team-core:latest"
     tool_sandbox_timeout_seconds: int = 120
@@ -320,19 +321,11 @@ class Settings(BaseSettings):
 
     @property
     def company_document_allowlist_items(self) -> list[str]:
-        return [
-            item.strip()
-            for item in self.company_document_allowlist.split(",")
-            if item.strip()
-        ]
+        return [item.strip() for item in self.company_document_allowlist.split(",") if item.strip()]
 
     @property
     def company_website_allowlist_items(self) -> list[str]:
-        return [
-            item.strip()
-            for item in self.company_website_allowlist.split(",")
-            if item.strip()
-        ]
+        return [item.strip() for item in self.company_website_allowlist.split(",") if item.strip()]
 
     @property
     def erpnext_configured(self) -> bool:
@@ -379,11 +372,8 @@ class Settings(BaseSettings):
             "COMMUNICATIONS_ALLOW_SIMULATION": self.communications_allow_simulation,
             "AUTONOMY_SIDE_EFFECT_MODE": self.autonomy_side_effect_mode != "manual_only",
             "AUTONOMY_RESOURCE_POLICY": self.autonomy_resource_policy != "foss_only",
-            "GOVERNOR_AUTONOMY_MODE": self.governor_autonomy_mode
-            != "aggressive_threshold",
-            "LEGACY_GOVERNOR_RULE_PROPOSER_ENABLED": (
-                self.legacy_governor_rule_proposer_enabled
-            ),
+            "GOVERNOR_AUTONOMY_MODE": self.governor_autonomy_mode != "aggressive_threshold",
+            "LEGACY_GOVERNOR_RULE_PROPOSER_ENABLED": (self.legacy_governor_rule_proposer_enabled),
             "OBSERVER_ENABLED": not self.observer_enabled,
             "OBSERVER_REVIEW_REQUIRED": not self.observer_review_required,
             "REQUIRE_LIVE_TOOL_EXECUTORS": not self.require_live_tool_executors,

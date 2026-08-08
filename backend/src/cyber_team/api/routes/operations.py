@@ -142,9 +142,7 @@ def _compact_operations_readiness(payload: dict[str, Any]) -> dict[str, Any]:
         )
         if key in executive
     }
-    compact["executive_autonomy"]["latest_run"] = _run_reference(
-        executive.get("latest_run")
-    )
+    compact["executive_autonomy"]["latest_run"] = _run_reference(executive.get("latest_run"))
 
     team_activation = payload.get("team_activation") or {}
     compact["team_activation"] = {
@@ -152,9 +150,7 @@ def _compact_operations_readiness(payload: dict[str, Any]) -> dict[str, Any]:
         for key in ("status", "blocking", "detail", "counts")
         if key in team_activation
     }
-    compact["team_activation"]["latest_run"] = _run_reference(
-        team_activation.get("latest_run")
-    )
+    compact["team_activation"]["latest_run"] = _run_reference(team_activation.get("latest_run"))
 
     controls = payload.get("controls") or {}
     compact["controls"] = {
@@ -306,6 +302,22 @@ class WorkflowSpecificationCreateRequest(BaseModel):
 
 class WorkflowSpecificationRunRequest(BaseModel):
     input_data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ActionPolicyCanaryStageRequest(BaseModel):
+    scenario_key: str = Field(..., min_length=1, max_length=160)
+    agent_id: str = Field(..., min_length=1, max_length=64)
+    tool_name: str = Field(..., pattern="^(send_email|task_create)$")
+    params: dict[str, Any]
+    expected_effect: str = Field(..., min_length=1, max_length=2000)
+    evidence_ids: list[str] = Field(default_factory=list, min_length=1, max_length=50)
+    confidence: float = Field(default=0.95, ge=0.72, le=1.0)
+
+
+class ActionPolicyCanaryAdjudicationRequest(BaseModel):
+    compliant: bool
+    evaluator_score: float = Field(..., ge=0.0, le=1.0)
+    note: str = Field(default="", max_length=2000)
 
 
 class ToolProposalSandboxRequest(BaseModel):
@@ -526,9 +538,7 @@ def _brief_cooldown_view(status: dict[str, Any]) -> dict[str, Any]:
     created_at = _parse_iso_datetime(last_event.get("created_at"))
     sent_like = last_event.get("outcome") in {"sent", "simulated"}
     cooldown_until = (
-        created_at + timedelta(hours=max(1, cooldown_hours))
-        if created_at and sent_like
-        else None
+        created_at + timedelta(hours=max(1, cooldown_hours)) if created_at and sent_like else None
     )
     now = datetime.now(UTC)
     return {
@@ -742,9 +752,7 @@ async def _build_executive_cadence_summary(request: Request) -> dict[str, Any]:
         "latest_executive_run": latest_executive_run,
         "recent_executive_runs": executive_runs.get("items", []),
         "latest_observer_review": (
-            observer_reviews.get("items", [None])[0]
-            if observer_reviews.get("items")
-            else None
+            observer_reviews.get("items", [None])[0] if observer_reviews.get("items") else None
         ),
         "recent_observer_reviews": observer_reviews.get("items", []),
         "low_risk_remediation": _latest_low_risk_execution_counts(latest_executive_run),
@@ -754,9 +762,7 @@ async def _build_executive_cadence_summary(request: Request) -> dict[str, Any]:
                 if executive_brief_service_status
                 else None
             ),
-            "latest_snapshot_hash": (
-                latest_executive_run or {}
-            ).get("snapshot_hash"),
+            "latest_snapshot_hash": (latest_executive_run or {}).get("snapshot_hash"),
         },
     }
 
@@ -863,23 +869,15 @@ async def latest_orchestration_governor_run(
     latest = await _governor_service(request).latest_run()
     executive = getattr(request.app.state, "executive_company_os_service", None)
     executive_latest = await executive.latest_run() if executive else None
-    executive_brief = (
-        await executive.executive_brief()
-        if executive and executive_latest
-        else None
-    )
+    executive_brief = await executive.executive_brief() if executive and executive_latest else None
     if latest or executive_latest:
         payload = latest or {}
         return {
             **payload,
             "executive": executive_latest,
-            "objective_summary": (
-                executive_brief.get("objectives") if executive_brief else None
-            ),
+            "objective_summary": (executive_brief.get("objectives") if executive_brief else None),
             "kpi_summary": executive_brief.get("kpis") if executive_brief else None,
-            "benchmark_summary": (
-                executive_brief.get("benchmarks") if executive_brief else None
-            ),
+            "benchmark_summary": (executive_brief.get("benchmarks") if executive_brief else None),
             "observer_review": (
                 executive_brief.get("observer", {}).get("latest_review")
                 if executive_brief
@@ -1126,9 +1124,7 @@ async def route_business_events(
     principal: Principal = Depends(get_current_principal),
 ):
     await require_authorization(request, principal, "run", "business_event_router")
-    return await request.app.state.work_portfolio_service.route_pending_events(
-        limit=limit
-    )
+    return await request.app.state.work_portfolio_service.route_pending_events(limit=limit)
 
 
 @router.get("/work-items")
@@ -1162,9 +1158,7 @@ async def create_business_work_item(
         "business_work_item",
         context={"risk_level": data.risk_level, "work_type": data.work_type},
     )
-    default_key_payload = (
-        f"{principal.subject}\0{data.work_type}\0{data.title}\0{data.description}"
-    )
+    default_key_payload = f"{principal.subject}\0{data.work_type}\0{data.title}\0{data.description}"
     key = data.idempotency_key or (
         "owner:" + hashlib.sha256(default_key_payload.encode()).hexdigest()
     )
@@ -1246,9 +1240,7 @@ async def list_domain_autonomy_controls(
     principal: Principal = Depends(get_current_principal),
 ):
     await require_authorization(request, principal, "read", "domain_autonomy_control")
-    return {
-        "items": await request.app.state.work_portfolio_service.list_domain_controls()
-    }
+    return {"items": await request.app.state.work_portfolio_service.list_domain_controls()}
 
 
 @router.put("/domain-controls/{domain}")
@@ -1287,9 +1279,7 @@ async def run_autonomous_company_cycle(
     principal: Principal = Depends(get_current_principal),
 ):
     await require_authorization(request, principal, "run", "autonomous_company_cycle")
-    result = await request.app.state.autonomous_company_cycle_service.run(
-        trigger="owner_manual"
-    )
+    result = await request.app.state.autonomous_company_cycle_service.run(trigger="owner_manual")
     _clear_operations_readiness_cache(request)
     return result
 
@@ -1402,6 +1392,311 @@ async def list_action_class_policies(
     return {"items": await request.app.state.action_policy_service.list_policies()}
 
 
+@router.get("/action-class-policies/{action_class}/validation-cases")
+async def list_action_policy_validation_cases(
+    action_class: str,
+    request: Request,
+    mode: str | None = None,
+    status: str | None = None,
+    limit: int = 200,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "action_policy_validation_case",
+        action_class,
+    )
+    if mode and mode not in {"shadow", "live_canary"}:
+        raise HTTPException(400, "Unsupported validation-case mode")
+    return {
+        "items": await request.app.state.action_policy_service.list_validation_cases(
+            action_class=action_class,
+            mode=mode,
+            status=status,
+            limit=limit,
+        )
+    }
+
+
+@router.post("/action-class-policies/{action_class}/validation-cases/generate")
+async def generate_action_policy_validation_cases(
+    action_class: str,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "run",
+        "action_policy_validation_suite",
+        action_class,
+        context={"mode": "shadow", "external_side_effects_allowed": False},
+    )
+    try:
+        result = await request.app.state.action_policy_service.generate_shadow_suite(
+            action_class,
+            actor=principal.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.post("/action-class-policies/{action_class}/validation-cases/canary")
+async def stage_action_policy_live_canary(
+    action_class: str,
+    data: ActionPolicyCanaryStageRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "stage",
+        "action_policy_live_canary",
+        action_class,
+        context={
+            "agent_id": data.agent_id,
+            "tool_name": data.tool_name,
+            "scenario_key": data.scenario_key,
+        },
+    )
+    expected_tool = "send_email" if action_class == "communications" else "task_create"
+    if action_class not in {"communications", "erpnext"} or data.tool_name != expected_tool:
+        raise HTTPException(400, "Canary action class and tool do not match")
+    registry = request.app.state.tool_registry
+    valid, validated_params, validation_error = registry.validate_params(
+        data.tool_name,
+        data.params,
+    )
+    if not valid:
+        raise HTTPException(400, validation_error or "Canary parameters are invalid")
+    if action_class == "communications":
+        allowed_recipient = settings.action_policy_canary_email_recipient.strip().lower()
+        supplied_recipient = str(validated_params.get("to_address") or "").strip().lower()
+        if not allowed_recipient:
+            raise HTTPException(400, "Canary email recipient is not configured")
+        if supplied_recipient != allowed_recipient:
+            raise HTTPException(400, "Canary email recipient is not allowlisted")
+        if not str(validated_params.get("subject") or "").startswith(
+            "[Cyber-Team Canary]"
+        ):
+            raise HTTPException(400, "Canary email subject must use the required prefix")
+        if len(str(validated_params.get("body") or "")) > 4000:
+            raise HTTPException(400, "Canary email body is too large")
+        payload_summary = {
+            "tool_name": data.tool_name,
+            "recipient_count": 1,
+            "recipient_hash": hashlib.sha256(supplied_recipient.encode()).hexdigest(),
+            "subject": str(validated_params["subject"])[:240],
+        }
+    else:
+        task_data = dict(validated_params.get("task_data") or {})
+        if not str(task_data.get("subject") or "").startswith("[CYBERTEAM-CANARY]"):
+            raise HTTPException(400, "ERPNext canary Task must use the required prefix")
+        unsupported = sorted(set(task_data) - {"subject", "description", "status"})
+        if unsupported:
+            raise HTTPException(400, "ERPNext canary contains unsupported Task fields")
+        if task_data.get("status") not in {None, "Open", "Completed", "Cancelled"}:
+            raise HTTPException(400, "ERPNext canary Task status is unsupported")
+        payload_summary = {
+            "tool_name": data.tool_name,
+            "doctype": "Task",
+            "record_count": 1,
+            "subject": str(task_data["subject"])[:240],
+            "status": task_data.get("status") or "Open",
+        }
+    authority = await request.app.state.work_portfolio_service.agent_tool_authority(
+        data.agent_id,
+        data.tool_name,
+        require_active_domain=False,
+    )
+    if not authority["allowed"]:
+        raise HTTPException(
+            400,
+            "Canary agent lacks durable tool authority: " + ", ".join(authority["reasons"]),
+        )
+    validation_case_id = "actcase_" + registry._stable_hash(
+        {
+            "suite": "live-canary-v1",
+            "action_class": action_class,
+            "scenario_key": data.scenario_key,
+            "agent_id": data.agent_id,
+            "tool_name": data.tool_name,
+            "params": validated_params,
+        }
+    )[:32]
+    action_envelope = {
+        "action_class": action_class,
+        "actor": data.agent_id,
+        "actor_type": "agent",
+        "target_type": "tool",
+        "target_id": data.tool_name,
+        "expected_effect": data.expected_effect,
+        "evidence_ids": data.evidence_ids,
+        "confidence": data.confidence,
+        "reversible": True,
+        "financial_exposure_usd": 0,
+        "financial_daily_usd": 0,
+        "recipients": 1 if action_class == "communications" else 0,
+        "data_sensitivity": "synthetic",
+        "external_side_effect": True,
+        "fresh_backup": True,
+        "observer_status": "agreed",
+        "benchmark_fresh": True,
+        "memory_coverage_fresh": True,
+        "prompt_injection_suspected": False,
+    }
+    preflight_decision = await request.app.state.action_policy_service.evaluate(
+        action_envelope,
+        approval_present=False,
+    )
+    observer_review = (
+        await request.app.state.executive_company_os_service.review_action_validation_case(
+            actor=principal.email,
+            validation_case_id=validation_case_id,
+            action_envelope=action_envelope,
+            policy_decision=preflight_decision,
+        )
+    )
+    try:
+        case = await request.app.state.action_policy_service.stage_live_canary_case(
+            action_class,
+            scenario_key=data.scenario_key,
+            action_envelope=action_envelope,
+            payload_summary=payload_summary,
+            execution_request={
+                "agent_id": data.agent_id,
+                "tool_name": data.tool_name,
+                "params": validated_params,
+            },
+            observer_review=observer_review,
+            actor=principal.email,
+            validation_case_id=validation_case_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if case.get("duplicate") and case.get("approval_id"):
+        return case
+    result = await registry.execute(
+        data.tool_name,
+        {
+            **validated_params,
+            "_agent_id": data.agent_id,
+            "_actor": data.agent_id,
+            "_actor_type": "agent",
+            "_conversation_id": validation_case_id,
+            "_source_type": "action_policy_live_canary",
+            "_action_envelope": action_envelope,
+        },
+    )
+    output = result.output if isinstance(result.output, dict) else {}
+    approval_id = output.get("approval_id")
+    approval_binding = output.get("approval_binding") or {}
+    if result.success or not approval_id or not approval_binding.get("request_hash"):
+        raise HTTPException(400, "Canary did not produce an exact approval request")
+    staged = await request.app.state.action_policy_service.attach_live_canary_approval(
+        validation_case_id,
+        approval_id=approval_id,
+        approval_binding=approval_binding,
+        actor=principal.email,
+    )
+    _clear_operations_readiness_cache(request)
+    return staged
+
+
+@router.post(
+    "/action-class-policies/validation-cases/{validation_case_id}/execute"
+)
+async def execute_action_policy_live_canary(
+    validation_case_id: str,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "execute",
+        "action_policy_live_canary",
+        validation_case_id,
+    )
+    try:
+        case = (
+            await request.app.state.action_policy_service.get_live_canary_execution_request(
+                validation_case_id
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    execution = case["execution_request"]
+    authority = await request.app.state.work_portfolio_service.agent_tool_authority(
+        execution["agent_id"],
+        execution["tool_name"],
+        require_active_domain=True,
+    )
+    if not authority["allowed"]:
+        raise HTTPException(
+            400,
+            "Canary agent is not executable: " + ", ".join(authority["reasons"]),
+        )
+    result = await request.app.state.tool_registry.execute(
+        execution["tool_name"],
+        {
+            **execution["params"],
+            "_agent_id": execution["agent_id"],
+            "_actor": execution["agent_id"],
+            "_actor_type": "agent",
+            "_approval_id": case["approval_id"],
+            "_conversation_id": validation_case_id,
+            "_source_type": "action_policy_live_canary",
+            "_action_envelope": case["action_envelope"],
+        },
+    )
+    if not result.success:
+        raise HTTPException(400, result.error or "Live canary execution failed")
+    recorded = await request.app.state.action_policy_service.record_live_canary_execution(
+        validation_case_id,
+        execution_result=result.model_dump(),
+        actor=principal.email,
+    )
+    _clear_operations_readiness_cache(request)
+    return recorded
+
+
+@router.post(
+    "/action-class-policies/validation-cases/{validation_case_id}/adjudicate"
+)
+async def adjudicate_action_policy_live_canary(
+    validation_case_id: str,
+    data: ActionPolicyCanaryAdjudicationRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "adjudicate",
+        "action_policy_live_canary",
+        validation_case_id,
+        context={"compliant": data.compliant, "evaluator_score": data.evaluator_score},
+    )
+    try:
+        result = await request.app.state.action_policy_service.adjudicate_live_canary(
+            validation_case_id,
+            compliant=data.compliant,
+            evaluator_score=data.evaluator_score,
+            note=data.note,
+            actor=principal.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    _clear_operations_readiness_cache(request)
+    return result
+
+
 @router.post("/governor/tool-proposals/{proposal_id}/sandbox")
 async def sandbox_governor_tool_proposal(
     proposal_id: str,
@@ -1449,9 +1744,7 @@ async def assess_terminal_work(
     principal: Principal = Depends(get_current_principal),
 ):
     await require_authorization(request, principal, "run", "outcome_assessment")
-    return await request.app.state.outcome_learning_service.assess_terminal_work(
-        limit=limit
-    )
+    return await request.app.state.outcome_learning_service.assess_terminal_work(limit=limit)
 
 
 @router.get("/executive-brief")
@@ -2281,15 +2574,9 @@ async def operations_readiness(
     )
     cache = getattr(request.app.state, "operations_readiness_cache", None)
     now = time.monotonic()
-    if (
-        not refresh
-        and isinstance(cache, dict)
-        and isinstance(cache.get("payload"), dict)
-    ):
+    if not refresh and isinstance(cache, dict) and isinstance(cache.get("payload"), dict):
         cache_key = "full_payload" if include_details else "payload"
-        if cache.get("expires_at", 0) > now and isinstance(
-            cache.get(cache_key), dict
-        ):
+        if cache.get("expires_at", 0) > now and isinstance(cache.get(cache_key), dict):
             return cache[cache_key]
         refresh_task = getattr(
             request.app.state,
@@ -2389,16 +2676,18 @@ async def operations_readiness(
     llm_status["execution_health"] = llm_execution_health
     if llm_status.get("mode") == "live" and llm_execution_health.get("blocking"):
         failure_category = llm_execution_health.get("status") or "provider_error"
-        llm_status.update({
-            "mode": (
-                "configuration_required"
-                if failure_category == "authentication_error"
-                else "degraded"
-            ),
-            "status": failure_category,
-            "blocking": True,
-            "detail": llm_execution_health.get("detail"),
-        })
+        llm_status.update(
+            {
+                "mode": (
+                    "configuration_required"
+                    if failure_category == "authentication_error"
+                    else "degraded"
+                ),
+                "status": failure_category,
+                "blocking": True,
+                "detail": llm_execution_health.get("detail"),
+            }
+        )
     provider_items.append(llm_status)
     integration_blockers = [
         {
@@ -2411,9 +2700,7 @@ async def operations_readiness(
         for item in provider_items
         if item.get("blocking")
     ]
-    optional_disabled = [
-        item for item in provider_items if item.get("optional_disabled")
-    ]
+    optional_disabled = [item for item in provider_items if item.get("optional_disabled")]
     company_context_service = getattr(
         request.app.state,
         "company_context_sync_service",
@@ -2610,9 +2897,7 @@ async def operations_readiness(
         None,
     )
     if owner_attention_notification_service:
-        owner_attention_notification_status = (
-            await owner_attention_notification_service.status()
-        )
+        owner_attention_notification_status = await owner_attention_notification_service.status()
     else:
         owner_attention_notification_status = {
             "enabled": False,
@@ -2805,17 +3090,13 @@ async def operations_readiness(
             {"status": "unavailable", "reason": "Temporal status is unavailable."},
         )
     )
-    temporal_autonomy["enabled"] = (
-        settings.company_autonomy_temporal_schedule_enabled
-    )
+    temporal_autonomy["enabled"] = settings.company_autonomy_temporal_schedule_enabled
     temporal_autonomy["blocking"] = bool(
         settings.company_autonomy_enabled
         and settings.company_autonomy_temporal_schedule_enabled
         and temporal_autonomy.get("status") != "ready"
     )
-    autonomous_company_status.setdefault("sections", {})[
-        "temporal_delivery"
-    ] = temporal_autonomy
+    autonomous_company_status.setdefault("sections", {})["temporal_delivery"] = temporal_autonomy
     if temporal_autonomy["blocking"]:
         autonomous_company_status.setdefault("blockers", []).append(
             {
@@ -2834,7 +3115,8 @@ async def operations_readiness(
     )
     traces = await request.app.state.memory_service.list_memory_traces(limit=50)
     trace_errors = [
-        trace for trace in traces
+        trace
+        for trace in traces
         if trace.get("errors") or trace.get("metadata", {}).get("coverage") == "error"
     ]
     operational_blockers = [
@@ -3097,11 +3379,7 @@ async def export_subject_data(
         outcome="success",
         evidence={
             "subject": subject,
-            "counts": {
-                key: len(value)
-                for key, value in result.items()
-                if isinstance(value, list)
-            },
+            "counts": {key: len(value) for key, value in result.items() if isinstance(value, list)},
         },
     )
     return result

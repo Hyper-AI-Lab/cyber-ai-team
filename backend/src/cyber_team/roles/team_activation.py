@@ -15,6 +15,7 @@ from cyber_team.db import async_session
 from cyber_team.db.models import (
     Agent,
     AgentCapabilityGrant,
+    AgentMandate,
     CompanyContextSnapshot,
     RoleGap,
     RoleManifest,
@@ -46,6 +47,224 @@ class TeamActivationService:
         self._tool_registry = tool_registry
         self._audit = audit_service
         self._mandate_service = mandate_service
+
+    async def request_scoped_tool_grant(
+        self,
+        *,
+        agent_id: str,
+        tool_name: str,
+        reason: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        """Request one exact agent/mandate tool grant without expanding its role."""
+        readiness = self._tool_registry.get_tool_readiness(tool_name)
+        if not readiness.get("executable"):
+            raise ValueError(readiness.get("readiness_reason") or "Tool is not ready")
+        async with async_session() as session:
+            agent = await session.get(Agent, agent_id)
+            mandate = (
+                await session.execute(
+                    select(AgentMandate)
+                    .where(
+                        AgentMandate.agent_id == agent_id,
+                        AgentMandate.status == "active",
+                    )
+                    .order_by(desc(AgentMandate.version))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        if not agent or agent.status != "active":
+            raise ValueError("Agent is not active")
+        if not mandate:
+            raise ValueError("Agent does not have an active mandate")
+        mandate_tools = (mandate.authority or {}).get("read_tools") or []
+        if tool_name in (agent.tools or []) and tool_name in mandate_tools:
+            return {
+                "status": "active",
+                "agent_id": agent_id,
+                "tool_name": tool_name,
+                "approval_id": None,
+                "duplicate": True,
+            }
+        target_id = f"{agent_id}:{tool_name}"
+        binding = self._scoped_grant_binding(agent_id, tool_name)
+        approval_id = await self._agent_manager._request_approval(
+            agent_id,
+            "agent.tool_grant",
+            f"Grant {tool_name} to {agent.role_name}",
+            {
+                "agent_id": agent_id,
+                "tool_name": tool_name,
+                "reason": reason[:2000],
+                "readiness": readiness,
+                "approval_binding": binding,
+                "apply_instruction": {
+                    "method": "POST",
+                    "path": (
+                        f"/api/roles/agents/{agent_id}/tool-grants/{tool_name}/apply"
+                    ),
+                    "body": {"approval_id": "<approved-id>"},
+                },
+            },
+            requester=actor,
+            requester_type="user",
+            risk_level=str(readiness.get("risk_level") or "high"),
+            target_type="agent_tool_grant",
+            target_id=target_id,
+        )
+        grant = await self._upsert_grant(
+            agent_id=agent_id,
+            role_gap_id=None,
+            tool_name=tool_name,
+            state="pending_approval",
+            requested_by=actor,
+            reason=reason,
+            approval_id=approval_id,
+        )
+        return {
+            "status": "approval_required",
+            "agent_id": agent_id,
+            "tool_name": tool_name,
+            "approval_id": approval_id,
+            "approval_binding": binding,
+            "grant": grant,
+            "duplicate": False,
+        }
+
+    async def apply_scoped_tool_grant(
+        self,
+        *,
+        agent_id: str,
+        tool_name: str,
+        approval_id: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        """Apply one owner-approved grant to both the agent and active mandate."""
+        target_id = f"{agent_id}:{tool_name}"
+        binding = self._scoped_grant_binding(agent_id, tool_name)
+        readiness = self._tool_registry.get_tool_readiness(tool_name)
+        tool = self._tool_registry.get_tool(tool_name)
+        if not readiness.get("executable") or not tool:
+            raise ValueError(readiness.get("readiness_reason") or "Tool is not ready")
+
+        async def _apply(session: Any, _approval: Any) -> dict[str, Any]:
+            agent = (
+                await session.execute(
+                    select(Agent).where(Agent.id == agent_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            mandate = (
+                await session.execute(
+                    select(AgentMandate)
+                    .where(
+                        AgentMandate.agent_id == agent_id,
+                        AgentMandate.status == "active",
+                    )
+                    .order_by(desc(AgentMandate.version))
+                    .limit(1)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if not agent or agent.status != "active" or not mandate:
+                raise ValueError("Active agent and mandate are required")
+            mandate_tools = list((mandate.authority or {}).get("read_tools") or [])
+            duplicate = tool_name in (agent.tools or []) and tool_name in mandate_tools
+            agent.tools = self._unique([*(agent.tools or []), tool_name])
+            authority = dict(mandate.authority or {})
+            authority["read_tools"] = self._unique(
+                [*(authority.get("read_tools") or []), tool_name]
+            )
+            mandate.authority = authority
+            grant = (
+                await session.execute(
+                    select(AgentCapabilityGrant)
+                    .where(
+                        AgentCapabilityGrant.agent_id == agent_id,
+                        AgentCapabilityGrant.tool_name == tool_name,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            now = utc_now()
+            if grant:
+                grant.state = "active"
+                grant.risk_level = tool.risk_level
+                grant.side_effects = bool(readiness["side_effects"])
+                grant.approval_id = approval_id
+                grant.reason = "Owner-approved scoped capability grant."
+                grant.requested_by = actor
+                grant.metadata_ = {
+                    **(grant.metadata_ or {}),
+                    "readiness": readiness,
+                    "last_requested_by": actor,
+                }
+                grant.updated_at = now
+                grant.activated_at = grant.activated_at or now
+            else:
+                grant = AgentCapabilityGrant(
+                    id=f"grant_{uuid.uuid4().hex[:12]}",
+                    agent_id=agent_id,
+                    role_gap_id=None,
+                    tool_name=tool_name,
+                    state="active",
+                    risk_level=tool.risk_level,
+                    side_effects=bool(readiness["side_effects"]),
+                    approval_id=approval_id,
+                    requested_by=actor,
+                    reason="Owner-approved scoped capability grant.",
+                    metadata_={"readiness": readiness},
+                    created_at=now,
+                    updated_at=now,
+                    activated_at=now,
+                )
+                session.add(grant)
+            await session.flush()
+            return {"grant": self._grant_to_dict(grant), "duplicate": duplicate}
+
+        mutation_result = await self._agent_manager.consume_approval_with_mutation(
+            approval_id,
+            consumer=f"agent_tool_grant:{agent_id}:{tool_name}",
+            target_type="agent_tool_grant",
+            target_id=target_id,
+            binding_hash=binding["request_hash"],
+            mutation=_apply,
+        )
+        if self._audit:
+            await self._audit.record_control_evidence(
+                control_id="autonomy.agent_tool_grant",
+                control_area="access_control",
+                actor=actor,
+                outcome="success",
+                evidence={
+                    "agent_id": agent_id,
+                    "tool_name": tool_name,
+                    "approval_id": approval_id,
+                    "binding_hash": binding["request_hash"],
+                },
+            )
+        return {
+            "status": "active",
+            "agent_id": agent_id,
+            "tool_name": tool_name,
+            "approval_id": approval_id,
+            "grant": mutation_result["grant"],
+            "duplicate": mutation_result["duplicate"],
+        }
+
+    @staticmethod
+    def _scoped_grant_binding(agent_id: str, tool_name: str) -> dict[str, str]:
+        request_hash = ToolRegistry._stable_hash(
+            {
+                "version": "agent-tool-grant-v1",
+                "agent_id": agent_id,
+                "tool_name": tool_name,
+                "authority_targets": ["agent.tools", "agent_mandate.authority.read_tools"],
+            }
+        )
+        return {
+            "version": "agent-tool-grant-v1",
+            "request_hash": request_hash,
+        }
 
     async def reconcile_generated_role_families(
         self,
@@ -777,7 +996,7 @@ class TeamActivationService:
         self,
         *,
         agent_id: str,
-        role_gap_id: str,
+        role_gap_id: str | None,
         tool_name: str,
         state: str,
         requested_by: str,

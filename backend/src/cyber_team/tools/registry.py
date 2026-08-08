@@ -4,6 +4,8 @@ Each tool has a name, description, parameter schema, and an async execute functi
 Agents reference tools by name; the registry resolves and executes them.
 """
 
+import hashlib
+import json
 import logging
 import subprocess
 import uuid
@@ -205,11 +207,7 @@ class ToolRegistry:
             reason = dynamic["readiness_reason"]
             requires_configuration = dynamic["requires_configuration"]
 
-        proof_block = (
-            settings.require_live_tool_executors
-            and tool.side_effects
-            and state != "live"
-        )
+        proof_block = settings.require_live_tool_executors and tool.side_effects and state != "live"
         executable = state in {"live", "advisory"} and not proof_block
         if proof_block:
             executable = False
@@ -397,20 +395,22 @@ class ToolRegistry:
             )
 
         policy_decision = None
+        normalized_action_envelope = self._tool_action_envelope(
+            tool,
+            actor=actor,
+            actor_type=actor_type,
+            supplied=action_envelope,
+        )
         if self._action_policy:
             policy_decision = await self._action_policy.evaluate(
-                self._tool_action_envelope(
-                    tool,
-                    actor=actor,
-                    actor_type=actor_type,
-                    supplied=action_envelope,
-                ),
+                normalized_action_envelope,
                 approval_present=bool(approval_id),
             )
+            normalized_action_envelope = policy_decision.get("envelope") or (
+                normalized_action_envelope
+            )
             trace_metadata["action_policy"] = {
-                key: value
-                for key, value in policy_decision.items()
-                if key != "envelope"
+                key: value for key, value in policy_decision.items() if key != "envelope"
             }
             if not policy_decision["allowed"] and not policy_decision["requires_approval"]:
                 reason = ", ".join(policy_decision["reasons"]) or "action_policy_denied"
@@ -455,9 +455,16 @@ class ToolRegistry:
         approval_required = self._approval_required_for(tool) or bool(
             policy_decision and policy_decision["requires_approval"]
         )
+        approval_binding = self._approval_binding(
+            tool_name,
+            params,
+            normalized_action_envelope,
+        )
+        trace_metadata["approval_binding"] = approval_binding
         approval_granted = not approval_required or await self._approval_granted(
             approval_id,
             tool_name,
+            binding_hash=approval_binding["request_hash"],
         )
         if approval_required and approval_id and not approval_granted:
             output = {
@@ -475,6 +482,7 @@ class ToolRegistry:
                 "target": {"type": "tool", "id": tool_name},
                 "payload_summary": self._payload_summary(params),
                 "replay_instructions": self._replay_instructions(tool_name, params),
+                "approval_binding": approval_binding,
             }
             await self._audit_tool_event(
                 tool_name,
@@ -527,6 +535,7 @@ class ToolRegistry:
                         "params": params,
                         "payload_summary": self._payload_summary(params),
                         "replay_instructions": self._replay_instructions(tool_name, params),
+                        "approval_binding": approval_binding,
                     },
                     requester=agent_id or actor,
                     requester_type="agent" if agent_id else actor_type,
@@ -558,6 +567,7 @@ class ToolRegistry:
                 "target": {"type": "tool", "id": tool_name},
                 "payload_summary": self._payload_summary(params),
                 "replay_instructions": self._replay_instructions(tool_name, params),
+                "approval_binding": approval_binding,
             }
             await self._record_tool_trace(
                 tool_name,
@@ -582,6 +592,7 @@ class ToolRegistry:
                     consumer=f"tool:{tool_name}",
                     target_type="tool",
                     target_id=tool_name,
+                    binding_hash=approval_binding["request_hash"],
                 )
                 self._record_approval_metric("consumed", "success", tool.risk_level)
             result = await executor(**params)
@@ -757,13 +768,10 @@ class ToolRegistry:
         }.get(canonical_name)
         if canonical_name == "send_message" and not channel:
             messaging_channels = {"telegram", "whatsapp", "slack"}
-            candidates = [
-                item for item in statuses if item.get("channel") in messaging_channels
-            ]
+            candidates = [item for item in statuses if item.get("channel") in messaging_channels]
         else:
             candidates = [
-                item for item in statuses
-                if not channel or item.get("channel") == channel
+                item for item in statuses if not channel or item.get("channel") == channel
             ]
         if any(item.get("mode") == "live" for item in candidates):
             return {
@@ -826,10 +834,7 @@ class ToolRegistry:
             return True
         if tool.side_effects and tool.risk_level in {"medium", "high", "critical"}:
             return True
-        return (
-            settings.autonomy_side_effect_mode == "manual_only"
-            and tool.side_effects
-        )
+        return settings.autonomy_side_effect_mode == "manual_only" and tool.side_effects
 
     @staticmethod
     def _payload_summary(params: dict[str, Any]) -> dict[str, Any]:
@@ -975,9 +980,7 @@ class ToolRegistry:
             return [], []
         if tool_name in {"memory_recall", "knowledge_query"} and isinstance(output, list):
             return [
-                str(item["id"])
-                for item in output
-                if isinstance(item, dict) and item.get("id")
+                str(item["id"]) for item in output if isinstance(item, dict) and item.get("id")
             ], []
         if tool_name in {"memory_remember", "document_index"} and isinstance(output, dict):
             memory_id = output.get("id") or output.get("memory_id")
@@ -1569,9 +1572,7 @@ class ToolRegistry:
         material_request_data_param = ToolParameter(
             name="request_data",
             type="dict",
-            description=(
-                "ERPNext Material Request fields with items containing item_code and qty"
-            ),
+            description=("ERPNext Material Request fields with items containing item_code and qty"),
         )
         github_workflow_param = ToolParameter(
             name="workflow",
@@ -2119,19 +2120,53 @@ class ToolRegistry:
             "observer_status": supplied.get("observer_status", "agreed"),
             "benchmark_fresh": supplied.get("benchmark_fresh", True),
             "memory_coverage_fresh": supplied.get("memory_coverage_fresh", True),
-            "prompt_injection_suspected": supplied.get(
-                "prompt_injection_suspected", False
-            ),
+            "prompt_injection_suspected": supplied.get("prompt_injection_suspected", False),
         }
 
-    async def _approval_granted(self, approval_id: str | None, tool_name: str) -> bool:
+    async def _approval_granted(
+        self,
+        approval_id: str | None,
+        tool_name: str,
+        *,
+        binding_hash: str,
+    ) -> bool:
         if not approval_id or not self._agent_manager:
             return False
         return await self._agent_manager.approval_is_executable(
             approval_id,
             target_type="tool",
             target_id=tool_name,
+            binding_hash=binding_hash,
         )
+
+    @classmethod
+    def _approval_binding(
+        cls,
+        tool_name: str,
+        params: dict[str, Any],
+        action_envelope: dict[str, Any],
+    ) -> dict[str, str]:
+        params_hash = cls._stable_hash(params)
+        action_envelope_hash = cls._stable_hash(action_envelope)
+        return {
+            "version": "tool-approval-binding-v1",
+            "tool_name": tool_name,
+            "params_hash": params_hash,
+            "action_envelope_hash": action_envelope_hash,
+            "request_hash": cls._stable_hash(
+                {
+                    "version": "tool-approval-binding-v1",
+                    "tool_name": tool_name,
+                    "params_hash": params_hash,
+                    "action_envelope_hash": action_envelope_hash,
+                }
+            ),
+        }
+
+    @staticmethod
+    def _stable_hash(value: Any) -> str:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(encoded.encode()).hexdigest()
 
     async def _tool_send_email(
         self,
@@ -2286,8 +2321,7 @@ class ToolRegistry:
         return [
             m
             for m in manifests
-            if query_lower in m["name"].lower()
-            or query_lower in m["description"].lower()
+            if query_lower in m["name"].lower() or query_lower in m["description"].lower()
         ]
 
     async def _tool_role_instantiate(self, manifest_id: str, overrides: dict = None):
@@ -2352,6 +2386,7 @@ class ToolRegistry:
 
     async def _tool_company_profile_read(self):
         from cyber_team.config import settings
+
         return {
             "app_name": settings.app_name,
             "environment": settings.environment,
@@ -2604,15 +2639,9 @@ class ToolRegistry:
 
     async def _tool_compliance_check(self, topic: str = "general", limit: int = 20):
         events = await self._list_audit_events(limit=limit)
-        approval_events = [
-            event for event in events if event["event_type"].startswith("approval.")
-        ]
-        denied_events = [
-            event for event in events if event["event_type"] == "authorization.denied"
-        ]
-        tool_events = [
-            event for event in events if event["resource_type"] == "tool"
-        ]
+        approval_events = [event for event in events if event["event_type"].startswith("approval.")]
+        denied_events = [event for event in events if event["event_type"] == "authorization.denied"]
+        tool_events = [event for event in events if event["resource_type"] == "tool"]
         return {
             "status": "complete",
             "topic": topic,
@@ -2641,9 +2670,7 @@ class ToolRegistry:
             "status": "complete",
             "events_reviewed": len(events),
             "resource_counts": resource_counts,
-            "blocked_events": [
-                self._audit_event_summary(event) for event in blocked[:5]
-            ],
+            "blocked_events": [self._audit_event_summary(event) for event in blocked[:5]],
             "side_effects": False,
         }
 
@@ -2659,9 +2686,7 @@ class ToolRegistry:
             "active_agents": len(active_agents),
             "total_agents": len(agents),
             "recent_events": len(events),
-            "latest_events": [
-                self._audit_event_summary(event) for event in events[:5]
-            ],
+            "latest_events": [self._audit_event_summary(event) for event in events[:5]],
             "side_effects": False,
         }
 
@@ -2670,12 +2695,8 @@ class ToolRegistry:
         if self._agent_manager:
             agents = await self._agent_manager.list_agents()
         events = await self._list_audit_events(limit=limit)
-        approval_gated_tools = [
-            tool.name for tool in self.list_tools() if tool.requires_approval
-        ]
-        denied_events = [
-            event for event in events if event["event_type"] == "authorization.denied"
-        ]
+        approval_gated_tools = [tool.name for tool in self.list_tools() if tool.requires_approval]
+        denied_events = [event for event in events if event["event_type"] == "authorization.denied"]
         return {
             "status": "complete",
             "agents_reviewed": len(agents),
@@ -2723,8 +2744,7 @@ class ToolRegistry:
             missing.append("GITHUB_DEFAULT_REF")
         if missing:
             raise RuntimeError(
-                "GitHub workflow dispatch is not configured; missing "
-                + ", ".join(missing)
+                "GitHub workflow dispatch is not configured; missing " + ", ".join(missing)
             )
         if "/" not in repo:
             raise ValueError("repository must use owner/repo format")
@@ -2907,9 +2927,7 @@ class ToolRegistry:
         context = context or {}
         jurisdiction = context.get("jurisdiction") or "unspecified"
         search_query = " ".join(
-            part
-            for part in [topic, query, jurisdiction, "regulation compliance policy"]
-            if part
+            part for part in [topic, query, jurisdiction, "regulation compliance policy"] if part
         )
         evidence = await self._search_local_memories(
             search_query,
@@ -3010,8 +3028,7 @@ class ToolRegistry:
             channels[log["channel"]] = channels.get(log["channel"], 0) + 1
             statuses[log["status"]] = statuses.get(log["status"], 0) + 1
             content = " ".join(
-                str(log.get(key) or "")
-                for key in ["recipient", "content", "status", "channel"]
+                str(log.get(key) or "") for key in ["recipient", "content", "status", "channel"]
             ).lower()
             if not query_lower or query_lower in content:
                 matching_logs.append(
@@ -3131,9 +3148,7 @@ class ToolRegistry:
         paths = {
             "app_root": str(app_root),
             "repo_root": str(repo_root) if repo_root else None,
-            "backend_source": str(backend_source)
-            if backend_source.exists()
-            else "src",
+            "backend_source": str(backend_source) if backend_source.exists() else "src",
             "frontend": str(frontend_root) if frontend_root.exists() else None,
         }
         files = {
@@ -3141,9 +3156,7 @@ class ToolRegistry:
             "backend_requirements": self._path_exists(backend_root / "requirements.txt"),
             "app_requirements": self._path_exists(app_root / "requirements.txt"),
             "frontend_package": self._path_exists(frontend_root / "package.json"),
-            "docker_compose": self._path_exists(
-                (repo_root or app_root) / "docker-compose.yml"
-            ),
+            "docker_compose": self._path_exists((repo_root or app_root) / "docker-compose.yml"),
         }
         return {
             "backend_available": bool(
@@ -3301,10 +3314,7 @@ class ToolRegistry:
         target_path = (sub_dir / filename).resolve()
 
         # Enforce trail boundary prefix checks for sandbox boundary
-        if (
-            not str(target_path).startswith(str(sub_dir) + os.sep)
-            and target_path.parent != sub_dir
-        ):
+        if not str(target_path).startswith(str(sub_dir) + os.sep) and target_path.parent != sub_dir:
             raise ValueError("Path traversal detected")
 
         # Handle structured dictionary context securely
@@ -3319,14 +3329,14 @@ class ToolRegistry:
             context_str = str(context or "")
 
         doc_content = (
-            f"""# CONTRACT DRAFT: {topic or 'General Service Agreement'}
+            f"""# CONTRACT DRAFT: {topic or "General Service Agreement"}
 Generated on: {generated_at.isoformat()}
 
 ## 1. Context & Purpose
-{context_str or 'No additional context provided.'}
+{context_str or "No additional context provided."}
 
 ## 2. Core Clauses & Scope of Work
-{content or query or 'Default startup service outline.'}
+{content or query or "Default startup service outline."}
 
 ## 3. Standard Boilerplate & General Provisions
 """
@@ -3379,10 +3389,7 @@ Generated on: {generated_at.isoformat()}
         target_path = (sub_dir / filename).resolve()
 
         # Enforce trail boundary prefix checks for sandbox boundary
-        if (
-            not str(target_path).startswith(str(sub_dir) + os.sep)
-            and target_path.parent != sub_dir
-        ):
+        if not str(target_path).startswith(str(sub_dir) + os.sep) and target_path.parent != sub_dir:
             raise ValueError("Path traversal detected")
 
         # Handle structured dictionary context securely
@@ -3397,14 +3404,14 @@ Generated on: {generated_at.isoformat()}
             context_str = str(context or "")
 
         doc_content = (
-            f"""# COMPANY POLICY: {topic or 'Acceptable Use Policy'}
+            f"""# COMPANY POLICY: {topic or "Acceptable Use Policy"}
 Generated on: {generated_at.isoformat()}
 
 ## 1. Objective & Scope
-{context_str or 'No additional context provided.'}
+{context_str or "No additional context provided."}
 
 ## 2. Guidelines & Compliance Criteria
-{content or query or 'Default startup policy guidelines.'}
+{content or query or "Default startup policy guidelines."}
 
 ## 3. Enforcement & Revisions
 - **Violations**: Failure to adhere to this policy may result in disciplinary action.

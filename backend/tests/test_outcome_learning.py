@@ -140,8 +140,11 @@ async def test_unauthorized_side_effect_forces_rollback_and_policy_finding(
     assert result["guardrail_breaches"] == [
         {"type": "unauthorized_side_effect", "severity": "high"}
     ]
-    assert policy.cases[0][1]["compliant"] is False
-    assert policy.cases[0][1]["high_severity_findings"] == 1
+    assert policy.cases == []
+    assert result["action_policy"] == {
+        "status": "not_counted",
+        "reason": "durable_validation_case_required",
+    }
 
 
 @pytest.mark.asyncio
