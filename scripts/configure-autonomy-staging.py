@@ -21,6 +21,7 @@ VALUES = {
     "AUTONOMY_DOMAIN_MAX_NONTERMINAL_WORK_ITEMS": "20",
     "AUTONOMY_PROPOSAL_COOLDOWN_HOURS": "24",
     "AUTONOMY_SEMANTIC_DUPLICATE_THRESHOLD": "0.70",
+    "ACTION_POLICY_MIN_LIVE_CANARIES": "1",
     "LLM_LOCAL_THREADS": "3",
     "LLM_LOCAL_THREADS_BATCH": "3",
     "LLM_LOCAL_CPUS": "3.0",
@@ -55,6 +56,11 @@ def main() -> int:
         action="store_true",
         help="Enable the retained local Qwen fallback after its service is validated.",
     )
+    parser.add_argument(
+        "--action-policy-canary-email-recipient",
+        default="",
+        help="Set the staging-only recipient used for owner-approved communication canaries.",
+    )
     args = parser.parse_args()
     path = Path(args.env_file)
     if not path.is_file():
@@ -83,6 +89,11 @@ def main() -> int:
                 "LOCAL_MODEL_CACHE_VOLUME": "cyber-team_local-model-cache",
             }
         )
+    if args.action_policy_canary_email_recipient:
+        recipient = args.action_policy_canary_email_recipient.strip()
+        if "@" not in recipient or recipient.startswith("@") or recipient.endswith("@"):
+            raise SystemExit("Canary email recipient must be a valid email address")
+        updates["ACTION_POLICY_CANARY_EMAIL_RECIPIENT"] = recipient
     for key in SECRET_KEYS:
         value = current.get(key, "")
         if not value or value.startswith(("replace-with-", "changeme-")):

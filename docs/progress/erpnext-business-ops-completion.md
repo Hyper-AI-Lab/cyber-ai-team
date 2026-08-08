@@ -6171,3 +6171,60 @@
   - `/home/projects/cyber-team/frontend/package-lock.json`.
 - Next step:
   - Commit the exact `0.3.16` candidate, pass public push/manual CI and immutable release scans, then promote backup-first to staging.
+
+### 2026-08-08T05:35:30Z — STEP-238 — Passed the immutable v0.3.16 release and exact-head CI gates
+- Files/services changed:
+  - Built immutable `cyber-team-core:0.3.16` and `cyber-team-ui:0.3.16` images from commit `8b5c7777ad21913f68597be4c5ee166ff61ea6ec`.
+  - Added the staging configurator option for an explicit allowlisted action-policy canary recipient and made one live canary the configured minimum.
+- Commands run:
+  - `scripts/release-check.sh` with quality, migration rehearsal, Compose smoke, image build, and Trivy scan gates enabled.
+  - Exact-head public push CI and independent manual full CI.
+  - `scripts/github-ci-evidence.py` after both current-head runs completed.
+- Result:
+  - `374` backend tests and `26` frontend tests passed with Ruff, compileall, TypeScript, production build, Alembic offline SQL, two real PostgreSQL upgrade rehearsals, dependency/license/secret/GCP-isolation checks, and Compose smoke all green.
+  - Both release images reported zero Trivy findings. Push run `31240382476` and full manual run `31240562820` passed on the release commit.
+  - The prior scheduled failure belongs to an older commit. Current-head scheduled evidence is truthfully marked pending until GitHub's next cron; it is not treated as a current-head failure or as completed proof.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.16.json`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31240382476`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31240562820`.
+  - `/home/projects/cyber-team/dist/ci/github-ci-20260808T053317Z.json`.
+- Next step:
+  - Promote the immutable images backup-first to staging and prove the repaired Knowledge grounding lifecycle.
+
+### 2026-08-08T05:35:30Z — STEP-239 — Promoted v0.3.16 and completed safe staging validation
+- Files/services changed:
+  - Promoted only the declared Cyber-Team staging services to `0.3.16`; ERPNext and other profile services retained their existing healthy containers and persistent volumes.
+  - Created a PostgreSQL custom-format backup before promotion and recorded the deployment manifest.
+  - Activated Knowledge for one bounded advisory recovery item, then generated the communications and ERPNext policy shadow suites twice to test idempotency.
+- Commands run:
+  - Dry-run and executed `scripts/promote-staging.sh` with `RELEASE_VERSION=0.3.16`.
+  - Owner-authenticated Knowledge domain control, work-item, single-item domain-loop, Memory Steward, action-policy generation, and validation-case APIs.
+- Result:
+  - Public `/health` and `/ready` report version `0.3.16`, build `8b5c7777ad21913f68597be4c5ee166ff61ea6ec`, and all dependencies ready; authenticated Compose smoke passed without sending its test email.
+  - Knowledge work `work_4e65e4c33b67494391145b0858155b09` completed, passed authoritative grounding, executed no side effect, resolved finding `mem_find_e8dc2b043319`, and cleared circuit-breaker recovery state.
+  - Communications and ERPNext each hold ten unique validated shadow cases. Repeated generation reused the same cases; all cases were compliant, created no approval, retained no execution result, and recorded `external_side_effect_executed=false`.
+- Evidence:
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.16-20260808-052649.dump`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.16-20260808-052840.json`.
+  - `/home/projects/cyber-team/dist/canary/v0.3.16-action-policy-20260808T053016Z/knowledge-recovery.json`.
+  - `/home/projects/cyber-team/dist/canary/v0.3.16-action-policy-20260808T053016Z/shadow-suites-validation.json`.
+- Next step:
+  - Stage exact owner approvals for one scoped communications grant and one synthetic ERPNext live canary without executing either side effect.
+
+### 2026-08-08T05:35:30Z — STEP-240 — Reached the explicit owner approval boundary
+- Files/services changed:
+  - Staged a one-tool `send_email` grant for the baseline Communications agent.
+  - Staged one synthetic, reversible ERPNext Task canary linked to release, CI, and fresh-backup evidence.
+- Commands run:
+  - `POST /api/roles/agents/review_erpnext_derived_role_communications_agent_baseline/tool-grants/send_email/request`.
+  - `POST /api/operations/action-class-policies/erpnext/validation-cases/canary`.
+  - Read-only approval queue and live-canary verification APIs.
+- Result:
+  - Approval `fb185645-22e5-4fe1-862e-eb84c9994252` is pending for the exact Communications agent/tool grant.
+  - Approval `d7ac76d7-3675-4670-ab98-4a28ae34211f` is pending for validation case `actcase_2ce4c1973c96b27797d5efb06d888b21` and exactly one `[CYBERTEAM-CANARY]` staging Task.
+  - Both approvals expire on August 9, 2026. Neither external action has executed, and the pending queue contains only these two deliberate release gates.
+- Evidence:
+  - `/home/projects/cyber-team/dist/canary/v0.3.16-action-policy-20260808T053016Z/owner-gate-staged.json`.
+- Next step:
+  - Owner reviews and approves both exact requests in the Approvals view; after approval, atomically apply the scoped grant, execute/verify/adjudicate the ERPNext canary, then stage the allowlisted email canary for a separate owner approval and delivery confirmation.
