@@ -428,6 +428,11 @@ class ActionPolicyService:
                 )
             ).scalar_one_or_none()
             if existing:
+                await self._prepare_existing_live_canary_for_retry(
+                    session,
+                    existing,
+                    actor=actor,
+                )
                 return {
                     **self._validation_case_to_dict(existing, events=[]),
                     "duplicate": True,
@@ -474,6 +479,69 @@ class ActionPolicyService:
                 **self._validation_case_to_dict(item, events=[]),
                 "duplicate": False,
             }
+
+    async def _prepare_existing_live_canary_for_retry(
+        self,
+        session: Any,
+        item: ActionPolicyValidationCase,
+        *,
+        actor: str,
+    ) -> None:
+        """Refresh only an unexecuted canary whose exact approval is no longer usable."""
+        if item.mode != "live_canary" or item.executed_at or item.counted_at:
+            return
+        if not item.approval_id:
+            return
+        approval = await session.get(ApprovalRequest, item.approval_id)
+        now = utc_now()
+        unexpired = not approval or approval.expires_at is None or approval.expires_at >= now
+        reusable = bool(
+            approval
+            and unexpired
+            and approval.consumed_at is None
+            and approval.status in {"pending", "approved"}
+        )
+        if reusable:
+            return
+        previous_approval_id = item.approval_id
+        previous_status = approval.status if approval else "missing"
+        if approval and approval.consumed_at is not None:
+            item.status = "execution_reconciliation_required"
+            item.updated_at = now
+            await self._append_validation_event(
+                session,
+                item.id,
+                event_type="approval_reconciliation_required",
+                status=item.status,
+                actor=actor,
+                details={
+                    "approval_id": previous_approval_id,
+                    "approval_status": previous_status,
+                    "reason": "approval_consumed_before_canary_execution_was_recorded",
+                },
+            )
+            await session.commit()
+            return
+        request = dict(item.execution_request or {})
+        request.pop("approval_binding", None)
+        item.execution_request = request
+        item.approval_id = None
+        item.status = "approval_required"
+        item.updated_at = now
+        await self._append_validation_event(
+            session,
+            item.id,
+            event_type="approval_refresh_required",
+            status=item.status,
+            actor=actor,
+            details={
+                "previous_approval_id": previous_approval_id,
+                "previous_approval_status": previous_status,
+                "previous_approval_expired": bool(approval and not unexpired),
+                "side_effect_executed": False,
+            },
+        )
+        await session.commit()
 
     async def attach_live_canary_approval(
         self,

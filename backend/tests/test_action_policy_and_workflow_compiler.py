@@ -458,6 +458,175 @@ async def test_live_canary_replays_approved_payload_and_promotes_from_durable_ca
 
 
 @pytest.mark.asyncio
+async def test_live_canary_refreshes_expired_approval_without_new_case(
+    compiler_session_factory,
+):
+    service = ActionPolicyService(client_factory=FakeOPAClient)
+    canary_envelope = envelope(
+        "erpnext",
+        actor="product-agent",
+        target_id="task_create",
+        external_side_effect=True,
+        data_sensitivity="synthetic",
+    )
+    params = {"task_data": {"subject": "[CYBERTEAM-CANARY] retry"}}
+    execution_request = {
+        "agent_id": "product-agent",
+        "tool_name": "task_create",
+        "params": params,
+    }
+    observer_review = {"id": "observer-retry", "status": "agreed"}
+    staged = await service.stage_live_canary_case(
+        "erpnext",
+        scenario_key="synthetic_task_retry",
+        action_envelope=canary_envelope,
+        payload_summary={"record_count": 1},
+        execution_request=execution_request,
+        observer_review=observer_review,
+        actor="owner@example.com",
+    )
+    binding = ToolRegistry._approval_binding(
+        "task_create",
+        params,
+        service.normalize_envelope(canary_envelope),
+    )
+    async with compiler_session_factory() as session:
+        session.add(
+            ApprovalRequest(
+                id="approval-expired-canary",
+                agent_id="product-agent",
+                action_type="tool:task_create",
+                action_description="Execute synthetic canary.",
+                action_payload={
+                    "tool_name": "task_create",
+                    "params": params,
+                    "approval_binding": binding,
+                },
+                requester="product-agent",
+                requester_type="agent",
+                risk_level="medium",
+                target_type="tool",
+                target_id="task_create",
+                status="expired",
+                expires_at=utc_now() - timedelta(minutes=1),
+                resolved_at=utc_now(),
+            )
+        )
+        await session.commit()
+    await service.attach_live_canary_approval(
+        staged["id"],
+        approval_id="approval-expired-canary",
+        approval_binding=binding,
+        actor="owner@example.com",
+    )
+
+    retried = await service.stage_live_canary_case(
+        "erpnext",
+        scenario_key="synthetic_task_retry",
+        action_envelope=canary_envelope,
+        payload_summary={"record_count": 1},
+        execution_request=execution_request,
+        observer_review=observer_review,
+        actor="owner@example.com",
+    )
+    cases = await service.list_validation_cases(action_class="erpnext")
+
+    assert retried["duplicate"] is True
+    assert retried["id"] == staged["id"]
+    assert retried["status"] == "approval_required"
+    assert retried["approval_id"] is None
+    assert len(cases) == 1
+    assert cases[0]["events"][-1]["event_type"] == "approval_refresh_required"
+    async with compiler_session_factory() as session:
+        stored = await session.get(ActionPolicyValidationCase, staged["id"])
+        assert "approval_binding" not in stored.execution_request
+
+
+@pytest.mark.asyncio
+async def test_live_canary_requires_reconciliation_for_consumed_approval(
+    compiler_session_factory,
+):
+    service = ActionPolicyService(client_factory=FakeOPAClient)
+    canary_envelope = envelope(
+        "communications",
+        actor="communications-agent",
+        target_id="send_email",
+        external_side_effect=True,
+        recipients=1,
+        data_sensitivity="synthetic",
+    )
+    params = {
+        "to_address": "owner-canary@example.com",
+        "subject": "[Cyber-Team Canary] reconciliation",
+        "body": "Synthetic policy canary.",
+    }
+    execution_request = {
+        "agent_id": "communications-agent",
+        "tool_name": "send_email",
+        "params": params,
+    }
+    observer_review = {"id": "observer-reconciliation", "status": "agreed"}
+    staged = await service.stage_live_canary_case(
+        "communications",
+        scenario_key="consumed_approval_reconciliation",
+        action_envelope=canary_envelope,
+        payload_summary={"recipient_count": 1},
+        execution_request=execution_request,
+        observer_review=observer_review,
+        actor="owner@example.com",
+    )
+    binding = ToolRegistry._approval_binding(
+        "send_email",
+        params,
+        service.normalize_envelope(canary_envelope),
+    )
+    async with compiler_session_factory() as session:
+        session.add(
+            ApprovalRequest(
+                id="approval-consumed-canary",
+                agent_id="communications-agent",
+                action_type="tool:send_email",
+                action_description="Execute synthetic canary.",
+                action_payload={
+                    "tool_name": "send_email",
+                    "params": params,
+                    "approval_binding": binding,
+                },
+                requester="communications-agent",
+                requester_type="agent",
+                risk_level="high",
+                target_type="tool",
+                target_id="send_email",
+                status="approved",
+                reviewer="owner@example.com",
+                resolved_at=utc_now(),
+                consumed_at=utc_now(),
+            )
+        )
+        await session.commit()
+    await service.attach_live_canary_approval(
+        staged["id"],
+        approval_id="approval-consumed-canary",
+        approval_binding=binding,
+        actor="owner@example.com",
+    )
+
+    retried = await service.stage_live_canary_case(
+        "communications",
+        scenario_key="consumed_approval_reconciliation",
+        action_envelope=canary_envelope,
+        payload_summary={"recipient_count": 1},
+        execution_request=execution_request,
+        observer_review=observer_review,
+        actor="owner@example.com",
+    )
+
+    assert retried["duplicate"] is True
+    assert retried["status"] == "execution_reconciliation_required"
+    assert retried["approval_id"] == "approval-consumed-canary"
+
+
+@pytest.mark.asyncio
 async def test_live_canary_rejects_tampered_approval_binding(
     compiler_session_factory,
 ):

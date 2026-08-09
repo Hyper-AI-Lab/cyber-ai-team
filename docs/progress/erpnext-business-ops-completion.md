@@ -6228,3 +6228,23 @@
   - `/home/projects/cyber-team/dist/canary/v0.3.16-action-policy-20260808T053016Z/owner-gate-staged.json`.
 - Next step:
   - Owner reviews and approves both exact requests in the Approvals view; after approval, atomically apply the scoped grant, execute/verify/adjudicate the ERPNext canary, then stage the allowlisted email canary for a separate owner approval and delivery confirmation.
+
+### 2026-08-09T10:22:04Z — STEP-241 — Hardened expired live-canary approval recovery
+- Files/services changed:
+  - Updated `ActionPolicyService` so an unchanged, unexecuted live canary can discard an unusable expired, rejected, or missing approval binding and request a fresh exact approval without creating a duplicate validation case.
+  - Added a fail-closed reconciliation state when an approval was consumed but canary execution was not durably recorded; this state cannot silently regenerate or replay the side effect.
+  - Added regression coverage for both approval-refresh and consumed-approval reconciliation paths and advanced the release version to `0.3.17`.
+- Commands run:
+  - Focused Ruff, compile, and action-policy test checks.
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 scripts/quality-gate.sh`.
+  - `git diff --check`.
+- Result:
+  - The two `0.3.16` owner approvals expired without approval or execution, as required by the fail-closed policy.
+  - The focused action-policy suite passed 13 tests; the full gate passed 376 backend tests and 26 frontend tests, Ruff, compileall, Alembic offline SQL, dependency audits, frontend typecheck/build, Compose validation, secret scan, GCP isolation, FOSS policy, and diff hygiene.
+  - No external mutation or email was executed during this repair.
+- Evidence:
+  - `backend/tests/test_action_policy_and_workflow_compiler.py`.
+  - `backend/src/cyber_team/operations/action_policy.py`.
+  - `/home/projects/cyber-team/dist/canary/v0.3.16-action-policy-20260808T053016Z/owner-gate-staged.json`.
+- Next step:
+  - Publish and independently validate release `0.3.17`, promote it backup-first to staging, then regenerate the two exact owner approvals with fresh expiry windows.
