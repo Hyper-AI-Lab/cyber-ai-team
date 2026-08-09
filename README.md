@@ -5,7 +5,7 @@
 [![Self-hosted](https://img.shields.io/badge/self--hosted-Docker-blue)](docker-compose.yml)
 [![FOSS-first](https://img.shields.io/badge/resource%20policy-FOSS--first-green)](docs/architecture/autonomous-company-os.md)
 
-![Cyber AI Team social preview](docs/assets/cyber-ai-team-social-preview.svg)
+![Cyber AI Team operating system architecture](docs/assets/AI_Team_Operating_System_Architecture.png)
 
 **Cyber AI Team is a self-hosted AI company operating system for solo founders, one-person companies, and small digital startups.** It runs a governed team of AI workers around a human owner: a Chief Operating Agent, Observer Agent, company builder, memory steward, finance/accounting, legal, sales, marketing, support, product, engineering, operations, security, research, and communications roles.
 
