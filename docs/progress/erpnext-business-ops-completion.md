@@ -6248,3 +6248,30 @@
   - `/home/projects/cyber-team/dist/canary/v0.3.16-action-policy-20260808T053016Z/owner-gate-staged.json`.
 - Next step:
   - Publish and independently validate release `0.3.17`, promote it backup-first to staging, then regenerate the two exact owner approvals with fresh expiry windows.
+
+### 2026-08-09T10:56:19Z — STEP-242 — Released v0.3.17 and regenerated exact owner gates
+- Files/services changed:
+  - Built and scanned immutable `cyber-team-core:0.3.17` and `cyber-team-ui:0.3.17` images from commit `42db0983231086ecf30c9c5023f05b2fb2d122b6`.
+  - Promoted only the declared Cyber-Team staging application services after a fresh PostgreSQL backup; persistent ERPNext services and data were not recreated.
+  - Reused live-canary validation case `actcase_2ce4c1973c96b27797d5efb06d888b21` and replaced its expired approval binding without duplicating the case.
+- Commands run:
+  - `RELEASE_VERSION=0.3.17 ... scripts/release-check.sh` with Compose smoke enabled.
+  - Public push CI and independent `workflow_dispatch` CI for commit `42db0983231086ecf30c9c5023f05b2fb2d122b6`.
+  - Dry-run and executed `scripts/promote-staging.sh` with `RELEASE_VERSION=0.3.17`.
+  - Owner-authenticated scoped Communications grant request, ERPNext live-canary restage, and pending-approval queue verification.
+- Result:
+  - Release verification passed 376 backend tests, 26 frontend tests, migration rehearsals, authenticated Compose smoke, dependency/secret/FOSS/GCP-isolation checks, and zero-vulnerability scans for both release images.
+  - Staging `/health` reports version `0.3.17` and build `42db0983231086ecf30c9c5023f05b2fb2d122b6`; `/ready` reports `ready`; live smoke passed while rejecting its test-email approval without delivery.
+  - Approval `3f42ec83-5242-4044-bd4b-8ce1999377a9` is pending for exactly the baseline Communications agent's `send_email` grant.
+  - Approval `872cc7ce-6e2d-449c-b08c-d6710aae38c3` is pending for exactly one synthetic, reversible ERPNext Task canary. The pending queue contains only these two deliberate gates, both expiring August 10, 2026 at approximately 12:56 Berlin time.
+  - Neither the ERPNext mutation nor the test email has executed.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.17.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.17-20260809-105305.dump`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.17-20260809-105500.json`.
+  - `/home/projects/cyber-team/dist/canary/v0.3.17-action-policy-20260809T105500Z/`.
+  - `/home/projects/cyber-team/dist/ci/github-ci-20260809T105619Z.json`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31308176970`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31309368327`.
+- Next step:
+  - Owner approves both fresh exact requests; then apply the scoped grant, execute/verify/cancel/adjudicate the ERPNext canary, and stage a separate allowlisted test-email approval for delivery proof.
