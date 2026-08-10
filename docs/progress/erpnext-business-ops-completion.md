@@ -6357,3 +6357,24 @@
   - Action-policy validation cases `actcase_2ce4c1973c96b27797d5efb06d888b21` and `actcase_1dd4321b625e4c3f87ded7b05a6bc7db`.
 - Next step:
   - Owner approves the sole managed email canary request; controlled execution then sends exactly one test message and awaits owner delivery confirmation before adjudication.
+
+### 2026-08-10T15:48:47Z — STEP-247 — Executed the owner-approved Communications email canary
+- Files/services changed:
+  - Resumed only the Communications autonomy domain, which remained paused from the earlier v0.3.0 canary rollout.
+  - Executed managed validation case `actcase_1dd4321b625e4c3f87ded7b05a6bc7db` exactly once through its approval-bound endpoint.
+  - No application code, credentials, or provider configuration changed.
+- Commands run:
+  - Owner-authenticated domain-control inspection and scoped Communications resume.
+  - Owner-authenticated managed canary execution and persisted validation-case verification.
+  - Read-only PostgreSQL verification of approval consumption, outbound communication status, and audit events.
+- Result:
+  - The first execution attempt failed closed while Communications was paused; no side effect occurred and approval `4a4e0bc3-a7c0-4589-8060-c9fd3e040d6b` remained unconsumed.
+  - After the scoped domain resume, the managed endpoint returned HTTP 200 and the case moved to `pending_owner_adjudication` with `external_side_effect_executed=true` and a successful execution result.
+  - The exact approval was consumed once at `2026-08-10T15:47:20Z`; one outbound email communication was recorded as `sent` at `2026-08-10T15:47:22Z`.
+  - Matching immutable audit events record `approval.consumed` and `tool.execute` success. No retry or second email was issued.
+- Evidence:
+  - Validation case `actcase_1dd4321b625e4c3f87ded7b05a6bc7db`.
+  - Approval `4a4e0bc3-a7c0-4589-8060-c9fd3e040d6b`.
+  - Communication log `e174a7c1-573a-48f6-b91c-0ad41f53a0b5`.
+- Next step:
+  - Owner confirms whether the canary arrived at the allowlisted test inbox; then adjudicate delivery success or failure and update the Communications action-policy evidence without sending another message.
