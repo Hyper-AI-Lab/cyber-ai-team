@@ -6293,3 +6293,25 @@
   - `/home/projects/cyber-team/dist/canary/v0.3.17-action-policy-20260810T130800Z/`.
 - Next step:
   - Owner approves only the two exact replacement IDs; then apply the scoped grant, execute/verify/cancel/adjudicate the ERPNext canary, and stage the separate allowlisted test-email approval.
+
+### 2026-08-10T14:24:50Z — STEP-244 — Separated owner approval from managed canary execution
+- Files/services changed:
+  - Marked action-policy live-canary approvals with durable managed-execution metadata and their controlled execution endpoint.
+  - Hardened approval attachment to require the persisted approval request and exact stored request binding.
+  - Updated the Approvals console so managed canaries display an explicit approval-only explanation and cannot use the ordinary automatic tool-replay path.
+  - Added backend and frontend regression tests and advanced the release version to `0.3.18`.
+- Commands run:
+  - Focused Ruff and 13 action-policy lifecycle tests.
+  - Focused frontend approval-execution policy tests.
+  - `SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 scripts/quality-gate.sh`.
+- Result:
+  - Owner approval now authorizes a managed canary without executing it from the Approvals screen; execution remains confined to the validation-case endpoint that records evidence and lifecycle state.
+  - The full gate passed 376 backend tests and 28 frontend tests, production frontend build/typecheck, Alembic offline SQL, dependency audits, Compose validation, secret scan, GCP isolation, FOSS policy, and diff hygiene.
+  - Both pending owner requests remained untouched during implementation and verification.
+- Evidence:
+  - `backend/src/cyber_team/operations/action_policy.py`.
+  - `backend/tests/test_action_policy_and_workflow_compiler.py`.
+  - `frontend/src/lib/approvals.ts`.
+  - `frontend/src/lib/approvals.test.ts`.
+- Next step:
+  - Publish, release, and promote `0.3.18`; refresh the existing canary approval metadata; then give the owner exact live-screen approval instructions.

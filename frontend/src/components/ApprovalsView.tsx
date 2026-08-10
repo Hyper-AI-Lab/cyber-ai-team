@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { api } from '@/lib/api'
+import { approvalToolReplay, managedApprovalExecution } from '@/lib/approvals'
 import { ShieldCheck, CheckCircle, XCircle, Clock } from 'lucide-react'
 
 interface ApprovalsViewProps {
@@ -21,17 +22,6 @@ export default function ApprovalsView({ approvals, onRefresh, onNavigate }: Appr
     )
   }
 
-  const toolReplay = (approval: any) => {
-    const payload = approval.action_payload || {}
-    const replayBody = payload.replay_instructions?.body || {}
-    const toolName = payload.tool_name || replayBody.tool_name
-    const params = payload.params || replayBody.params
-    if (!toolName || !params) {
-      return null
-    }
-    return { toolName, params }
-  }
-
   const handleAction = async (id: string, action: 'approve' | 'reject') => {
     const approval = approvals.find((item) => item.id === id)
     if (approval && isExpired(approval)) {
@@ -43,7 +33,7 @@ export default function ApprovalsView({ approvals, onRefresh, onNavigate }: Appr
       setRunningApprovalId(id)
       if (action === 'approve') {
         await api.approveAction(id, 'Approved via console')
-        const replay = approval ? toolReplay(approval) : null
+        const replay = approval ? approvalToolReplay(approval) : null
         if (replay) {
           const result = await api.executeTool(replay.toolName, {
             ...replay.params,
@@ -108,6 +98,7 @@ export default function ApprovalsView({ approvals, onRefresh, onNavigate }: Appr
       <div className="space-y-4">
         {approvals.map((approval: any) => {
           const expired = isExpired(approval)
+          const managedExecution = managedApprovalExecution(approval)
           return (
             <div key={approval.id} className="card">
               <div className="flex flex-wrap items-start justify-between gap-4">
@@ -142,6 +133,13 @@ export default function ApprovalsView({ approvals, onRefresh, onNavigate }: Appr
                     <div className="mt-3 rounded-lg border border-red-700/50 bg-red-950/30 px-3 py-2 text-sm text-red-200">
                       This request is no longer actionable. Regenerate it from the related workflow,
                       autonomous plan, memory finding, or role gap.
+                    </div>
+                  )}
+                  {managedExecution && !expired && (
+                    <div className="mt-3 rounded-lg border border-blue-700/50 bg-blue-950/30 px-3 py-2 text-sm text-blue-200">
+                      Approve authorizes this controlled canary only. It does not execute the tool
+                      from this screen; execution and evidence recording follow through the canary
+                      workflow.
                     </div>
                   )}
                   {approvalDetails(approval).length > 0 && (

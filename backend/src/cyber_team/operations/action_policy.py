@@ -502,6 +502,8 @@ class ActionPolicyService:
             and approval.status in {"pending", "approved"}
         )
         if reusable:
+            if self._mark_managed_canary_approval(approval, item.id):
+                await session.commit()
             return
         previous_approval_id = item.approval_id
         previous_status = approval.status if approval else "missing"
@@ -543,6 +545,27 @@ class ActionPolicyService:
         )
         await session.commit()
 
+    @staticmethod
+    def _mark_managed_canary_approval(
+        approval: ApprovalRequest,
+        validation_case_id: str,
+    ) -> bool:
+        payload = dict(approval.action_payload or {})
+        managed_execution = {
+            "kind": "action_policy_live_canary",
+            "validation_case_id": validation_case_id,
+            "execute_path": (
+                "/api/operations/action-class-policies/validation-cases/"
+                f"{validation_case_id}/execute"
+            ),
+            "approval_only_in_console": True,
+        }
+        if payload.get("managed_execution") == managed_execution:
+            return False
+        payload["managed_execution"] = managed_execution
+        approval.action_payload = payload
+        return True
+
     async def attach_live_canary_approval(
         self,
         validation_case_id: str,
@@ -570,6 +593,19 @@ class ActionPolicyService:
                 item.action_envelope or {}
             ):
                 raise ValueError("Canary approval action envelope does not match")
+            approval = (
+                await session.execute(
+                    select(ApprovalRequest)
+                    .where(ApprovalRequest.id == approval_id)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if not approval:
+                raise ValueError("Live-canary approval request was not found")
+            stored_binding = (approval.action_payload or {}).get("approval_binding") or {}
+            if stored_binding.get("request_hash") != approval_binding.get("request_hash"):
+                raise ValueError("Live-canary approval request binding does not match")
+            self._mark_managed_canary_approval(approval, item.id)
             request["approval_binding"] = approval_binding
             item.execution_request = request
             item.approval_id = approval_id

@@ -431,6 +431,17 @@ async def test_live_canary_replays_approved_payload_and_promotes_from_durable_ca
         approval_binding=binding,
         actor="owner@example.com",
     )
+    async with compiler_session_factory() as session:
+        managed_approval = await session.get(ApprovalRequest, "approval-live-email")
+        assert managed_approval.action_payload["managed_execution"] == {
+            "kind": "action_policy_live_canary",
+            "validation_case_id": "actcase-live-email",
+            "execute_path": (
+                "/api/operations/action-class-policies/validation-cases/"
+                "actcase-live-email/execute"
+            ),
+            "approval_only_in_console": True,
+        }
     replay = await service.get_live_canary_execution_request(staged["id"])
     executed = await service.record_live_canary_execution(
         staged["id"],
