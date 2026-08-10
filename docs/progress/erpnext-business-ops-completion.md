@@ -6336,3 +6336,24 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31398055921`.
 - Next step:
   - Owner follows the exact Approvals-screen checklist for the two named requests only; controlled execution remains pending until both approvals are verified.
+
+### 2026-08-10T15:29:00Z — STEP-246 — Completed ERPNext canary and isolated email delivery gate
+- Files/services changed:
+  - Applied the owner-approved one-tool `send_email` grant to the baseline Communications agent.
+  - Executed the managed ERPNext canary exactly once, verified Task `TASK-2026-00028`, and changed its staging-only status from `Open` to `Cancelled` as stated in the approved expected effect.
+  - Rejected two stale autonomous memory-remediation reviews after verifying their LLM-timeout source findings had already auto-resolved on newer successful provider traces.
+  - Staged one separate managed Communications canary for the allowlisted owner test recipient.
+- Commands run:
+  - Owner-authenticated scoped grant apply and managed validation-case execution/adjudication APIs.
+  - ERPNext token-authenticated Task read, bounded compensation update, and post-update verification from the isolated core container.
+  - Owner-authenticated source finding/plan inspection, stale approval rejection, Communications canary stage, and pending-queue verification.
+- Result:
+  - Both intended owner approvals were verified as approved, unconsumed before execution, target-matched, and valid.
+  - ERPNext validation case `actcase_2ce4c1973c96b27797d5efb06d888b21` is `validated`, compliant, scored `1.0`, and counted once; its approval cannot replay.
+  - The two remaining cards were not accidental owner actions. They were planner reviews that became stale after their source findings resolved; both are now rejected and removed from the pending queue.
+  - Communications validation case `actcase_1dd4321b625e4c3f87ded7b05a6bc7db` is unexecuted and awaits approval `4a4e0bc3-a7c0-4589-8060-c9fd3e040d6b` for exactly one allowlisted test email.
+- Evidence:
+  - ERPNext Task `TASK-2026-00028` with final status `Cancelled`.
+  - Action-policy validation cases `actcase_2ce4c1973c96b27797d5efb06d888b21` and `actcase_1dd4321b625e4c3f87ded7b05a6bc7db`.
+- Next step:
+  - Owner approves the sole managed email canary request; controlled execution then sends exactly one test message and awaits owner delivery confirmation before adjudication.
