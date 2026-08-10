@@ -6275,3 +6275,21 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31309368327`.
 - Next step:
   - Owner approves both fresh exact requests; then apply the scoped grant, execute/verify/cancel/adjudicate the ERPNext canary, and stage a separate allowlisted test-email approval for delivery proof.
+
+### 2026-08-10T13:07:48Z — STEP-243 — Verified expiry and regenerated owner gates without execution
+- Files/services changed:
+  - No runtime configuration or code changed.
+  - Transitioned the two elapsed pending approvals through the normal expiry read path and regenerated exact replacement approvals against the same scoped grant and idempotent ERPNext validation case.
+- Commands run:
+  - Owner-authenticated read-only approval status and live-canary verification calls.
+  - Owner-authenticated scoped Communications grant request and ERPNext live-canary restage.
+- Result:
+  - Prior approvals `3f42ec83-5242-4044-bd4b-8ce1999377a9` and `872cc7ce-6e2d-449c-b08c-d6710aae38c3` are expired with no reviewer and no consumption timestamp.
+  - Validation case `actcase_2ce4c1973c96b27797d5efb06d888b21` remains unexecuted and reports `external_side_effect_executed=false`.
+  - Fresh approval `66ce5ed9-db92-486f-bab3-428d24621af7` gates exactly the baseline Communications agent's `send_email` grant.
+  - Fresh approval `28755384-5fb4-4990-9c5f-4690c3b6ac7e` gates exactly one synthetic, reversible ERPNext Task canary.
+  - Both fresh requests expire August 11, 2026 at approximately 15:07 Berlin time. Two unrelated autonomous planner-review requests are also pending and are not part of this canary sequence.
+- Evidence:
+  - `/home/projects/cyber-team/dist/canary/v0.3.17-action-policy-20260810T130800Z/`.
+- Next step:
+  - Owner approves only the two exact replacement IDs; then apply the scoped grant, execute/verify/cancel/adjudicate the ERPNext canary, and stage the separate allowlisted test-email approval.
