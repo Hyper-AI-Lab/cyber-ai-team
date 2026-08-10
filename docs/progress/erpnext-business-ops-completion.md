@@ -6315,3 +6315,24 @@
   - `frontend/src/lib/approvals.test.ts`.
 - Next step:
   - Publish, release, and promote `0.3.18`; refresh the existing canary approval metadata; then give the owner exact live-screen approval instructions.
+
+### 2026-08-10T15:04:00Z — STEP-245 — Deployed managed-canary approval UX to staging
+- Files/services changed:
+  - Released and promoted `0.3.18` from commit `71baf55bbceca480167934661a0d33d878e3a4d2` after a fresh staging PostgreSQL backup.
+  - Refreshed the existing unexecuted ERPNext validation case in place so its pending approval carries managed-execution metadata; no approval ID or action payload changed.
+- Commands run:
+  - Policy-complete `scripts/release-check.sh` with full quality gate, migration rehearsal, authenticated Compose smoke, image builds, and image scans.
+  - Dry-run and executed `scripts/promote-staging.sh` with `RELEASE_VERSION=0.3.18`.
+  - Owner-authenticated idempotent canary restage, exact approval payload verification, and public health check.
+- Result:
+  - Staging reports version `0.3.18`, build `71baf55bbceca480167934661a0d33d878e3a4d2`, and healthy status; live smoke passed without sending email.
+  - GitHub push CI run `31398055921` passed.
+  - ERPNext approval `28755384-5fb4-4990-9c5f-4690c3b6ac7e` is still pending and now explicitly uses approval-only console behavior with controlled execution through validation case `actcase_2ce4c1973c96b27797d5efb06d888b21`.
+  - Communications grant approval `66ce5ed9-db92-486f-bab3-428d24621af7` remains pending and unchanged. Neither gated action executed.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.18.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.18-20260810-145921.dump`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.18-20260810-150252.json`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31398055921`.
+- Next step:
+  - Owner follows the exact Approvals-screen checklist for the two named requests only; controlled execution remains pending until both approvals are verified.
