@@ -6378,3 +6378,22 @@
   - Communication log `e174a7c1-573a-48f6-b91c-0ad41f53a0b5`.
 - Next step:
   - Owner confirms whether the canary arrived at the allowlisted test inbox; then adjudicate delivery success or failure and update the Communications action-policy evidence without sending another message.
+
+### 2026-08-10T15:51:56Z — STEP-248 — Adjudicated delivery and promoted Communications policy
+- Files/services changed:
+  - Recorded the owner's successful inbox confirmation against the existing Communications live-canary validation case.
+  - No email, external mutation, application code, credentials, or provider configuration changed during adjudication.
+- Commands run:
+  - Owner-authenticated validation-case state precheck and one adjudication request with compliance score `1.0`.
+  - Owner-authenticated action-policy, approval-queue, and authorization-audit verification.
+- Result:
+  - Validation case `actcase_1dd4321b625e4c3f87ded7b05a6bc7db` is `validated`, compliant, scored `1.0`, and counted exactly once at `2026-08-10T15:51:26Z`.
+  - The Communications action policy now has 11 validated cases, one live canary, hard-policy compliance `1.0`, evaluator score `1.0`, and no reported delivery defect.
+  - The policy met its configured shadow-age, case-count, live-canary, compliance, score, and finding gates and promoted to `active` with policy-gated auto-execution enabled for qualifying below-threshold actions.
+  - Permanent gates, impact thresholds, daily limits, Observer controls, domain controls, and approval replay protection remain enforced. The pending approval queue is empty.
+- Evidence:
+  - Validation case `actcase_1dd4321b625e4c3f87ded7b05a6bc7db`.
+  - Communications action-policy promotion timestamp `2026-08-10T15:51:26Z`.
+  - Authorization audit event for the owner adjudication.
+- Next step:
+  - Continue the staged autonomy rollout with operational observation of the newly active Communications class; no additional owner action is currently required.
