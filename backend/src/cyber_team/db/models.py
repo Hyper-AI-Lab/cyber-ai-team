@@ -932,6 +932,18 @@ class CompanySignal(Base):
     redacted_payload: Mapped[dict] = mapped_column(JSON, default=dict)
     injection_status: Mapped[str] = mapped_column(String(30), default="clear", index=True)
     quarantine_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claim_extraction_status: Mapped[str] = mapped_column(
+        String(30),
+        default="pending",
+        index=True,
+    )
+    claim_extraction_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    claim_extraction_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claim_extracted_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+        index=True,
+    )
     idempotency_key: Mapped[str] = mapped_column(String(240), index=True)
     occurred_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     received_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)

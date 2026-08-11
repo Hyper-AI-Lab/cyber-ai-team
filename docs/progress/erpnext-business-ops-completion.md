@@ -6397,3 +6397,42 @@
   - Authorization audit event for the owner adjudication.
 - Next step:
   - Continue the staged autonomy rollout with operational observation of the newly active Communications class; no additional owner action is currently required.
+
+### 2026-08-11T03:30:00Z — STEP-249 — Audited the first post-promotion observation window
+- Files/services changed:
+  - No runtime state, policy, approval, provider, or code changed during the read-only observation audit.
+- Commands run:
+  - Inspected public readiness, domain controls, action-class policies, approval state, work portfolio, Observer reviews, operation-graph nodes, outcomes, communication logs, and immutable audit events.
+  - Traced active company-model revisions, critical unknown claims, research signals, and discovery work directly in staging PostgreSQL without reading secret values.
+- Result:
+  - Approximately 11.5 hours had elapsed since Communications promotion, so the required 24-hour observation window was not yet complete.
+  - No post-promotion communication or ERPNext mutation, failed tool execution, approval consumption, Observer disagreement, policy-compliance regression, or unexplained side effect was present.
+  - The audit found a genuine company-intelligence defect: revision 3 had accepted cross-field LLM types and superseded canonical legal name, currency, and ERPNext measurements with a weaker model shape.
+  - Evidence acquisition was active, but repository documents processed during an earlier provider outage had no durable extraction outcome and were not retried; repetitive governance assessments did not resolve the missing claims.
+- Evidence:
+  - Communications and ERPNext policies remained active with 11 validated cases, one live canary, score `1.0`, compliance `1.0`, and zero high-severity findings.
+  - Company model revisions `cmr_54b3c64b502c46409786aee9ae273854` and `cmr_63608c06f454494292973dcb61fa1f68`.
+- Next step:
+  - Repair deterministic model materialization, semantic revision idempotency, durable claim-extraction retry state, and readiness visibility before continuing the observation window.
+
+### 2026-08-11T04:02:44Z — STEP-250 — Closed company-model weakening and silent extraction loss
+- Files/services changed:
+  - Added migration `0017_company_claim_extraction` with durable extraction status, attempt count, safe error class, and extraction timestamp; bounded repository documents are reopened for recovery while historical email/research evidence remains unchanged.
+  - Made active company-model materialization deterministic from structured provenance-backed claims, added field-specific validation, semantic source hashing, newest-wins ERPNext measurements, and duplicate list-value suppression.
+  - Kept LLM use in the bounded evidence-to-claim layer; provider or malformed-response failures now remain retryable and visible instead of being silently marked processed.
+  - Added claim-extraction health to autonomous-company readiness and documented the authority boundary in the architecture contract.
+  - Advanced release metadata to `0.3.19`.
+- Commands run:
+  - Focused Ruff and 21 company-intelligence/readiness tests.
+  - Full policy-complete quality gate with real migration rehearsal.
+- Result:
+  - Full verification passed 381 backend tests and 28 frontend tests, production build/typecheck, compileall, Alembic offline SQL, Python/Node dependency audits, two PostgreSQL migration rehearsals, Compose validation, secret scan, Google Cloud isolation, FOSS policy, and diff hygiene.
+  - Regression coverage proves canonical identity and measurements cannot be erased by an advisory model response, duplicate observations do not churn model revisions, newest ERPNext measurements win, extraction failures retry, and stale failures block readiness explicitly.
+- Evidence:
+  - `backend/alembic/versions/0017_company_claim_extraction.py`.
+  - `backend/src/cyber_team/company/intelligence.py`.
+  - `backend/src/cyber_team/operations/readiness_v3.py`.
+  - `backend/tests/test_company_intelligence.py`.
+  - `backend/tests/test_autonomous_company_readiness.py`.
+- Next step:
+  - Commit and publish `0.3.19`, require green CI, deploy backup-first, recover repository evidence into claims, rebuild the living company model, and restart the complete post-promotion soak on the repaired immutable release.

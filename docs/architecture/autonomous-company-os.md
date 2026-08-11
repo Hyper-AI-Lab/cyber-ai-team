@@ -93,6 +93,15 @@ verified company documents, inbound counterpart messages, public web material, a
 model-generated hypotheses. Untrusted text is isolated from system instructions and may
 never directly select or execute a tool.
 
+Claim extraction and active-model materialization have separate authority. The LLM may
+normalize allowlisted evidence into bounded provenance-linked claims, but a provider
+failure leaves the signal retryable and visible in readiness rather than silently
+marking it processed. The active company model is then assembled deterministically from
+the claim graph with field-specific types. Duplicate observations of the same semantic
+claim do not create model revisions, and an advisory model response cannot erase
+canonical identity, currency, measurements, or other established facts. Missing or
+ambiguous evidence remains unknown and continues through discovery work.
+
 ## Strategy And Measurement
 
 The Company Discovery Agent produces versioned descriptions of the business, offerings,

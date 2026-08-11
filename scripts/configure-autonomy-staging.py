@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 VALUES = {
-    "APP_VERSION": "0.3.18",
+    "APP_VERSION": "0.3.19",
     "COMPANY_AUTONOMY_ENABLED": "true",
     "COMPANY_AUTONOMY_TEMPORAL_SCHEDULE_ENABLED": "true",
     "COMPANY_AUTONOMY_SIGNAL_WORKFLOW_ID": "cyberteam-autonomous-company-signals-v4",

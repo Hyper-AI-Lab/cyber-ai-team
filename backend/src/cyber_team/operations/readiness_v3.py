@@ -19,6 +19,7 @@ from cyber_team.db.models import (
     BusinessWorkItem,
     CompanyModelRevision,
     CompanyObjectiveRevision,
+    CompanySignal,
     CompanySource,
     DomainAutonomyControl,
     OperatingKPIRevision,
@@ -55,6 +56,29 @@ class AutonomousCompanyReadinessService:
                     select(CompanySource).where(CompanySource.status == "active")
                 )
             ).scalars().all()
+            extraction_counts = await self._counts(
+                session,
+                CompanySignal.claim_extraction_status,
+            )
+            stale_extraction_failures = int(
+                (
+                    await session.execute(
+                        select(func.count(CompanySignal.id)).where(
+                            CompanySignal.status == "pending",
+                            CompanySignal.claim_extraction_status == "failed",
+                            CompanySignal.received_at <= (
+                                utc_now()
+                                - timedelta(
+                                    seconds=max(
+                                        1,
+                                        settings.business_event_readiness_stale_after_seconds,
+                                    )
+                                )
+                            ),
+                        )
+                    )
+                ).scalar_one()
+            )
             active_agents = int(
                 (
                     await session.execute(
@@ -175,6 +199,25 @@ class AutonomousCompanyReadinessService:
             ),
         }
         source_freshness = self._source_freshness(sources)
+        claim_extraction = {
+            "status": (
+                "stale_failed"
+                if stale_extraction_failures
+                else "retrying"
+                if extraction_counts.get("failed", 0)
+                else "ready"
+            ),
+            "blocking": stale_extraction_failures > 0,
+            "counts": extraction_counts,
+            "stale_failed": stale_extraction_failures,
+            "detail": (
+                "Claim extraction failures exceeded the processing window."
+                if stale_extraction_failures
+                else "Claim extraction failures remain retryable within the processing window."
+                if extraction_counts.get("failed", 0)
+                else "Evidence claim extraction is healthy."
+            ),
+        }
         mandate_gap = max(0, active_agents - mandated_agents)
         mandates = {
             "status": "ready" if mandate_gap == 0 else "degraded",
@@ -274,6 +317,7 @@ class AutonomousCompanyReadinessService:
         sections = {
             "company_model": company_model,
             "source_freshness": source_freshness,
+            "claim_extraction": claim_extraction,
             "mandates": mandates,
             "domain_controls": {
                 "status": (

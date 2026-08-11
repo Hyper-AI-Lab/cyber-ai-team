@@ -557,3 +557,180 @@ async def test_quarantined_external_signal_never_reaches_claim_extractor(
 
     assert processed["created_claims"] == 0
     llm.invoke_json.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_claim_extraction_failure_remains_retryable(
+    intelligence_session_factory,
+):
+    llm = AsyncMock()
+    llm.invoke_json.side_effect = [
+        RuntimeError("provider unavailable"),
+        {
+            "claims": [
+                {
+                    "subject": "company",
+                    "predicate": "business_description",
+                    "value": {"value": "A self-hosted AI company operating system."},
+                    "epistemic_state": "inferred",
+                    "confidence": 0.7,
+                }
+            ]
+        },
+    ]
+    audit = FakeAudit()
+    service = CompanyIntelligenceService(llm_gateway=llm, audit_service=audit)
+    signal = await service.ingest_signal(
+        source_key="repository",
+        signal_type="document.updated",
+        external_id="request.txt",
+        payload={"text": "Cyber-Team is a self-hosted AI company operating system."},
+        trust_class="internal",
+    )
+
+    first = await service.process_pending_signals()
+    async with intelligence_session_factory() as session:
+        failed = await session.get(CompanySignal, signal["id"])
+        assert failed.status == "pending"
+        assert failed.claim_extraction_status == "failed"
+        assert failed.claim_extraction_attempts == 1
+        assert failed.processed_at is None
+
+    second = await service.process_pending_signals()
+    async with intelligence_session_factory() as session:
+        recovered = await session.get(CompanySignal, signal["id"])
+        events = (await session.execute(select(BusinessEvent))).scalars().all()
+        claims = (await session.execute(select(CompanyClaim))).scalars().all()
+
+    assert first["processed"] == 0
+    assert first["extraction_failures"] == 1
+    assert second["processed"] == 1
+    assert second["extraction_failures"] == 0
+    assert recovered.status == "processed"
+    assert recovered.claim_extraction_status == "succeeded"
+    assert recovered.claim_extraction_attempts == 2
+    assert recovered.claim_extraction_error is None
+    assert len(events) == 1
+    assert [item.predicate for item in claims] == ["business_description"]
+    assert any(item["event_type"] == "company.claim_extraction" for item in audit.events)
+
+
+@pytest.mark.asyncio
+async def test_company_model_materialization_preserves_canonical_claims():
+    llm = AsyncMock()
+    service = CompanyIntelligenceService(llm_gateway=llm)
+    claims = [
+        {
+            "id": "claim-name",
+            "subject": "company",
+            "predicate": "legal_name",
+            "value": {"value": "Hyper AI Lab"},
+            "epistemic_state": "verified",
+            "confidence": 0.95,
+            "trust_class": "canonical",
+            "sensitivity": "internal",
+            "evidence_ids": ["evidence-name"],
+        },
+        {
+            "id": "claim-currency",
+            "subject": "company",
+            "predicate": "currency",
+            "value": {"value": "EUR"},
+            "epistemic_state": "verified",
+            "confidence": 0.95,
+            "trust_class": "canonical",
+            "sensitivity": "internal",
+            "evidence_ids": ["evidence-currency"],
+        },
+        {
+            "id": "claim-count",
+            "subject": "company",
+            "predicate": "erpnext_doctype_count",
+            "value": {"doctype": "Company", "count": 1},
+            "epistemic_state": "verified",
+            "confidence": 0.95,
+            "trust_class": "canonical",
+            "sensitivity": "internal",
+            "evidence_ids": ["evidence-count"],
+        },
+        {
+            "id": "claim-count-older",
+            "subject": "company",
+            "predicate": "erpnext_doctype_count",
+            "value": {"doctype": "Company", "count": 99},
+            "epistemic_state": "verified",
+            "confidence": 0.95,
+            "trust_class": "canonical",
+            "sensitivity": "internal",
+            "evidence_ids": ["evidence-count-older"],
+        },
+        {
+            "id": "claim-offering",
+            "subject": "company",
+            "predicate": "offering_candidate",
+            "value": {"name": "AI Company OS"},
+            "epistemic_state": "inferred",
+            "confidence": 0.75,
+            "trust_class": "canonical",
+            "sensitivity": "internal",
+            "evidence_ids": ["evidence-offering"],
+        },
+        {
+            "id": "claim-offering-duplicate",
+            "subject": "company",
+            "predicate": "offering_candidate",
+            "value": {"name": "AI Company OS"},
+            "epistemic_state": "inferred",
+            "confidence": 0.75,
+            "trust_class": "canonical",
+            "sensitivity": "internal",
+            "evidence_ids": ["evidence-offering-duplicate"],
+        },
+    ]
+
+    model = await service._synthesize_model(claims)
+
+    assert model["legal_name"] == "Hyper AI Lab"
+    assert model["currency"] == "EUR"
+    assert model["business_description"] is None
+    assert model["operational_measurements"]["counts"] == {"Company": 1}
+    assert model["offerings"] == [{"name": "AI Company OS"}]
+    assert service._validate_company_model(model) == {"valid": True, "errors": []}
+    llm.invoke_json.assert_not_awaited()
+
+
+def test_company_model_validation_rejects_cross_field_type_confusion():
+    model = CompanyIntelligenceService._deterministic_model([])
+    model["business_description"] = []
+    model["operational_measurements"] = []
+
+    result = CompanyIntelligenceService._validate_company_model(model)
+
+    assert result["valid"] is False
+    assert "business_description must be a string or null" in result["errors"]
+    assert "operational_measurements must be an object" in result["errors"]
+
+
+def test_semantic_claim_hash_ignores_duplicate_observation_identity():
+    base = {
+        "subject": "company",
+        "predicate": "legal_name",
+        "value": {"value": "Hyper AI Lab"},
+        "epistemic_state": "verified",
+        "confidence": 0.95,
+        "trust_class": "canonical",
+        "sensitivity": "internal",
+        "owner_locked": False,
+        "valid_until": None,
+    }
+    first = {**base, "id": "claim-1", "claim_hash": "hash-1", "evidence_ids": ["ev-1"]}
+    duplicate = {
+        **base,
+        "id": "claim-2",
+        "claim_hash": "hash-2",
+        "evidence_ids": ["ev-2"],
+    }
+
+    assert CompanyIntelligenceService._semantic_claim_source_hash([first]) == (
+        CompanyIntelligenceService._semantic_claim_source_hash([first, duplicate])
+    )

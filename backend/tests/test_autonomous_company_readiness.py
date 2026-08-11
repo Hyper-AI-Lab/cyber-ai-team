@@ -14,6 +14,7 @@ from cyber_team.db.models import (
     CompanyModelRevision,
     CompanyObjective,
     CompanyObjectiveRevision,
+    CompanySignal,
     CompanySource,
     DomainAutonomyControl,
     OperatingKPIDefinition,
@@ -52,6 +53,55 @@ async def test_never_discovered_company_is_an_explicit_blocker(
     assert result["sections"]["company_model"]["status"] == "not_discovered"
     assert result["sections"]["company_model"]["critical_unknowns"]
     assert result["sections"]["strategy"]["status"] == "not_generated"
+
+
+@pytest.mark.asyncio
+async def test_stale_claim_extraction_failure_is_an_explicit_blocker(
+    readiness_session_factory,
+):
+    async with readiness_session_factory() as session:
+        source = CompanySource(
+            id="source-repository",
+            company_namespace="company:test",
+            source_key="repository",
+            source_type="document",
+            name="Repository",
+            status="active",
+            trust_class="internal",
+            sensitivity="internal",
+            config={},
+            cursor={},
+            last_success_at=utc_now(),
+        )
+        session.add(source)
+        session.add(
+            CompanySignal(
+                id="signal-failed-extraction",
+                company_namespace="company:test",
+                source_id=source.id,
+                signal_type="document.updated",
+                external_id="request.txt",
+                status="pending",
+                trust_class="internal",
+                sensitivity="internal",
+                content_hash="content-hash",
+                redacted_payload={},
+                injection_status="clear",
+                claim_extraction_status="failed",
+                claim_extraction_attempts=2,
+                claim_extraction_error="llm_claim_extraction_failed:TimeoutError",
+                idempotency_key="signal-failed-extraction",
+                received_at=utc_now() - timedelta(hours=2),
+            )
+        )
+        await session.commit()
+
+    result = await AutonomousCompanyReadinessService(llm_gateway=FakeLLM()).summary()
+
+    extraction = result["sections"]["claim_extraction"]
+    assert extraction["status"] == "stale_failed"
+    assert extraction["blocking"] is True
+    assert extraction["stale_failed"] == 1
 
 
 @pytest.mark.asyncio
