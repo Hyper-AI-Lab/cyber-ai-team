@@ -6436,3 +6436,66 @@
   - `backend/tests/test_autonomous_company_readiness.py`.
 - Next step:
   - Commit and publish `0.3.19`, require green CI, deploy backup-first, recover repository evidence into claims, rebuild the living company model, and restart the complete post-promotion soak on the repaired immutable release.
+
+### 2026-08-11T05:07:28Z — STEP-251 — Released and promoted the repaired immutable candidate
+- Files/services changed:
+  - Published commit `f50d188e2d8745e7c4e30f1aa11deee2c1fb51eb` as release `0.3.19` and promoted the pinned core/UI images to staging.
+  - Applied additive Alembic migration `0017_company_claim_extraction` and recreated the staging core, worker, and UI containers.
+  - Created a PostgreSQL backup before service replacement; no provider credentials, policies, or owner approvals were changed.
+- Commands run:
+  - Policy-complete `scripts/release-check.sh` with full quality gate, two real migration rehearsals, authenticated Compose smoke, image builds, and Trivy image scans.
+  - Dry-run and executed `scripts/promote-staging.sh` with `RELEASE_VERSION=0.3.19`.
+  - Public `/health` and `/ready` probes plus database migration/column verification.
+- Result:
+  - Release verification passed 381 backend tests, 28 frontend tests, build/typecheck, dependency/license/secret/GCP-isolation checks, migration rehearsal, Compose smoke, and zero-vulnerability image scans.
+  - GitHub push CI run `31457632982` passed against the exact release commit.
+  - Staging reports version `0.3.19`, exact build SHA `f50d188e2d8745e7c4e30f1aa11deee2c1fb51eb`, dependency readiness `ready`, and Alembic head `0017_company_claim_extraction`.
+  - The live promotion smoke rejected its generated email approval and issued no external notification.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.19.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.19-20260811-050440.dump`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.19-20260811-050728.json`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31457632982`.
+- Next step:
+  - Run bounded claim-extraction recovery, prove canonical company-model preservation and semantic idempotency, then execute post-promotion business smokes.
+
+### 2026-08-11T05:19:16Z — STEP-252 — Recovered company evidence and passed post-promotion business acceptance
+- Files/services changed:
+  - Processed only the bounded repository evidence reopened by migration `0017`; no broad source re-acquisition, policy change, or unapproved external action was performed.
+  - Created active company-model revision `cmr_83871c8135cd4ab19c8a0ea1b79ccaf8` from the semantic claim set and retained explicit unknowns where evidence was insufficient.
+  - Exercised staging-only ERPNext records through existing approval-gated executors and applied the smoke script's documented cleanup/archive behavior.
+- Commands run:
+  - Two owner-authenticated `POST /api/company/discover` calls with `acquire=false`.
+  - Read-only company-model, extraction-state, readiness, approval, PostgreSQL, and audit checks.
+  - `scripts/erpnext-smoke.py` against the public Cyber-Team and ERPNext staging endpoints.
+- Result:
+  - Revision 4 is active with provenance coverage `1.0`, confidence `0.9461`, legal name `HyperAILabs`, currency `JPY`, jurisdiction `Japan`, and the full keyed ERPNext measurement map preserved.
+  - Missing business description, offerings, and customer segments remain explicit unknowns; the LLM produced no unsupported claim.
+  - A malformed extraction response remained retryable, succeeded as `insufficient` on the bounded retry, and readiness returned to `ready` with zero stale failures.
+  - The second discovery returned the same revision and source hash with `duplicate=true`, proving semantic idempotency.
+  - ERPNext Lead, Task, Issue, and Material Request paths passed, including target-mismatch and consumed-approval protections. Cleanup closed/completed/archived supported records; the Material Request remains the documented staging draft audit record.
+  - Two pending medium-risk owner reviews are legitimate and unchanged: risky ERPNext-derived role specifications and quarantined memory-lineage remediation. Neither was approved or executed.
+- Evidence:
+  - Company-model revision `cmr_83871c8135cd4ab19c8a0ea1b79ccaf8`, source hash `04bf381e331d602ab077c216f7e7058865e5819b2ade9bdf4886ee2a5d42d106`.
+  - `/home/projects/cyber-team/dist/erpnext/smoke/cyberteam-erpnext-tool-smoke-20260811T051916Z.json`.
+- Next step:
+  - Rehearse and start a strict 24-hour staging soak pinned to the repaired release identity.
+
+### 2026-08-11T05:20:32Z — STEP-253 — Started the repaired-release post-promotion observation window
+- Files/services changed:
+  - Started a detached, read-only staging soak container pinned to release `0.3.19` and exact build SHA `f50d188e2d8745e7c4e30f1aa11deee2c1fb51eb`.
+  - No application, provider, policy, approval, or business record changed during monitor startup.
+- Commands run:
+  - A 30-second preflight using `scripts/start-staging-soak.sh` with five-second sampling.
+  - The production-duration `scripts/start-staging-soak.sh` run with 86,400-second duration and 300-second sampling.
+  - Container/state inspection after the first live sample.
+- Result:
+  - Preflight passed 7 of 7 samples with zero failures and maximum observed latency `204.16 ms`.
+  - The strict monitor `staging-soak-20260811T052031Z` is running in container `cyberteam-staging-soak`; its first sample passed with zero blockers.
+  - The observation stage remains in progress until the full elapsed-time gate completes. An interruption, version/build drift, failed login, degraded readiness, or any blocker fails the soak.
+- Evidence:
+  - `/home/projects/cyber-team/dist/soak/staging-soak-20260811T051943Z.summary.json`.
+  - `/home/projects/cyber-team/dist/soak/staging-soak-20260811T052031Z.state.json`.
+  - Detached container `cyberteam-staging-soak`.
+- Next step:
+  - Let the complete 24-hour window elapse, inspect the final summary and post-promotion policy/Observer/action/outcome traces, then append and publish closure evidence if every gate remains clean.
