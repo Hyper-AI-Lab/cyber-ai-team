@@ -6571,3 +6571,44 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31581423226`.
 - Next step:
   - Publish, release, and deploy `0.3.22`; rerun bounded extraction, verify canonical-model preservation and readiness recovery, then start the replacement strict soak.
+
+### 2026-08-12T12:30:00Z — STEP-257 — Released bounded extraction and found unbounded legacy retries
+- Files/services changed:
+  - Released and deployed immutable images `cyber-team-core:0.3.22` and `cyber-team-ui:0.3.22` from exact commit `65c1f7a5a615c539d2fd8d2657390ae60b56a9ac`.
+  - Stopped the staging worker after live inspection found it holding an uncommitted discovery transaction while repeatedly processing old extraction failures; core, UI, ERPNext, dependencies, and local inference remained available.
+  - No credential, approval, company claim, action policy, or external business record was changed.
+- Commands run:
+  - Exact-commit release check with 386 backend tests, 28 frontend tests, Alembic SQL, two real PostgreSQL migration rehearsals, isolated Compose smoke, immutable image builds, Trivy scans, dependency/license/secret/GCP-isolation checks, and diff hygiene.
+  - GitHub exact-head CI inspection, safe builder-cache cleanup, staging promotion dry-run, backup-first promotion, public health/readiness checks, and live approval-rejection smoke.
+  - Live company discovery probe plus read-only signal, transaction, container-resource, and redacted llama.cpp log inspection.
+- Result:
+  - Release verification and GitHub push CI run `31589640425` passed. Staging serves `0.3.22` at its exact SHA with all five dependencies ready and a fresh backup made before replacement.
+  - Hosted Mistral remains capacity exhausted by HTTP `402`; the isolated Qwen/llama.cpp fallback is healthy, zero-spend, and non-blocking.
+  - The 128-token bound prevented 1,024-token generation, but the four-core host still needs roughly two minutes for prompt evaluation. Thirty-two historical failures, with up to 82 attempts each, would therefore be retried forever and keep readiness degraded.
+  - The live probe produced no claim, plan, approval, side effect, or partial commit. Its transaction was rolled back by stopping the worker before implementing the finite retry policy.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.22.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.22-20260812-121450.dump`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.22-20260812-122258.json`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31589640425`.
+- Next step:
+  - Add a finite extraction retry budget with a durable deferred disposition, verify it, release `0.3.23`, drain the backlog without repeated inference, and restart the replacement strict soak.
+
+### 2026-08-12T15:05:00Z — STEP-258 — Added finite evidence-extraction failure lifecycle
+- Files/services changed:
+  - Added `COMPANY_CLAIM_EXTRACTION_MAX_ATTEMPTS`, defaulting to three, to runtime configuration and all environment examples.
+  - Claim extraction now retries transient failures within budget; on the final failure, or when loading a pre-existing row already beyond budget, it marks extraction `blocked`, records the safe failure class, creates the normal traceable business event, and completes the signal with disposition `deferred`.
+  - Added `exhausted_failures` to processing results and `exhausted` to extraction audit metadata. Exhausted signals are not presented as successful and are never sent to the LLM again.
+  - Added regression tests for normal recovery, exactly-three-attempt exhaustion, and immediate terminalization of a legacy 82-attempt row; advanced release metadata to `0.3.23`.
+- Commands run:
+  - Focused company-intelligence/readiness tests, Ruff, and compile checks.
+  - Full policy-complete quality gate with backend tests, frontend production build/typecheck/tests, Alembic offline SQL, dependency audits, Compose validation, secret scan, Google Cloud isolation, FOSS/resource scan, and diff hygiene.
+- Result:
+  - Focused verification passed 24 tests. Full verification passed 388 backend tests and 28 frontend tests with no failures, no known dependency vulnerabilities, and no high-confidence secrets.
+  - Exhausted evidence remains visible and auditable as deferred work while no longer blocking the queue or consuming unbounded local inference. Prompt-injection quarantine remains a separate owner-escalation path.
+- Evidence:
+  - `backend/src/cyber_team/company/intelligence.py`.
+  - `backend/src/cyber_team/config.py`.
+  - `backend/tests/test_company_intelligence.py`.
+- Next step:
+  - Commit and publish `0.3.23`, run its exact-commit release gate, promote backup-first, drain and verify the live backlog/readiness state, then run the strict-soak preflight and start the complete replacement 24-hour window.

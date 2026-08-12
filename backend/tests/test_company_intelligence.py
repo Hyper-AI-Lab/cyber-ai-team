@@ -617,6 +617,86 @@ async def test_claim_extraction_failure_remains_retryable(
 
 
 @pytest.mark.asyncio
+async def test_claim_extraction_exhaustion_defers_signal_without_further_llm_calls(
+    intelligence_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "company_claim_extraction_max_attempts", 3)
+    llm = AsyncMock()
+    llm.invoke_json.side_effect = RuntimeError("provider unavailable")
+    audit = FakeAudit()
+    service = CompanyIntelligenceService(llm_gateway=llm, audit_service=audit)
+    signal = await service.ingest_signal(
+        source_key="repository",
+        signal_type="document.updated",
+        external_id="retry-budget.txt",
+        payload={"text": "Evidence that cannot currently be extracted."},
+        trust_class="internal",
+    )
+
+    first = await service.process_pending_signals()
+    second = await service.process_pending_signals()
+    third = await service.process_pending_signals()
+    fourth = await service.process_pending_signals()
+
+    async with intelligence_session_factory() as session:
+        exhausted = await session.get(CompanySignal, signal["id"])
+        events = (await session.execute(select(BusinessEvent))).scalars().all()
+
+    assert first["extraction_failures"] == 1
+    assert first["exhausted_failures"] == 0
+    assert second["extraction_failures"] == 1
+    assert second["exhausted_failures"] == 0
+    assert third["processed"] == 1
+    assert third["extraction_failures"] == 1
+    assert third["exhausted_failures"] == 1
+    assert fourth["processed"] == 0
+    assert llm.invoke_json.await_count == 3
+    assert exhausted.status == "processed"
+    assert exhausted.disposition == "deferred"
+    assert exhausted.claim_extraction_status == "blocked"
+    assert exhausted.claim_extraction_attempts == 3
+    assert exhausted.claim_extracted_at is not None
+    assert len(events) == 1
+    assert audit.events[-1]["metadata"]["exhausted"] is True
+
+
+@pytest.mark.asyncio
+async def test_preexisting_exhausted_claim_failure_is_terminalized_without_llm(
+    intelligence_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "company_claim_extraction_max_attempts", 3)
+    llm = AsyncMock()
+    service = CompanyIntelligenceService(llm_gateway=llm)
+    signal = await service.ingest_signal(
+        source_key="imap",
+        signal_type="email.received",
+        external_id="legacy-timeout",
+        payload={"subject": "Legacy extraction timeout"},
+        trust_class="external",
+    )
+    async with intelligence_session_factory() as session:
+        legacy = await session.get(CompanySignal, signal["id"])
+        legacy.claim_extraction_status = "failed"
+        legacy.claim_extraction_attempts = 82
+        legacy.claim_extraction_error = "llm_claim_extraction_failed:TimeoutError"
+        await session.commit()
+
+    result = await service.process_pending_signals()
+
+    async with intelligence_session_factory() as session:
+        exhausted = await session.get(CompanySignal, signal["id"])
+    assert result["processed"] == 1
+    assert result["exhausted_failures"] == 1
+    assert exhausted.status == "processed"
+    assert exhausted.disposition == "deferred"
+    assert exhausted.claim_extraction_status == "blocked"
+    assert exhausted.claim_extraction_attempts == 82
+    llm.invoke_json.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_company_model_materialization_preserves_canonical_claims():
     llm = AsyncMock()
     service = CompanyIntelligenceService(llm_gateway=llm)

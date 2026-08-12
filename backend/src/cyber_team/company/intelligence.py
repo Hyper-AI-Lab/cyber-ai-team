@@ -480,11 +480,13 @@ class CompanyIntelligenceService:
         events = 0
         processed_count = 0
         extraction_failures: list[dict[str, Any]] = []
+        exhausted_failures = 0
         async with async_session() as session:
             signals = (
                 await session.execute(self._pending_signal_query(namespace, limit))
             ).scalars().all()
             for signal in signals:
+                extraction_exhausted = False
                 artifact = (
                     await session.execute(
                         select(EvidenceArtifact).where(
@@ -504,28 +506,62 @@ class CompanyIntelligenceService:
                     signal.claim_extraction_error = None
                     signal.claim_extracted_at = utc_now()
                 else:
-                    signal.claim_extraction_attempts = int(
-                        signal.claim_extraction_attempts or 0
-                    ) + 1
-                    try:
-                        candidates = await self._extract_claim_candidates(signal)
-                    except ClaimExtractionError as exc:
-                        signal.claim_extraction_status = "failed"
-                        signal.claim_extraction_error = str(exc)[:500]
+                    max_attempts = max(
+                        1, settings.company_claim_extraction_max_attempts
+                    )
+                    attempts = int(signal.claim_extraction_attempts or 0)
+                    if attempts >= max_attempts:
+                        candidates = []
+                        extraction_exhausted = True
+                    else:
+                        signal.claim_extraction_attempts = attempts + 1
+                        try:
+                            candidates = await self._extract_claim_candidates(signal)
+                        except ClaimExtractionError as exc:
+                            signal.claim_extraction_error = str(exc)[:500]
+                            extraction_exhausted = (
+                                signal.claim_extraction_attempts >= max_attempts
+                            )
+                            signal.claim_extraction_status = (
+                                "blocked" if extraction_exhausted else "failed"
+                            )
+                            if extraction_exhausted:
+                                signal.claim_extracted_at = utc_now()
+                                candidates = []
+                            else:
+                                extraction_failures.append(
+                                    {
+                                        "signal_id": signal.id,
+                                        "signal_type": signal.signal_type,
+                                        "attempts": signal.claim_extraction_attempts,
+                                        "error": signal.claim_extraction_error,
+                                        "exhausted": False,
+                                    }
+                                )
+                                continue
+                    if extraction_exhausted:
+                        signal.claim_extraction_status = "blocked"
+                        signal.claim_extraction_error = (
+                            signal.claim_extraction_error
+                            or "claim_extraction_retry_budget_exhausted"
+                        )
+                        signal.claim_extracted_at = utc_now()
+                        exhausted_failures += 1
                         extraction_failures.append(
                             {
                                 "signal_id": signal.id,
                                 "signal_type": signal.signal_type,
                                 "attempts": signal.claim_extraction_attempts,
                                 "error": signal.claim_extraction_error,
+                                "exhausted": True,
                             }
                         )
-                        continue
-                    signal.claim_extraction_status = (
-                        "succeeded" if candidates else "insufficient"
-                    )
-                    signal.claim_extraction_error = None
-                    signal.claim_extracted_at = utc_now()
+                    else:
+                        signal.claim_extraction_status = (
+                            "succeeded" if candidates else "insufficient"
+                        )
+                        signal.claim_extraction_error = None
+                        signal.claim_extracted_at = utc_now()
                 for candidate in candidates:
                     created = await self._upsert_claim(
                         session,
@@ -583,7 +619,11 @@ class CompanyIntelligenceService:
                     events += 1
                 signal.status = "processed"
                 signal.disposition = (
-                    "owner_escalation" if quarantined else "accepted"
+                    "owner_escalation"
+                    if quarantined
+                    else "deferred"
+                    if extraction_exhausted
+                    else "accepted"
                 )
                 signal.processed_at = utc_now()
                 processed_count += 1
@@ -601,6 +641,7 @@ class CompanyIntelligenceService:
                         "signal_type": failure["signal_type"],
                         "attempts": failure["attempts"],
                         "error": failure["error"],
+                        "exhausted": failure["exhausted"],
                     },
                 )
         return {
@@ -609,6 +650,7 @@ class CompanyIntelligenceService:
             "created_claims": created_claims,
             "created_events": events,
             "extraction_failures": len(extraction_failures),
+            "exhausted_failures": exhausted_failures,
         }
 
     @staticmethod

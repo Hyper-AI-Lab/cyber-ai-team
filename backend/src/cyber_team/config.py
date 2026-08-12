@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # App
     app_name: str = "Cyber-Team"
-    app_version: str = "0.3.22"
+    app_version: str = "0.3.23"
     build_sha: str = "local"
     environment: str = "development"
     log_level: str = "INFO"
@@ -137,6 +137,7 @@ class Settings(BaseSettings):
     company_website_allowlist: str = ""
     company_model_min_provenance_coverage: float = 0.6
     company_model_min_confidence: float = 0.72
+    company_claim_extraction_max_attempts: int = 3
     company_discovery_interval_seconds: int = 3600
     strategy_review_interval_seconds: int = 86400
     domain_loop_interval_seconds: int = 900
