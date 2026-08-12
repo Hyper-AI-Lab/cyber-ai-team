@@ -1604,7 +1604,8 @@ class CompanyIntelligenceService:
                     "predicate, value (object), epistemic_state (inferred or hypothesis), "
                     "and confidence (0..0.70). Allowed predicates: "
                     + ", ".join(sorted(EXTRACTABLE_PREDICATES))
-                    + ". Return an empty claims array when evidence is insufficient."
+                    + ". Return at most two concise claims, prioritizing explicit business "
+                    "facts. Return an empty claims array when evidence is insufficient."
                 ),
                 user_message=json.dumps(
                     {
@@ -1616,6 +1617,7 @@ class CompanyIntelligenceService:
                     default=str,
                 )[:60_000],
                 agent_id=self.DISCOVERY_AGENT_ID,
+                max_tokens=128,
             )
         except Exception as exc:  # noqa: BLE001 - retain only a safe failure class.
             raise ClaimExtractionError(

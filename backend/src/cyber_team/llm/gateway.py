@@ -533,6 +533,7 @@ class LLMGateway:
         user_message: str,
         agent_id: str = "default",
         model: str | None = None,
+        max_tokens: int = 4096,
     ) -> dict:
         response = await self.invoke(
             system_prompt=system_prompt + "\nAlways respond with valid JSON only.",
@@ -540,6 +541,7 @@ class LLMGateway:
             agent_id=agent_id,
             model=model,
             temperature=0.3,
+            max_tokens=max_tokens,
         )
         try:
             # Try to extract JSON from response (handle markdown code blocks)

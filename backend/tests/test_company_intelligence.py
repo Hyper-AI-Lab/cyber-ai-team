@@ -538,6 +538,7 @@ async def test_untrusted_research_becomes_provenance_backed_capped_claims(
     assert claims[0]["predicate"] == "customer_segment"
     assert claims[0]["confidence"] == 0.5
     assert claims[0]["evidence_ids"]
+    assert llm.invoke_json.await_args.kwargs["max_tokens"] == 128
 
 
 @pytest.mark.asyncio

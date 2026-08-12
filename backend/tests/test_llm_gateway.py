@@ -1,5 +1,6 @@
 import sys
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -363,3 +364,19 @@ async def test_non_retryable_hosted_failure_does_not_use_local_fallback(monkeypa
         await LLMGateway().invoke("System", "Task", agent_id="ops")
 
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_invoke_json_forwards_structured_output_token_budget():
+    gateway = LLMGateway()
+    gateway.invoke = AsyncMock(return_value='{"claims": []}')
+
+    result = await gateway.invoke_json(
+        "Extract claims.",
+        "Evidence payload.",
+        agent_id="company_discovery_agent",
+        max_tokens=128,
+    )
+
+    assert result == {"claims": []}
+    assert gateway.invoke.await_args.kwargs["max_tokens"] == 128

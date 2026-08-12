@@ -6547,3 +6547,27 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31575230033`.
 - Next step:
   - Verify, publish, and deploy `0.3.21`; process stale discovery signals through the local model, prove restored aggregate readiness, and restart the strict 24-hour soak.
+
+### 2026-08-12T11:00:00Z — STEP-256 — Promoted fallback readiness and bounded local claim extraction
+- Files/services changed:
+  - Released and deployed immutable images `cyber-team-core:0.3.21` and `cyber-team-ui:0.3.21` from exact commit `6c3e5138a6e68ab07c1a70346012419d3a8df834`.
+  - Added an explicit structured-output token budget to the LLM gateway and limited company claim extraction to at most two concise claims and 128 output tokens for release `0.3.22`.
+  - Added gateway and company-intelligence regression coverage proving the structured budget is forwarded; no evidence schema, provenance gate, injection quarantine, credential, approval, or side-effect policy changed.
+- Commands run:
+  - Exact-commit `0.3.21` release gate with 385 backend tests, 28 frontend tests, migration rehearsals, isolated Compose smoke, immutable builds, and Trivy scans.
+  - GitHub Actions exact-head verification, safe Docker build-cache cleanup, staging promotion dry-run, backup-first promotion, public smoke, and forced detailed readiness validation.
+  - Read-only PostgreSQL signal/transaction inspection and redacted core/worker/llama.cpp log review.
+  - Focused 28-test extraction/gateway suite followed by the full `0.3.22` quality gate.
+- Result:
+  - `0.3.21` passed every release gate and GitHub CI run `31581423226`; staging serves its exact SHA after a fresh backup and live approval-rejection smoke.
+  - Aggregate readiness now correctly treats healthy `llama_cpp` `local_fallback` as non-blocking. The only remaining blocker is stale claim extraction.
+  - A bounded discovery call preserved canonical model revision 4 and semantic source hash without duplicate claims. The background worker had already claimed the same rows using `FOR UPDATE SKIP LOCKED`, proving concurrent deduplication.
+  - Live logs then showed the old 1,024-token local allowance timing out at 180 seconds for every structured extraction. The uncommitted batch remained isolated and rollback-safe, but could not clear readiness. `0.3.22` constrains this specific output instead of globally degrading other local-model tasks.
+  - Full follow-up verification passed 386 backend tests, 28 frontend tests, production build/typecheck, zero known dependency vulnerabilities, Alembic SQL, both PostgreSQL rehearsals, Compose validation, secret/GCP/FOSS checks, and diff hygiene.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.21.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.21-20260812-101037.dump`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.21-20260812-101303.json`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31581423226`.
+- Next step:
+  - Publish, release, and deploy `0.3.22`; rerun bounded extraction, verify canonical-model preservation and readiness recovery, then start the replacement strict soak.
