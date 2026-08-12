@@ -6612,3 +6612,31 @@
   - `backend/tests/test_company_intelligence.py`.
 - Next step:
   - Commit and publish `0.3.23`, run its exact-commit release gate, promote backup-first, drain and verify the live backlog/readiness state, then run the strict-soak preflight and start the complete replacement 24-hour window.
+
+### 2026-08-12T13:55:00Z — STEP-259 — Promoted retry closure, restored readiness, and started replacement soak
+- Files/services changed:
+  - Published commit `f09ca597bb7ae0e34dd0c2f50bca9caf1637a649`, released immutable `0.3.23` core/UI images, and promoted them to staging after a fresh PostgreSQL backup.
+  - Restarted the worker through the immutable deployment; all existing Cyber-Team, ERPNext, local Qwen/llama.cpp, SearXNG, Temporal, OPA, Redis, PostgreSQL, and Qdrant services remain running.
+  - Drained the legacy evidence backlog under the finite retry lifecycle and routed the generated transactional-outbox events to explicit accepted, deferred, or no-action dispositions.
+  - No production cutover, paid-provider spend, owner credential change, or unapproved business side effect occurred.
+- Commands run:
+  - Exact-commit release gate: 388 backend tests, 28 frontend tests, production build/typecheck, Alembic SQL, both PostgreSQL migration rehearsals, dependency/secret/GCP-isolation/FOSS scans, isolated Compose smoke, immutable builds, and Trivy image scans.
+  - GitHub exact-head CI verification, builder-cache-only cleanup, promotion dry-run, backup-first promotion, public health/readiness and live Compose smoke.
+  - Live bounded company discovery, business-event routing, detailed readiness checks, business-workflow smoke, approval-gated ERPNext smoke with cleanup, a 30-second strict-soak preflight, and replacement 24-hour soak start.
+- Result:
+  - Exact GitHub push CI run `31599084293` passed. Both `0.3.23` images contain zero detected vulnerabilities, and staging serves exact SHA `f09ca597bb7ae0e34dd0c2f50bca9caf1637a649` with all dependencies ready.
+  - Discovery processed 143 queued signals: 31 historical over-budget failures became auditable deferred signals without further LLM calls, 112 signals were accepted, and no claim was fabricated. Company model revision 4 and source hash `04bf381e331d602ab077c216f7e7058865e5819b2ade9bdf4886ee2a5d42d106` remained canonical.
+  - Aggregate readiness is `ready` with zero blockers. Claim extraction is healthy with zero stale failures; local `llama_cpp` fallback is ready and its latest completion succeeded while hosted Mistral remains safely classified as capacity exhausted.
+  - Business-workflow smoke passed every check. ERPNext approval/mismatch/create/update/cleanup smoke passed; test Lead/Issue/Tasks were safely archived or completed and the Material Request remains an explicit staging draft audit record.
+  - Strict preflight `staging-soak-20260812T135338Z` passed 7/7 samples. Full monitor `staging-soak-20260812T135432Z` is running for 86,400 seconds at five-minute intervals; first sample passed with exact release identity and zero blockers.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.23.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.23-20260812-133700.dump`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.23-20260812-133915.json`.
+  - `/home/projects/cyber-team/dist/business-workflows/business-workflow-smoke-20260812T134715Z.json`.
+  - `/home/projects/cyber-team/dist/erpnext/smoke/cyberteam-erpnext-tool-smoke-20260812T135316Z.json`.
+  - `/home/projects/cyber-team/dist/soak/staging-soak-20260812T135338Z.summary.json`.
+  - `/home/projects/cyber-team/dist/soak/staging-soak-20260812T135432Z.state.json`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31599084293`.
+- Next step:
+  - Allow the complete 24-hour window to elapse without deployment or restart, inspect its final summary after approximately `2026-08-13T13:54:32Z`, append closure evidence, and publish the final ledger update only if every strict sample passes.
