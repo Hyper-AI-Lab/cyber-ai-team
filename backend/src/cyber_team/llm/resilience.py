@@ -1,6 +1,7 @@
 """Shared LLM provider error classification helpers."""
 
 RETRYABLE_LLM_ERRORS = {"rate_limited", "timeout", "provider_unavailable"}
+LOCAL_FALLBACK_LLM_ERRORS = RETRYABLE_LLM_ERRORS | {"capacity_exhausted"}
 
 
 def classify_llm_exception(exc: Exception) -> str:
@@ -8,6 +9,16 @@ def classify_llm_exception(exc: Exception) -> str:
     name = type(exc).__name__.lower()
     message = str(exc).lower()
     status_code = getattr(exc, "status_code", None)
+    if status_code == 402 or any(
+        marker in message
+        for marker in (
+            "insufficient balance",
+            "insufficient credit",
+            "payment required",
+            "quota exhausted",
+        )
+    ):
+        return "capacity_exhausted"
     if status_code == 429 or "ratelimit" in name or "rate limit" in message:
         return "rate_limited"
     if status_code in {401, 403} or "authentication" in name or "unauthorized" in message:
@@ -39,3 +50,8 @@ def classify_llm_trace_error(error: object) -> str | None:
 
 def llm_error_is_retryable(category: str) -> bool:
     return category in RETRYABLE_LLM_ERRORS
+
+
+def llm_error_allows_local_fallback(category: str) -> bool:
+    """Return whether a hosted failure may be served by the isolated local model."""
+    return category in LOCAL_FALLBACK_LLM_ERRORS

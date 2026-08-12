@@ -11,7 +11,11 @@ import httpx
 
 from cyber_team.clock import utc_now
 from cyber_team.config import settings
-from cyber_team.llm.resilience import classify_llm_exception, llm_error_is_retryable
+from cyber_team.llm.resilience import (
+    classify_llm_exception,
+    llm_error_allows_local_fallback,
+    llm_error_is_retryable,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +161,7 @@ class LLMGateway:
                     if (
                         not route["local"]
                         and settings.llm_local_fallback_enabled
-                        and llm_error_is_retryable(category)
+                        and llm_error_allows_local_fallback(category)
                     ):
                         return await self._invoke_local_fallback(
                             messages=messages,
@@ -311,11 +315,42 @@ class LLMGateway:
             self._last_validation_at = now
             return self._merge_runtime_status(result, now)
 
+        result = await self._validate_route(route, now=now)
+        if (
+            result.get("blocking")
+            and not route["local"]
+            and settings.llm_local_fallback_enabled
+        ):
+            fallback = await self._validate_route(self._local_route(), now=now)
+            if not fallback.get("blocking"):
+                result = {
+                    **fallback,
+                    "mode": "local_fallback",
+                    "status": "live",
+                    "blocking": False,
+                    "detail": (
+                        "Hosted LLM is unavailable; isolated local open-model inference "
+                        "is active."
+                    ),
+                    "primary_provider": {
+                        "provider": route["provider"],
+                        "model": route["model"],
+                        "mode": result.get("mode"),
+                        "status": result.get("status"),
+                        "detail": result.get("detail"),
+                    },
+                }
+        self._last_validation_result = result
+        self._last_validation_at = now
+        return self._merge_runtime_status(result, now)
+
+    async def _validate_route(self, route: dict, *, now) -> dict:
+        provider_label = "Local model" if route["local"] else "Hosted LLM"
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 response = await client.get(route["models_url"], headers=route["headers"])
             if response.status_code == 200:
-                result = {
+                return {
                     "provider": route["provider"],
                     "model": route["model"],
                     "configured": True,
@@ -333,45 +368,39 @@ class LLMGateway:
                     ),
                     "last_checked_at": now.isoformat(),
                 }
-            elif response.status_code in {401, 403}:
-                result = {
+            if response.status_code in {401, 403}:
+                return {
                     "provider": route["provider"],
                     "model": route["model"],
                     "configured": True,
                     "mode": "configuration_required",
                     "status": "configuration_required",
                     "blocking": True,
-                    "detail": "Mistral API credentials were rejected by the provider.",
+                    "detail": f"{provider_label} credentials were rejected.",
                     "last_checked_at": now.isoformat(),
                 }
-            else:
-                result = {
-                    "provider": route["provider"],
-                    "model": route["model"],
-                    "configured": True,
-                    "mode": "unavailable",
-                    "status": "unavailable",
-                    "blocking": True,
-                    "detail": (
-                        "Mistral provider validation returned HTTP "
-                        f"{response.status_code}."
-                    ),
-                    "last_checked_at": now.isoformat(),
-                }
+            status = "capacity_exhausted" if response.status_code == 402 else "unavailable"
+            return {
+                "provider": route["provider"],
+                "model": route["model"],
+                "configured": True,
+                "mode": "unavailable",
+                "status": status,
+                "blocking": True,
+                "detail": f"{provider_label} validation returned HTTP {response.status_code}.",
+                "last_checked_at": now.isoformat(),
+            }
         except Exception as exc:  # noqa: BLE001 - validation must return safe status.
-            result = {
+            return {
                 "provider": route["provider"],
                 "model": route["model"],
                 "configured": True,
                 "mode": "unavailable",
                 "status": "unavailable",
                 "blocking": True,
-                "detail": f"Mistral provider validation failed: {exc}",
+                "detail": f"{provider_label} validation failed: {type(exc).__name__}.",
                 "last_checked_at": now.isoformat(),
             }
-        self._last_validation_result = result
-        self._last_validation_at = now
-        return self._merge_runtime_status(result, now)
 
     def runtime_status(self) -> dict:
         now = utc_now()
@@ -433,7 +462,7 @@ class LLMGateway:
         self._consecutive_failures += 1
         threshold = max(1, settings.llm_circuit_breaker_failure_threshold)
         if (
-            llm_error_is_retryable(category)
+            llm_error_allows_local_fallback(category)
             and self._consecutive_failures >= threshold
         ):
             self._circuit_open_until = time.monotonic() + max(

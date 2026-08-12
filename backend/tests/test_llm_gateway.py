@@ -87,6 +87,50 @@ async def test_validate_provider_reports_rejected_mistral_credentials(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_validate_provider_uses_local_fallback_when_hosted_capacity_is_exhausted(
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)
+    monkeypatch.setattr(settings, "llm_local_fallback_enabled", True)
+    monkeypatch.setattr(settings, "llm_local_api_base", "http://llama:8080/v1")
+    monkeypatch.setattr(settings, "llm_local_model", "local/test-open-model")
+    monkeypatch.setattr(settings, "llm_local_api_key", "local-test-key")
+
+    class FakeResponse:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, headers):
+            if url == "https://api.mistral.ai/v1/models":
+                return FakeResponse(402)
+            assert url == "http://llama:8080/v1/models"
+            assert headers["Authorization"] == "Bearer local-test-key"
+            return FakeResponse(200)
+
+    monkeypatch.setattr("cyber_team.llm.gateway.httpx.AsyncClient", FakeClient)
+
+    result = await LLMGateway().validate_provider(force=True)
+
+    assert result["provider"] == "llama_cpp"
+    assert result["model"] == "local/test-open-model"
+    assert result["mode"] == "local_fallback"
+    assert result["status"] == "live"
+    assert result["blocking"] is False
+    assert result["primary_provider"]["status"] == "capacity_exhausted"
+
+
+@pytest.mark.asyncio
 async def test_invoke_retries_rate_limit_then_records_recovery(monkeypatch):
     monkeypatch.setattr(settings, "mistral_api_key", "test-key")
     monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)
@@ -252,6 +296,44 @@ async def test_retryable_hosted_failure_routes_to_local_fallback(monkeypatch):
     assert seen[1]["api_key"] == "local-test-key"
     assert seen[1]["max_tokens"] == 256
     assert seen[1]["messages"][-1]["content"].endswith("/no_think")
+    assert gateway.runtime_status()["last_invocation"]["provider"] == "llama_cpp"
+
+
+@pytest.mark.asyncio
+async def test_hosted_capacity_exhaustion_routes_immediately_to_local_fallback(monkeypatch):
+    monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)
+    monkeypatch.setattr(settings, "llm_local_fallback_enabled", True)
+    monkeypatch.setattr(settings, "llm_local_api_base", "http://llama:8080/v1")
+    monkeypatch.setattr(settings, "llm_local_model", "local/test-open-model")
+    monkeypatch.setattr(settings, "llm_local_api_key", "local-test-key")
+    monkeypatch.setattr(settings, "llm_retry_attempts", 3)
+    monkeypatch.setattr(settings, "llm_local_timeout_seconds", 1)
+    seen = []
+
+    class CapacityError(Exception):
+        status_code = 402
+
+    async def fake_completion(**kwargs):
+        seen.append(kwargs["model"])
+        if kwargs["model"].startswith("mistral/"):
+            raise CapacityError("payment required")
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Local recovery."))],
+            usage=SimpleNamespace(total_tokens=7),
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=fake_completion),
+    )
+
+    gateway = LLMGateway()
+    result = await gateway.invoke("System", "Task", agent_id="ops")
+
+    assert result == "Local recovery."
+    assert seen == ["mistral/mistral-large-latest", "local/test-open-model"]
     assert gateway.runtime_status()["last_invocation"]["provider"] == "llama_cpp"
 
 

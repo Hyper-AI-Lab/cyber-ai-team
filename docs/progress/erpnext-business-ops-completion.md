@@ -6499,3 +6499,28 @@
   - Detached container `cyberteam-staging-soak`.
 - Next step:
   - Let the complete 24-hour window elapse, inspect the final summary and post-promotion policy/Observer/action/outcome traces, then append and publish closure evidence if every gate remains clean.
+
+### 2026-08-12T07:50:00Z — STEP-254 — Failed the soak honestly and repaired zero-spend LLM failover
+- Files/services changed:
+  - Classified hosted HTTP `402` and equivalent quota/balance errors as `capacity_exhausted`, an immediate local-fallback condition rather than a retryable hosted request or generic terminal provider error.
+  - Made provider validation check the configured isolated local model whenever the hosted route is blocking. Readiness now reports `local_fallback` as live while retaining the hosted provider's exact safe status and explanation.
+  - Added regression tests for hosted-capacity validation failover and immediate invocation failover; advanced release metadata to `0.3.20`.
+  - No provider credential, owner approval, action policy, business record, or external side effect changed.
+- Commands run:
+  - Inspected all 289 strict-soak samples, readiness transition signatures, current readiness, worker logs, local-model health, action policies, source freshness, business events, and work portfolio.
+  - Focused Ruff and 11 LLM-gateway tests.
+  - Full policy-complete quality gate with real migration rehearsal.
+- Result:
+  - The elapsed-time monitor completed 86,400 seconds but correctly failed: 116 samples passed and 173 failed. Every health/login/readiness request returned HTTP 200 and the build identity never drifted; failures were control-plane readiness degradations.
+  - First degradation appeared at `2026-08-11T11:25:31Z`. From `2026-08-11T15:15:32Z`, hosted Mistral returned HTTP `402` for 170 samples; evidence extraction then accumulated 26 stale failures and failed readiness closed.
+  - The configured local Qwen/llama.cpp service remained healthy and reachable, but the old runtime classified `402` as non-fallback `provider_error` and validation checked only Mistral. This contradicted the zero-spend fallback architecture and is now repaired.
+  - Both active action policies remained at 11 validated cases, score/compliance `1.0`, one live canary, and zero high-severity findings. All business events retained dispositions; no unapproved action, approval bypass, or build drift was observed.
+  - Full verification passed 383 backend tests and 28 frontend tests, production build/typecheck, dependency audits, Alembic SQL, both PostgreSQL rehearsals, Compose validation, secret scan, Google Cloud isolation, FOSS policy, and diff hygiene.
+- Evidence:
+  - `/home/projects/cyber-team/dist/soak/staging-soak-20260811T052031Z.summary.json`.
+  - `/home/projects/cyber-team/dist/soak/staging-soak-20260811T052031Z.jsonl`.
+  - `backend/src/cyber_team/llm/gateway.py`.
+  - `backend/src/cyber_team/llm/resilience.py`.
+  - `backend/tests/test_llm_gateway.py`.
+- Next step:
+  - Publish, build, scan, and deploy `0.3.20`; validate real hosted-402-to-local failover, drain stale extraction work, restore readiness, and restart a complete strict 24-hour observation window.
