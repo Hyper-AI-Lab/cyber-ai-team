@@ -6524,3 +6524,26 @@
   - `backend/tests/test_llm_gateway.py`.
 - Next step:
   - Publish, build, scan, and deploy `0.3.20`; validate real hosted-402-to-local failover, drain stale extraction work, restore readiness, and restart a complete strict 24-hour observation window.
+
+### 2026-08-12T08:45:33Z — STEP-255 — Released the failover repair and corrected fallback readiness aggregation
+- Files/services changed:
+  - Released and deployed immutable images `cyber-team-core:0.3.20` and `cyber-team-ui:0.3.20` from exact commit `fc14959d807896e5498951a323e6fd203754429c`.
+  - Added regression-backed readiness aggregation changes for `0.3.21` so a validated, non-blocking `local_fallback` satisfies both integration and autonomous-company model availability.
+  - Advanced repository release metadata to `0.3.21`; no credential, approval, business record, action policy, or provider-spend setting changed.
+- Commands run:
+  - Full `0.3.20` release check with quality gate, two PostgreSQL migration rehearsals, isolated Compose smoke, immutable image builds, and Trivy scans.
+  - Safe Docker builder-cache/image cleanup after the first cold build exhausted disk space; running containers, named volumes, local models, backups, and evidence were retained.
+  - GitHub Actions exact-head verification, staging promotion dry-run, backup-first live promotion, public `/health` and `/ready` probes, and live Compose smoke.
+  - Focused Ruff plus 36 LLM/readiness/API regression tests for the follow-up aggregation correction.
+- Result:
+  - `0.3.20` passed 383 backend tests, 28 frontend tests, migration rehearsals, dependency/license/secret/GCP-isolation checks, isolated and live Compose smoke, and zero-vulnerability image scans.
+  - GitHub push CI run `31575230033` passed for the exact release commit; scheduled run `31565242137` also passed.
+  - Staging now serves `0.3.20` at the exact build SHA with every dependency ready; a fresh 132 MiB PostgreSQL backup preceded deployment and the live smoke rejected its synthetic email approval.
+  - Live validation proved the hosted HTTP `402` route now selects healthy `llama_cpp` inference. It also exposed a narrower aggregate-readiness defect: two callers overwrote the gateway's authoritative `blocking=false` because the mode name was `local_fallback` rather than `live`. The correction and tests are complete for `0.3.21`.
+- Evidence:
+  - `/home/projects/cyber-team/dist/releases/0.3.20.json`.
+  - `/home/projects/cyber-team/backups/staging/cyberteam-staging-0.3.20-20260812-083359.dump`.
+  - `/home/projects/cyber-team/dist/promotions/staging/0.3.20-20260812-083614.json`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31575230033`.
+- Next step:
+  - Verify, publish, and deploy `0.3.21`; process stale discovery signals through the local model, prove restored aggregate readiness, and restart the strict 24-hour soak.

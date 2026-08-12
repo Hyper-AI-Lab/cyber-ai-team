@@ -2645,11 +2645,14 @@ async def operations_readiness(
     llm_gateway = getattr(request.app.state, "llm_gateway", None)
     if llm_gateway and hasattr(llm_gateway, "validate_provider"):
         llm_status = await llm_gateway.validate_provider()
+        llm_blocking = bool(
+            llm_status.get("blocking", llm_status.get("mode") != "live")
+        )
         llm_status = {
             **llm_status,
             "required": True,
             "optional_disabled": False,
-            "blocking": llm_status.get("mode") != "live",
+            "blocking": llm_blocking,
         }
     else:
         llm_status = {

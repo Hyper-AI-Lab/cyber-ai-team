@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -780,6 +780,63 @@ def test_operations_readiness_reports_tool_and_integration_blockers(monkeypatch)
     assert body["integrations"]["llm"]["status"] == "rate_limited"
     assert body["integrations"]["llm"]["execution_health"]["blocking"] is True
     assert body["memory"]["recent_trace_errors"] == 1
+
+
+def test_operations_readiness_accepts_healthy_local_llm_fallback(monkeypatch):
+    class FakeLLM:
+        async def validate_provider(self):
+            return {
+                "provider": "llama_cpp",
+                "configured": True,
+                "mode": "local_fallback",
+                "status": "live",
+                "blocking": False,
+                "detail": "Hosted capacity is exhausted; local inference is active.",
+            }
+
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    app.state.tool_registry = MagicMock()
+    app.state.tool_registry.list_tool_contracts.return_value = []
+    app.state.comms_gateway = MagicMock()
+    app.state.comms_gateway.integration_status.return_value = []
+    app.state.llm_gateway = FakeLLM()
+    app.state.audit_service = AsyncMock()
+    app.state.audit_service.list_events.return_value = []
+    app.state.memory_service = AsyncMock()
+    app.state.memory_service.list_memory_traces.return_value = []
+    app.state.memory_conflict_service = AsyncMock()
+    app.state.memory_conflict_service.readiness.return_value = {
+        "status": "ready",
+        "blocking": False,
+        "open_count": 0,
+        "blocking_count": 0,
+    }
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.settings.required_communication_providers",
+        "",
+    )
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+
+    response = TestClient(app).get("/api/operations/readiness")
+
+    assert response.status_code == 200
+    llm = response.json()["integrations"]["llm"]
+    assert llm["provider"] == "llama_cpp"
+    assert llm["mode"] == "local_fallback"
+    assert llm["blocking"] is False
+    assert response.json()["integrations"]["blocking_readiness"] is False
 
 
 def test_operations_readiness_caches_snapshot_until_refresh(monkeypatch):

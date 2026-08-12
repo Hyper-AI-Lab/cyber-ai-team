@@ -408,10 +408,11 @@ class AutonomousCompanyReadinessService:
                 "detail": "LLM gateway is unavailable.",
             }
         result = await self._llm.validate_provider()
+        blocking = bool(result.get("blocking", result.get("mode") != "live"))
         return {
             **result,
-            "status": "ready" if result.get("mode") == "live" else result.get("mode"),
-            "blocking": result.get("mode") != "live",
+            "status": "ready" if not blocking else result.get("mode"),
+            "blocking": blocking,
         }
 
     @staticmethod

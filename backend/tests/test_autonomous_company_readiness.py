@@ -29,6 +29,17 @@ class FakeLLM:
         return {"provider": "local", "mode": "live", "detail": "Local model ready."}
 
 
+class FakeLocalFallbackLLM:
+    async def validate_provider(self):
+        return {
+            "provider": "llama_cpp",
+            "mode": "local_fallback",
+            "status": "live",
+            "blocking": False,
+            "detail": "Hosted capacity is exhausted; local inference is active.",
+        }
+
+
 @pytest.fixture
 async def readiness_session_factory(monkeypatch):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -53,6 +64,18 @@ async def test_never_discovered_company_is_an_explicit_blocker(
     assert result["sections"]["company_model"]["status"] == "not_discovered"
     assert result["sections"]["company_model"]["critical_unknowns"]
     assert result["sections"]["strategy"]["status"] == "not_generated"
+
+
+@pytest.mark.asyncio
+async def test_healthy_local_fallback_satisfies_model_availability():
+    result = await AutonomousCompanyReadinessService(
+        llm_gateway=FakeLocalFallbackLLM()
+    )._model_availability()
+
+    assert result["provider"] == "llama_cpp"
+    assert result["mode"] == "local_fallback"
+    assert result["status"] == "ready"
+    assert result["blocking"] is False
 
 
 @pytest.mark.asyncio
