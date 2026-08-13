@@ -6640,3 +6640,24 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31599084293`.
 - Next step:
   - Allow the complete 24-hour window to elapse without deployment or restart, inspect its final summary after approximately `2026-08-13T13:54:32Z`, append closure evidence, and publish the final ledger update only if every strict sample passes.
+
+### 2026-08-13T14:55:00Z — STEP-260 — Failed the replacement soak on recurring extraction latency
+- Files/services changed:
+  - No runtime code, configuration, credential, approval, business record, or deployed container was changed during this inspection.
+  - Recorded the strict soak outcome without treating elapsed time or current recovery as acceptance.
+- Commands run:
+  - Inspected the final soak summary and all 289 append-only samples; grouped failures by HTTP status, readiness state, blocker, and timestamp.
+  - Forced current detailed readiness; checked public `/health` and `/ready`, exact release identity, source freshness, model availability, business-event dispositions, and work-portfolio bounds.
+  - Correlated post-start company signals by type, receipt/process timestamps, extraction attempts/errors, and final disposition; inspected redacted worker failure classes and local llama.cpp runtime metadata.
+- Result:
+  - The monitor completed the full 86,400.25 seconds but failed: 260/289 samples passed and 29 failed. All health, login, and readiness requests returned HTTP 200; version `0.3.23` and SHA `f09ca597bb7ae0e34dd0c2f50bca9caf1637a649` never drifted. Maximum observed endpoint latency was 679.05 ms.
+  - Every failed sample was caused by `autonomous_company` readiness degradation. The first occurred at `2026-08-13T00:24:32Z` and the last at `2026-08-13T12:54:33Z`.
+  - During the observation window, 54 new extractable email/research signals reached terminal states: 28 were accepted as evidence-insufficient and 26 exhausted the three-attempt budget and were explicitly deferred. Failure classes were local inference timeout, malformed JSON, provider unavailable, context-window exceeded, invalid request, and internal service error.
+  - The finite retry lifecycle worked as designed: no signal retried forever, no claim was fabricated, every business event obtained a disposition, and current aggregate readiness recovered to `ready` with zero blockers. However, recurring 20–80 minute extraction completion windows caused 29 strict-readiness failures, so continuous-readiness acceptance is not met.
+  - Current staging remains healthy and serves exact `0.3.23`; all five dependencies are ready, required sources are fresh, and business-event/outbox backlogs are empty.
+- Evidence:
+  - `/home/projects/cyber-team/dist/soak/staging-soak-20260812T135432Z.summary.json`.
+  - `/home/projects/cyber-team/dist/soak/staging-soak-20260812T135432Z.jsonl`.
+  - `/home/projects/cyber-team/dist/soak/staging-soak-20260812T135432Z.state.json`.
+- Next step:
+  - Repair local structured extraction throughput and determinism: bound/redact task-specific input, enforce a supported JSON grammar/schema, prevent local-inference queue contention from making evidence stale, and add latency/backlog regression coverage. Release and deploy the correction, prove bounded live extraction, then restart the complete strict 24-hour soak.
