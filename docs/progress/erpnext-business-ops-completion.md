@@ -7258,3 +7258,22 @@
   - `dist/promotions/staging/0.3.29-20260815-193928.json`.
 - Next step:
   - Run the focused live outcome-autonomy acceptance scenario through safe execution and high-impact approval gating.
+
+### 2026-08-15T19:53:30Z — STEP-290 — Added durable mandate authority to autonomous decisions
+- Files/services changed:
+  - Added the assigned agent's active durable mandate, authority, inputs, outputs, objective IDs, and KPI keys to the authoritative operating context.
+  - Reduced immutable action selection to disposition, exact reference, confidence, and a closed reason code; trusted code derives rationale and unknowns.
+  - Added explicit consistency validation between disposition and reason code and versioned the universal role loop to v7.
+- Commands run:
+  - Live outcome-autonomy proof against staging `0.3.29`.
+  - Persisted memory-result and mandate-authority inspection.
+  - Focused 66-test Pytest suite, Ruff, compileall, and `git diff --check`.
+- Result:
+  - The `0.3.29` model response failed closed as invalid JSON after selecting `no_action`; durable memory showed that the model could not see the `company_profile_read` authority present in its active mandate and consumed its output on a free-form explanation.
+  - The v7 trusted context now exposes the exact read-tool grant and safe-internal authority. The bounded reason code eliminates free-form truncation while preserving the agent's select/no-action/escalate decision.
+  - No candidate or tool execution occurred during the failed proof. All 66 focused tests passed.
+- Evidence:
+  - `dist/outcome-autonomy/outcome-autonomy-smoke-20260815T194018Z.json`.
+  - Failed work `work_e0b038e7d1b742eaafad81344401065b` and memory `d0ac9016-1444-450c-84bb-d743a20b4113`.
+- Next step:
+  - Verify/promote the v7 mandate-aware release and rerun the unchanged outcome-autonomy acceptance scenario.

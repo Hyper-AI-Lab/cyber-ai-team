@@ -1795,8 +1795,7 @@ def action_candidate_ref_assessment(candidate_ref: str):
             "disposition": "select",
             "selected_action_candidate_ref": candidate_ref,
             "confidence": 0.91,
-            "rationale": "The supplied action is supported by the available evidence.",
-            "unknowns": [],
+            "reason_code": "evidence_supported",
         }
     )
 
@@ -1892,13 +1891,14 @@ async def test_domain_agent_selects_immutable_action_candidate_by_reference(
     assert stored.status == "executed"
     selection_call = manager.invoke_agent.await_args_list[0]
     assert selection_call.kwargs["memory_limit"] == 1
-    assert selection_call.kwargs["max_tokens"] == 96
+    assert selection_call.kwargs["max_tokens"] == 64
     assert selection_call.kwargs["temperature"] == 0.0
     assert selection_call.kwargs["json_schema"] == (
         portfolio_module.ACTION_SELECTION_RESULT_SCHEMA
     )
     assert "candidate-option:memory-read" in selection_call.args[1]
-    assert len(selection_call.args[1]) < 1300
+    assert "memory_recall" in selection_call.args[1]
+    assert len(selection_call.args[1]) < 1800
 
 
 def test_action_selection_parser_rejects_unavailable_reference():
@@ -1916,8 +1916,7 @@ def test_action_selection_parser_expands_no_action_without_work():
                 "disposition": "no_action",
                 "selected_action_candidate_ref": "",
                 "confidence": 0.82,
-                "rationale": "The evidence does not justify the supplied action.",
-                "unknowns": ["customer impact"],
+                "reason_code": "evidence_insufficient",
             }
         ),
         available_refs={"candidate-option:memory-read"},
@@ -1926,6 +1925,7 @@ def test_action_selection_parser_expands_no_action_without_work():
     assert result["recommended_action"] == "no_action"
     assert result["proposed_work"] == []
     assert result["expected_outcome"] == {"type": "documented_no_action"}
+    assert result["unknowns"] == ["supporting evidence"]
 
 
 @pytest.mark.asyncio
