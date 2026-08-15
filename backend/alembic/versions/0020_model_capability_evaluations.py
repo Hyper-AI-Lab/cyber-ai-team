@@ -18,6 +18,15 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Alembic creates this infrastructure column as VARCHAR(32), while this and
+    # subsequent descriptive revision identifiers are 33 characters long.
+    op.alter_column(
+        "alembic_version",
+        "version_num",
+        existing_type=sa.String(length=32),
+        type_=sa.String(length=64),
+        existing_nullable=False,
+    )
     op.create_table(
         "model_capability_evaluations",
         sa.Column("id", sa.String(length=64), nullable=False),

@@ -103,6 +103,7 @@ def test_initial_migration_offline_sql_contains_core_tables_and_indexes():
     assert "CREATE INDEX IF NOT EXISTS ix_autonomous_plans_source_active" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_autonomous_tasks_status" in sql
     assert "CREATE INDEX IF NOT EXISTS ix_autonomous_tasks_approval_id" in sql
+    assert "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(64)" in sql
 
 
 def test_initial_migration_preserves_pre_alembic_approval_compatibility():

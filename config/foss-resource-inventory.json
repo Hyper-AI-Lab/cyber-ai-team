@@ -44,6 +44,7 @@
     "websockets": "BSD-3-Clause"
   },
   "node": {
+    "@vitejs/plugin-react": "MIT",
     "@types/node": "MIT",
     "@types/react": "MIT",
     "@types/react-dom": "MIT",

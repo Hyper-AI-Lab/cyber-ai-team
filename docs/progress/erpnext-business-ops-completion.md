@@ -6837,3 +6837,26 @@
   - `frontend/package.json` and `frontend/package-lock.json`.
 - Next step:
   - Run the complete release gate, rehearse and apply migrations through `0021`, deploy staging with backup first, drain bounded outcome/disposition backlogs, qualify the live inference route, and execute outcome-based autonomy acceptance before the soak.
+
+### 2026-08-15T13:21:40Z — STEP-268 — Closed release-gate migration and FOSS inventory blockers
+- Files/services changed:
+  - Added reviewed MIT license metadata for the official `@vitejs/plugin-react` test dependency to the FOSS resource inventory.
+  - Widened Alembic's infrastructure `alembic_version.version_num` column from 32 to 64 characters inside migration `0020`, before the 33-character revision identifier is persisted.
+  - Added an offline migration regression assertion for the version-column widening.
+- Commands run:
+  - Full repository quality gate through backend/frontend/audit/security/policy phases.
+  - `python3 scripts/resource-policy-check.py`.
+  - Focused migration tests, Ruff, compileall, and diff hygiene.
+  - `BACKEND_VENV=/home/projects/cyber-team/.venv-quality ./scripts/migration-rehearsal.sh`.
+- Result:
+  - The first full gate passed 410 backend tests, compile/offline SQL, backend dependency audit, frontend build/typecheck/31 tests, runtime npm audit, Compose config, script/dashboard syntax, secret scan, and GCP isolation, then correctly stopped because the new direct Node dependency lacked reviewed license metadata.
+  - After the MIT inventory entry, the FOSS policy check passes.
+  - The first real PostgreSQL rehearsal exposed `VARCHAR(32)` truncation when Alembic tried to record revision `0020_model_capability_evaluations`; the transactional widening fixes it.
+  - Real PostgreSQL rehearsals now pass from both the legacy pre-Alembic schema and a representative seeded `0001` schema through `0021_autonomous_action_candidates`.
+- Evidence:
+  - `config/foss-resource-inventory.json`.
+  - `backend/alembic/versions/0020_model_capability_evaluations.py`.
+  - `backend/tests/test_migrations.py`.
+  - `scripts/migration-rehearsal.sh` output on 2026-08-15.
+- Next step:
+  - Build the exact release SHA, back up staging, apply migrations, deploy core/worker/UI, and execute live evidence-to-outcome acceptance checks.
