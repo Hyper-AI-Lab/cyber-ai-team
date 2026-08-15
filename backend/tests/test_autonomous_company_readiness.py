@@ -19,6 +19,7 @@ from cyber_team.db.models import (
     DomainAutonomyControl,
     OperatingKPIDefinition,
     OperatingKPIRevision,
+    OutcomeAssessment,
 )
 from cyber_team.operations import readiness_v3 as readiness_module
 from cyber_team.operations.readiness_v3 import AutonomousCompanyReadinessService
@@ -347,3 +348,75 @@ async def test_work_portfolio_reports_backlog_and_grounding_recovery_blockers(
     assert portfolio["saturated_domains"] == ["governance"]
     assert portfolio["recovery_required_domains"] == ["governance"]
     assert any(item["area"] == "work_portfolio" for item in result["blockers"])
+
+
+@pytest.mark.asyncio
+async def test_stale_unassessed_work_blocks_outcome_learning_readiness(
+    readiness_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "outcome_readiness_stale_after_seconds", 60)
+    now = utc_now()
+    async with readiness_session_factory() as session:
+        session.add_all(
+            [
+                BusinessWorkItem(
+                    id="work-assessed",
+                    company_namespace="company:test",
+                    title="Assessed work",
+                    work_type="analysis",
+                    status="completed",
+                    payload={},
+                    acceptance_criteria=[],
+                    expected_outcome={},
+                    actual_outcome={},
+                    policy_decision={},
+                    idempotency_key="work-assessed",
+                    updated_at=now - timedelta(minutes=5),
+                    completed_at=now - timedelta(minutes=5),
+                ),
+                BusinessWorkItem(
+                    id="work-unassessed",
+                    company_namespace="company:test",
+                    title="Unassessed work",
+                    work_type="analysis",
+                    status="completed",
+                    payload={},
+                    acceptance_criteria=[],
+                    expected_outcome={},
+                    actual_outcome={},
+                    policy_decision={},
+                    idempotency_key="work-unassessed",
+                    updated_at=now - timedelta(minutes=5),
+                    completed_at=now - timedelta(minutes=5),
+                ),
+                OutcomeAssessment(
+                    id="outcome-assessed",
+                    work_item_id="work-assessed",
+                    status="recorded",
+                    expected_outcome={},
+                    actual_outcome={},
+                    kpi_changes={},
+                    guardrail_breaches=[],
+                    costs={},
+                    failures=[],
+                    attribution_confidence=1.0,
+                    evaluator_score=1.0,
+                    recommendation="continue",
+                    evidence_ids=[],
+                    idempotency_key="outcome-assessed",
+                ),
+            ]
+        )
+        await session.commit()
+
+    result = await AutonomousCompanyReadinessService(llm_gateway=FakeLLM()).summary()
+    learning = result["sections"]["outcome_learning"]
+
+    assert learning["status"] == "stale_backlog"
+    assert learning["blocking"] is True
+    assert learning["terminal_work"] == 2
+    assert learning["assessed_work"] == 1
+    assert learning["unassessed_work"] == 1
+    assert learning["stale_unassessed_work"] == 1
+    assert any(item["area"] == "outcome_learning" for item in result["blockers"])

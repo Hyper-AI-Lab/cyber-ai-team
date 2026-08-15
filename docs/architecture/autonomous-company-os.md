@@ -224,3 +224,27 @@ All new dependencies, tool proposals, and integration proposals must declare:
 - free-tier limitations
 
 Readiness treats paid/SaaS-only proposals as non-blocking future work unless the owner explicitly changes policy after the company can afford them.
+
+## Outcome-Based Production Contract
+
+Cyber-Team production readiness is multi-dimensional. Infrastructure availability,
+epistemic evidence health, model capability, execution authority, and outcome-learning
+health are reported separately. A reachable model endpoint is not evidence that the model
+is capable of executive reasoning, and an infrastructure-ready deployment is not evidence
+that the company is operating autonomously.
+
+The authoritative operating chain is:
+
+`source -> signal -> evidence -> claim -> company model -> objective/KPI -> mandate -> work -> action candidate -> Observer/policy/approval -> workflow/tool -> outcome -> reflection/memory`
+
+Every transition is durable, traceable, bounded, and idempotent. Specialist agents may
+recommend typed actions, but deterministic code validates evidence, authority, tool
+readiness, impact, and policy before creating executable work. Successful execution is
+not completion until its expected and actual outcomes are compared and linked back to
+company objectives and operation-graph memory.
+
+Health-only soaks remain useful infrastructure tests but cannot close an autonomy
+milestone. Autonomous-company acceptance must demonstrate representative evidence
+discovery, work delegation, policy-gated execution, outcome measurement, adaptation, and
+owner escalation over time. The detailed correction and closure sequence is defined in
+`docs/architecture/autonomy-outcome-closure-plan.md`.

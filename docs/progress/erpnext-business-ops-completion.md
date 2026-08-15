@@ -6661,3 +6661,44 @@
   - `/home/projects/cyber-team/dist/soak/staging-soak-20260812T135432Z.state.json`.
 - Next step:
   - Repair local structured extraction throughput and determinism: bound/redact task-specific input, enforce a supported JSON grammar/schema, prevent local-inference queue contention from making evidence stale, and add latency/backlog regression coverage. Release and deploy the correction, prove bounded live extraction, then restart the complete strict 24-hour soak.
+
+### 2026-08-15T11:29:21Z — STEP-261 — Reconciled development with the autonomous-company vision
+- Files/services changed:
+  - Added `docs/architecture/autonomy-outcome-closure-plan.md` as the governing correction plan for completing the evidence-to-action-to-outcome path.
+  - Extended `docs/architecture/autonomous-company-os.md` with a multi-dimensional, outcome-based production contract.
+  - No runtime service, credential, business record, approval, or external side effect changed.
+- Commands run:
+  - Re-read `request/request.txt`, the architecture contract, original research, production-readiness plan, v3 services, Temporal workflows, readiness aggregation, local-model gateway, work portfolio, action policy, outcome learning, staging soak, live database state, and final soak evidence.
+  - Queried live staging for signal/extraction states, event/work distributions, action policies, model/company readiness, mandates, autonomous side effects, and outcome-assessment coverage without exposing secrets.
+- Result:
+  - Confirmed that the Chief/Observer, epistemic model, mandates, Temporal, OPA, ERPNext, memory, workflow compiler, and owner-control architecture remains aligned with the original vision.
+  - Confirmed material implementation gaps: 34,377 terminal work items are unassessed; normal domain work has produced no `tool_action` item; local fallback readiness is not task-capability evidence; evidence extraction is oversized and serialized; informational audit traffic dominates the event plane; the prior soak verifies health rather than business outcomes.
+  - Locked an eight-stage correction sequence. Future closure requires demonstrated autonomous discovery, typed authorized action, outcome measurement, adaptation, and owner escalation rather than readiness polling alone.
+- Evidence:
+  - `docs/architecture/autonomy-outcome-closure-plan.md`.
+  - `docs/architecture/autonomous-company-os.md`.
+  - `dist/soak/staging-soak-20260812T135432Z.summary.json`.
+- Next step:
+  - Repair outcome-learning selection and readiness so the complete terminal-work backlog advances exactly once and cannot remain hidden.
+
+### 2026-08-15T11:38:58Z — STEP-262 — Repaired outcome-learning integrity and readiness
+- Files/services changed:
+  - Updated `OutcomeLearningService` to select only terminal work without an existing outcome assessment and to advance through configurable bounded batches.
+  - Added database uniqueness for `outcome_assessments.work_item_id` through additive migration `0018_outcome_learning_integrity` and safe concurrent-insert reconciliation.
+  - Added outcome-learning readiness with terminal, assessed, unassessed, stale, oldest-unassessed, and latest-assessment evidence.
+  - Added staging/production configuration contracts for assessment batch size and freshness window.
+- Commands run:
+  - Focused Ruff checks for changed backend, migration, and test files.
+  - `PYTHONPATH=src pytest -q tests/test_outcome_learning.py tests/test_autonomous_company_readiness.py`.
+- Result:
+  - Seven focused tests pass. A five-item backlog drains as 2/2/1 across repeated bounded calls and a subsequent call performs no duplicate work.
+  - Stale unassessed terminal work now blocks autonomous-company readiness instead of remaining hidden behind the timestamp of the first 200 historical assessments.
+  - The database now enforces one durable assessment per non-null work item while preserving assessments for execution records that have no work item.
+- Evidence:
+  - `backend/src/cyber_team/operations/outcomes.py`.
+  - `backend/src/cyber_team/operations/readiness_v3.py`.
+  - `backend/alembic/versions/0018_outcome_learning_integrity.py`.
+  - `backend/tests/test_outcome_learning.py`.
+  - `backend/tests/test_autonomous_company_readiness.py`.
+- Next step:
+  - Replace serialized oversized claim extraction with compact signal-type envelopes, short transaction claims, leases/backoff, and provider-supported structured output.

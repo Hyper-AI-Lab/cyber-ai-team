@@ -142,6 +142,8 @@ class Settings(BaseSettings):
     strategy_review_interval_seconds: int = 86400
     domain_loop_interval_seconds: int = 900
     business_event_readiness_stale_after_seconds: int = 1800
+    outcome_assessment_batch_size: int = 200
+    outcome_readiness_stale_after_seconds: int = 1800
     company_autonomy_temporal_schedule_enabled: bool = False
     company_autonomy_schedule_id: str = "cyberteam-autonomous-company-cycle-v3"
     company_autonomy_signal_workflow_id: str = "cyberteam-autonomous-company-signals-v4"

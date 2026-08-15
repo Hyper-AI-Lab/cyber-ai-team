@@ -1402,6 +1402,7 @@ class OutcomeAssessment(Base):
     __tablename__ = "outcome_assessments"
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_outcome_assessments_idempotency_key"),
+        UniqueConstraint("work_item_id", name="uq_outcome_assessments_work_item_id"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

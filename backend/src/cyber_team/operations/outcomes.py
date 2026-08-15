@@ -8,7 +8,8 @@ import uuid
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, exists, func, select
+from sqlalchemy.exc import IntegrityError
 
 from cyber_team.config import settings
 from cyber_team.db import async_session
@@ -37,8 +38,15 @@ class OutcomeLearningService:
         self._memory = memory_service
         self._audit = audit_service
 
-    async def assess_terminal_work(self, *, limit: int = 200) -> dict[str, Any]:
+    async def assess_terminal_work(self, *, limit: int | None = None) -> dict[str, Any]:
         created: list[dict[str, Any]] = []
+        batch_size = max(
+            1,
+            min(
+                int(limit or settings.outcome_assessment_batch_size),
+                500,
+            ),
+        )
         async with async_session() as session:
             items = (
                 await session.execute(
@@ -46,10 +54,15 @@ class OutcomeLearningService:
                     .where(
                         BusinessWorkItem.status.in_(
                             {"completed", "failed", "blocked", "cancelled"}
-                        )
+                        ),
+                        ~exists(
+                            select(OutcomeAssessment.id).where(
+                                OutcomeAssessment.work_item_id == BusinessWorkItem.id
+                            )
+                        ),
                     )
                     .order_by(BusinessWorkItem.updated_at)
-                    .limit(max(1, min(limit, 500)))
+                    .limit(batch_size)
                 )
             ).scalars().all()
         for item in items:
@@ -123,7 +136,21 @@ class OutcomeLearningService:
                         "outcome_recommendation": recommendation,
                         "outcome_assessment_id": assessment.id,
                     }
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                # A concurrent assessor won the idempotency/work-item constraint.
+                await session.rollback()
+                existing = (
+                    await session.execute(
+                        select(OutcomeAssessment).where(
+                            OutcomeAssessment.work_item_id == work_item_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                if not existing:
+                    raise
+                return {**self._to_dict(existing), "duplicate": True}
             result = self._to_dict(assessment)
         await self._record_graph(work, result)
         policy = work.policy_decision or {}

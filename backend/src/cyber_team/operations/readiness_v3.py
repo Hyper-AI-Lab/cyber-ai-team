@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, exists, func, select
 
 from cyber_team.clock import utc_now
 from cyber_team.config import settings
@@ -156,6 +156,54 @@ class AutonomousCompanyReadinessService:
             latest_outcome = await self._latest(
                 session, OutcomeAssessment, OutcomeAssessment.created_at
             )
+            terminal_work = int(
+                (
+                    await session.execute(
+                        select(func.count(BusinessWorkItem.id)).where(
+                            BusinessWorkItem.status.in_(
+                                {"completed", "failed", "blocked", "cancelled"}
+                            )
+                        )
+                    )
+                ).scalar_one()
+            )
+            unassessed_filter = (
+                BusinessWorkItem.status.in_(
+                    {"completed", "failed", "blocked", "cancelled"}
+                ),
+                ~exists(
+                    select(OutcomeAssessment.id).where(
+                        OutcomeAssessment.work_item_id == BusinessWorkItem.id
+                    )
+                ),
+            )
+            unassessed_work = int(
+                (
+                    await session.execute(
+                        select(func.count(BusinessWorkItem.id)).where(*unassessed_filter)
+                    )
+                ).scalar_one()
+            )
+            stale_outcome_before = utc_now() - timedelta(
+                seconds=max(1, settings.outcome_readiness_stale_after_seconds)
+            )
+            stale_unassessed_work = int(
+                (
+                    await session.execute(
+                        select(func.count(BusinessWorkItem.id)).where(
+                            *unassessed_filter,
+                            BusinessWorkItem.updated_at <= stale_outcome_before,
+                        )
+                    )
+                ).scalar_one()
+            )
+            oldest_unassessed_at = (
+                await session.execute(
+                    select(func.min(BusinessWorkItem.updated_at)).where(
+                        *unassessed_filter
+                    )
+                )
+            ).scalar_one_or_none()
             workflow_counts = await self._counts(session, WorkflowSpecification.status)
             policy_counts = await self._counts(session, ActionClassPolicy.status)
             policies = (
@@ -313,6 +361,34 @@ class AutonomousCompanyReadinessService:
             and item.owner == "autonomy_grounding_circuit_breaker"
         )
         portfolio_blocking = bool(saturated_domains or recovery_domains)
+        outcome_learning = {
+            "status": (
+                "stale_backlog"
+                if stale_unassessed_work
+                else "processing"
+                if unassessed_work
+                else "ready"
+            ),
+            "blocking": stale_unassessed_work > 0,
+            "terminal_work": terminal_work,
+            "assessed_work": max(0, terminal_work - unassessed_work),
+            "unassessed_work": unassessed_work,
+            "stale_unassessed_work": stale_unassessed_work,
+            "oldest_unassessed_at": (
+                oldest_unassessed_at.isoformat() if oldest_unassessed_at else None
+            ),
+            "latest_assessment_at": self._timestamp(latest_outcome),
+            "processing_window_seconds": max(
+                1, settings.outcome_readiness_stale_after_seconds
+            ),
+            "detail": (
+                "Terminal work has exceeded the outcome-assessment processing window."
+                if stale_unassessed_work
+                else "Terminal work is waiting within the outcome-assessment window."
+                if unassessed_work
+                else "Every terminal work item has a durable outcome assessment."
+            ),
+        }
         model_availability = await self._model_availability()
         sections = {
             "company_model": company_model,
@@ -363,6 +439,7 @@ class AutonomousCompanyReadinessService:
                     else "Every domain work backlog is within its configured bound."
                 ),
             },
+            "outcome_learning": outcome_learning,
             "strategy": strategy,
             "workflow_compiler": workflows,
             "action_probation": probation,

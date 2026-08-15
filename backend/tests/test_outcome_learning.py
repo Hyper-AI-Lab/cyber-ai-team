@@ -115,6 +115,34 @@ async def test_outcome_assessment_is_idempotent_and_graph_linked(
 
 
 @pytest.mark.asyncio
+async def test_terminal_outcome_batches_advance_past_assessed_work(
+    outcome_session_factory,
+):
+    async with outcome_session_factory() as session:
+        session.add_all([work_item(f"work-batch-{index}") for index in range(5)])
+        await session.commit()
+    service = OutcomeLearningService(action_policy_service=FakePolicy())
+
+    first = await service.assess_terminal_work(limit=2)
+    second = await service.assess_terminal_work(limit=2)
+    third = await service.assess_terminal_work(limit=2)
+    complete = await service.assess_terminal_work(limit=2)
+
+    assert [first["assessed"], second["assessed"], third["assessed"]] == [2, 2, 1]
+    assert complete["assessed"] == 0
+    assessed_ids = {
+        item["work_item_id"]
+        for batch in (first, second, third)
+        for item in batch["items"]
+    }
+    assert assessed_ids == {f"work-batch-{index}" for index in range(5)}
+    async with outcome_session_factory() as session:
+        assert (
+            await session.execute(select(func.count(OutcomeAssessment.id)))
+        ).scalar_one() == 5
+
+
+@pytest.mark.asyncio
 async def test_unauthorized_side_effect_forces_rollback_and_policy_finding(
     outcome_session_factory,
 ):
