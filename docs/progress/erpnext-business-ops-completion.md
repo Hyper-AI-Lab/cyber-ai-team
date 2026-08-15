@@ -7245,3 +7245,16 @@
   - `dist/releases/0.3.29.json`.
 - Next step:
   - Promote `0.3.29` backup-first and run the unchanged live outcome-autonomy acceptance scenario.
+
+### 2026-08-15T19:39:37Z — STEP-289 — Promoted closed action selection to staging
+- Files/services changed:
+  - Promoted immutable release `0.3.29` to the staging core, worker, and UI with a fresh PostgreSQL backup.
+- Commands run:
+  - Dry-run and live `scripts/promote-staging.sh` for `0.3.29`.
+- Result:
+  - Backup-first deployment and full live compose smoke passed, including owner auth, read surfaces, WebSocket ticket, and approval queue/rejection behavior.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.29-20260815-193722.dump`.
+  - `dist/promotions/staging/0.3.29-20260815-193928.json`.
+- Next step:
+  - Run the focused live outcome-autonomy acceptance scenario through safe execution and high-impact approval gating.
