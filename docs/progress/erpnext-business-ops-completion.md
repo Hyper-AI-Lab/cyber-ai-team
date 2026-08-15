@@ -7002,3 +7002,25 @@
   - https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31893278054
 - Next step:
   - Commit this append-only release evidence, then perform backup-first staging promotion and run the live evidence-to-outcome autonomy acceptance path.
+
+### 2026-08-15T16:20:03Z — STEP-276 — Promoted outcome-autonomy release 0.3.25 to staging
+- Files/services changed:
+  - Captured a fresh staging PostgreSQL backup before replacing application containers.
+  - Promoted exact `cyber-team-core:0.3.25` and `cyber-team-ui:0.3.25` images to the staging core, worker, and UI services.
+  - Activated the qualified Ministral model identity and measured 300-second local inference timeout in the live core and worker environment.
+- Commands run:
+  - `RELEASE_VERSION=0.3.25 ./scripts/promote-staging.sh` in dry-run mode.
+  - `RELEASE_VERSION=0.3.25 PROMOTE_DRY_RUN=0 ./scripts/promote-staging.sh`.
+  - Public `/health` and `/ready`, live image identity, container environment, backup artifact, and schema-version verification.
+- Result:
+  - Backup-first promotion and the public login/dashboard/API/WebSocket/tool-readiness smoke passed.
+  - Core, worker, and UI run the exact release images; `/health` reports version `0.3.25` and build SHA `1ada56368692c024f6913cc0711bcfc3b78b2972`.
+  - `/ready` reports PostgreSQL, Redis, Qdrant, Temporal, and OPA ready.
+  - The live database is at additive migration `0021_autonomous_action_candidates`.
+  - The live local inference contract is `openai/mistralai/Ministral-3-3B-Instruct-2512-GGUF:Q4_K_M` with a 300-second bounded timeout.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.25-20260815-161647.dump` (151 MiB).
+  - `dist/promotions/staging/0.3.25-20260815-161940.json`.
+  - Public staging health/readiness responses captured on 2026-08-15.
+- Next step:
+  - Persist a fresh live 5/5 model-capability evaluation, then exercise the complete governed action-to-outcome acceptance path.
