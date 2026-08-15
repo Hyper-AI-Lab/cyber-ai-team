@@ -7181,3 +7181,18 @@
   - `backend/src/cyber_team/operations/work_portfolio.py` and `backend/src/cyber_team/agents/manager.py`.
 - Next step:
   - Commit and push the schema-constrained decision contract, verify a new immutable release, promote it backup-first, and rerun the identical live outcome-autonomy proof.
+
+### 2026-08-15T18:56:49Z — STEP-285 — Verified immutable 0.3.28 action-selection release
+- Files/services changed:
+  - Built immutable `cyber-team-core:0.3.28` and `cyber-team-ui:0.3.28` images containing the schema-constrained action-selection contract.
+- Commands run:
+  - `RELEASE_VERSION=0.3.28 RELEASE_ALLOW_DIRTY=1 SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`.
+- Result:
+  - All 418 backend tests and all 31 frontend tests passed.
+  - Ruff, compileall, frontend typecheck/build, dependency audits, secret/GCP/resource-policy scans, Compose validation, legacy and seeded PostgreSQL migration rehearsals, and isolated Compose smoke passed.
+  - Trivy reported zero vulnerabilities for both versioned images.
+- Evidence:
+  - `dist/releases/0.3.28.json`.
+  - Docker images `cyber-team-core:0.3.28` and `cyber-team-ui:0.3.28`.
+- Next step:
+  - Commit and push the release evidence, promote `0.3.28` backup-first, and repeat the live outcome-autonomy acceptance proof.
