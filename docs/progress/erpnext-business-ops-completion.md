@@ -7046,3 +7046,20 @@
   - `backend/src/cyber_team/llm/gateway.py`.
 - Next step:
   - Commit and push the v3 contract, build and promote a new immutable release, then repeat the complete live qualification without weakening acceptance.
+
+### 2026-08-15T16:53:59Z — STEP-278 — Verified immutable release 0.3.26 after qualification hardening
+- Files/services changed:
+  - Built exact `cyber-team-core:0.3.26` and `cyber-team-ui:0.3.26` artifacts from commit `aed1d6d`.
+  - No staging services changed during this verification step.
+- Commands run:
+  - `RELEASE_VERSION=0.3.26 RELEASE_ALLOW_DIRTY=1 SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`.
+- Result:
+  - Ruff, all 415 backend tests, compileall, Alembic offline SQL, dependency audit, frontend production build/typecheck/all 31 tests, npm audit, Compose config, script/dashboard validation, secret scan, Google Cloud isolation, FOSS resource policy, and diff hygiene passed.
+  - Real PostgreSQL migration rehearsal passed from both legacy and representative seeded schemas through migration `0021`.
+  - The isolated Compose smoke passed, including approval-gated tool replay and side-effect verification.
+  - Trivy reported zero OS or language-package vulnerabilities in both versioned images.
+- Evidence:
+  - `dist/releases/0.3.26.json`.
+  - `cyber-team-core:0.3.26` and `cyber-team-ui:0.3.26` local image artifacts.
+- Next step:
+  - Push the release evidence, perform backup-first promotion of `0.3.26`, and rerun live v3 model qualification.
