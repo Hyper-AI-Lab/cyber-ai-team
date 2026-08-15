@@ -1893,6 +1893,15 @@ async def test_domain_agent_selects_immutable_action_candidate_by_reference(
     assert stored.tool_name == "memory_recall"
     assert stored.params == {"query": "verified evidence"}
     assert stored.status == "executed"
+    selection_call = manager.invoke_agent.await_args_list[0]
+    assert selection_call.kwargs["memory_limit"] == 1
+    assert selection_call.kwargs["max_tokens"] == 128
+    assert selection_call.kwargs["temperature"] == 0.0
+    assert selection_call.kwargs["json_schema"] == (
+        portfolio_module.ACTION_SELECTION_RESULT_SCHEMA
+    )
+    assert "candidate-option:memory-read" in selection_call.args[1]
+    assert len(selection_call.args[1]) < 1800
 
 
 @pytest.mark.asyncio

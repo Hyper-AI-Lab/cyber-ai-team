@@ -7157,3 +7157,27 @@
   - `dist/promotions/staging/0.3.27-20260815-180727.json`.
 - Next step:
   - Execute the focused live outcome-autonomy acceptance proof through role reasoning, immutable candidate resolution, Observer/OPA policy, safe tool execution, outcome assessment, operation-graph linkage, and high-impact blocking.
+
+### 2026-08-15T18:29:46Z — STEP-284 — Constrained immutable action selection for local FOSS inference
+- Files/services changed:
+  - Added a compact schema-constrained action-selection contract for mandate work that already contains trusted immutable action options.
+  - Limited action-selection memory prompt inclusion to one relevant item while retaining all recall trace IDs and durable memory protocol behavior.
+  - Added agent-manager forwarding for structured JSON schemas and per-invocation memory recall limits.
+  - Preserved generic mandate reasoning for work that must generate new plans; versioned the universal role loop to v5.
+  - Updated the outcome-autonomy architecture contract and regression tests.
+- Commands run:
+  - `CYBERTEAM_ENV_FILE=deploy/environments/staging.env .venv-quality/bin/python scripts/outcome-autonomy-smoke.py` against release `0.3.27`.
+  - Persisted work-item, worker, llama.cpp timing, and action-candidate inspection.
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest -q backend/tests/test_work_portfolio.py backend/tests/test_memory_protocol.py backend/tests/test_llm_gateway.py`.
+  - Focused Ruff, compileall, and `git diff --check`.
+- Result:
+  - The live proof failed closed before candidate creation: work `work_7a6f6ae3698e40b8aef3ff0c25d86239` recorded `TimeoutError`, with no tool execution or fake success.
+  - llama.cpp evidence showed the bounded prompt was reduced from roughly 2,050 to 876 tokens, but the constrained host produced only about 125 tokens before the 300-second deadline under concurrent operating load.
+  - The corrected path asks the model only to select an exact immutable reference or return no action/escalation; the trusted control plane still owns the full envelope and all evidence, mandate, readiness, Observer, OPA, approval, and execution checks.
+  - All 64 focused tests passed; lint, compilation, and diff hygiene passed.
+- Evidence:
+  - `dist/outcome-autonomy/outcome-autonomy-smoke-20260815T180834Z.json`.
+  - Failed work `work_7a6f6ae3698e40b8aef3ff0c25d86239` in staging PostgreSQL.
+  - `backend/src/cyber_team/operations/work_portfolio.py` and `backend/src/cyber_team/agents/manager.py`.
+- Next step:
+  - Commit and push the schema-constrained decision contract, verify a new immutable release, promote it backup-first, and rerun the identical live outcome-autonomy proof.

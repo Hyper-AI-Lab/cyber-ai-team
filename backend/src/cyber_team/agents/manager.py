@@ -298,6 +298,8 @@ class AgentManager:
         report_role_gap: bool = True,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        json_schema: dict[str, Any] | None = None,
+        memory_limit: int = 8,
     ) -> str:
         agent = await self.get_agent(agent_id)
         if not agent:
@@ -323,6 +325,7 @@ class AgentManager:
             invocation_id=invocation_id,
             conversation_id=conversation_id,
             source_type=source_type,
+            limit=max(1, min(int(memory_limit), 20)),
         )
 
         # Build prompt and invoke LLM
@@ -333,6 +336,8 @@ class AgentManager:
                 invocation_options["temperature"] = temperature
             if max_tokens is not None:
                 invocation_options["max_tokens"] = max_tokens
+            if json_schema is not None:
+                invocation_options["json_schema"] = json_schema
             result = await self._llm.invoke(
                 system_prompt=system_prompt,
                 user_message=task,

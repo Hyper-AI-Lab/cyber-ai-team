@@ -93,6 +93,11 @@ but cannot be represented as an executive-ready model.
   it by opaque reference instead of asking the model to repeat risk, evidence, and impact
   fields. Resolve the reference server-side and reject missing, ambiguous, altered, or
   expired options before Observer or policy review.
+- Use a bounded, schema-constrained action-selection contract for immutable options. The
+  domain agent still recalls relevant memory and makes the business choice, while the
+  response is limited to rationale, confidence, unknowns, disposition, expected outcome,
+  and the exact option reference. This keeps local FOSS inference usable under constrained
+  compute without moving authority, evidence, impact, or tool parameters into model text.
 - Validate tool grants, readiness, parameter schema, mandate authority, evidence freshness,
   model capability, Observer consensus, OPA, impact thresholds, daily limits, and action
   probation before execution.
