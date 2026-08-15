@@ -7294,3 +7294,19 @@
   - `dist/releases/0.3.30.json`.
 - Next step:
   - Promote `0.3.30` backup-first and rerun the unchanged live outcome-autonomy scenario through safe execution, outcome assessment, and high-impact approval gating.
+
+### 2026-08-15T20:52:39Z — STEP-292 — Promoted mandate-aware autonomy release to staging
+- Files/services changed:
+  - Promoted immutable release `0.3.30` to staging core, worker, and UI services after a fresh PostgreSQL backup.
+- Commands run:
+  - Dry-run and live `scripts/promote-staging.sh` for release `0.3.30`.
+  - Public `/health` and `/ready` checks, exact running-image inspection, and live Alembic revision query.
+- Result:
+  - Backup-first deployment and full live Compose smoke passed, including owner authentication, dashboard/integration/tool reads, one-time WebSocket ticket issuance, approval queue visibility, and safe rejection without replaying an external email side effect.
+  - `/health` and `/ready` report version `0.3.30`, build `4bc907f84a111a5da5961fb3959f7ff9ce354539`, and all PostgreSQL, Redis, Qdrant, Temporal, and OPA dependencies ready.
+  - Core and worker run `cyber-team-core:0.3.30`; UI runs `cyber-team-ui:0.3.30`; schema is `0021_autonomous_action_candidates`.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.30-20260815-205005.dump`.
+  - `dist/promotions/staging/0.3.30-20260815-205216.json`.
+- Next step:
+  - Run the unchanged live outcome-autonomy acceptance scenario and verify a mandate-authorized safe action executes and learns while a synthetic large-impact action remains approval-gated without mutation.
