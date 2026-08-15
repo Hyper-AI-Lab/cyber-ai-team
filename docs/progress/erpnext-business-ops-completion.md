@@ -7139,3 +7139,21 @@
   - Docker images `cyber-team-core:0.3.27` and `cyber-team-ui:0.3.27`.
 - Next step:
   - Commit and push the release evidence, promote `0.3.27` to staging with backup first, and rerun the same live outcome-autonomy acceptance proof.
+
+### 2026-08-15T18:07:59Z — STEP-283 — Promoted bounded mandate reasoning to staging
+- Files/services changed:
+  - Promoted immutable core/worker image `cyber-team-core:0.3.27` and UI image `cyber-team-ui:0.3.27` to the `cyberteam-staging` deployment.
+  - Preserved a fresh PostgreSQL backup before replacing application containers.
+- Commands run:
+  - `RELEASE_VERSION=0.3.27 ./scripts/promote-staging.sh`.
+  - `RELEASE_VERSION=0.3.27 PROMOTE_DRY_RUN=0 ./scripts/promote-staging.sh`.
+  - Live `/health`, `/ready`, container-image, and Alembic-revision checks.
+- Result:
+  - Backup-first deployment and compose smoke passed, including owner login, dashboard/integration/tool reads, one-time WebSocket ticket, approval creation, queue visibility, and safe rejection rather than live email replay.
+  - Staging reports version `0.3.27`, build SHA `f960aab9f3a640299ef33bcd3423ae4c3c660d5d`, all dependency checks ready, and schema revision `0021_autonomous_action_candidates`.
+  - Core, worker, and UI containers run the exact versioned images.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.27-20260815-180506.dump`.
+  - `dist/promotions/staging/0.3.27-20260815-180727.json`.
+- Next step:
+  - Execute the focused live outcome-autonomy acceptance proof through role reasoning, immutable candidate resolution, Observer/OPA policy, safe tool execution, outcome assessment, operation-graph linkage, and high-impact blocking.
