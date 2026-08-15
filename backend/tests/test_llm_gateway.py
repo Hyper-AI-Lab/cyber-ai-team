@@ -376,7 +376,43 @@ async def test_invoke_json_forwards_structured_output_token_budget():
         "Evidence payload.",
         agent_id="company_discovery_agent",
         max_tokens=128,
+        json_schema={"type": "object", "required": ["claims"]},
     )
 
     assert result == {"claims": []}
     assert gateway.invoke.await_args.kwargs["max_tokens"] == 128
+    assert gateway.invoke.await_args.kwargs["json_schema"]["required"] == ["claims"]
+
+
+@pytest.mark.asyncio
+async def test_local_invoke_uses_llama_cpp_schema_constrained_response_format(
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "llm_provider", "llama_cpp")
+    monkeypatch.setattr(settings, "llm_api_base", "http://llama:8080/v1")
+    monkeypatch.setattr(settings, "llm_default_model", "local/test-open-model")
+    monkeypatch.setattr(settings, "llm_local_max_tokens", 256)
+    seen = {}
+
+    async def fake_completion(**kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"claims": []}'))],
+            usage=SimpleNamespace(total_tokens=8),
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=fake_completion),
+    )
+    schema = {"type": "object", "required": ["claims"]}
+
+    result = await LLMGateway().invoke_json(
+        "Extract claims.",
+        "Evidence.",
+        json_schema=schema,
+    )
+
+    assert result == {"claims": []}
+    assert seen["response_format"] == {"type": "json_object", "schema": schema}

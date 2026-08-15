@@ -944,6 +944,21 @@ class CompanySignal(Base):
         nullable=True,
         index=True,
     )
+    claim_extraction_available_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+        index=True,
+    )
+    claim_extraction_lease_owner: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+        index=True,
+    )
+    claim_extraction_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+        index=True,
+    )
     idempotency_key: Mapped[str] = mapped_column(String(240), index=True)
     occurred_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     received_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)

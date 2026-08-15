@@ -539,6 +539,7 @@ async def test_untrusted_research_becomes_provenance_backed_capped_claims(
     assert claims[0]["confidence"] == 0.5
     assert claims[0]["evidence_ids"]
     assert llm.invoke_json.await_args.kwargs["max_tokens"] == 128
+    assert llm.invoke_json.await_args.kwargs["json_schema"]["required"] == ["claims"]
 
 
 @pytest.mark.asyncio
@@ -563,7 +564,9 @@ async def test_quarantined_external_signal_never_reaches_claim_extractor(
 @pytest.mark.asyncio
 async def test_claim_extraction_failure_remains_retryable(
     intelligence_session_factory,
+    monkeypatch,
 ):
+    monkeypatch.setattr(settings, "company_claim_extraction_retry_base_seconds", 0)
     llm = AsyncMock()
     llm.invoke_json.side_effect = [
         RuntimeError("provider unavailable"),
@@ -622,6 +625,7 @@ async def test_claim_extraction_exhaustion_defers_signal_without_further_llm_cal
     monkeypatch,
 ):
     monkeypatch.setattr(settings, "company_claim_extraction_max_attempts", 3)
+    monkeypatch.setattr(settings, "company_claim_extraction_retry_base_seconds", 0)
     llm = AsyncMock()
     llm.invoke_json.side_effect = RuntimeError("provider unavailable")
     audit = FakeAudit()
@@ -694,6 +698,125 @@ async def test_preexisting_exhausted_claim_failure_is_terminalized_without_llm(
     assert exhausted.claim_extraction_status == "blocked"
     assert exhausted.claim_extraction_attempts == 82
     llm.invoke_json.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_claim_extraction_input_is_source_specific_and_bounded(
+    intelligence_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "company_claim_extraction_input_max_chars", 1200)
+    llm = AsyncMock()
+    llm.invoke_json.return_value = {"claims": []}
+    service = CompanyIntelligenceService(llm_gateway=llm)
+    await service.ingest_signal(
+        source_key="repository",
+        signal_type="document.updated",
+        external_id="long-document.txt",
+        payload={"path": "long-document.txt", "content": "A" * 50_000 + "TAIL"},
+        trust_class="internal",
+    )
+
+    result = await service.process_pending_signals()
+
+    prompt = llm.invoke_json.await_args.kwargs["user_message"]
+    assert result["processed"] == 1
+    assert len(prompt) <= 1200
+    assert '"signal_type": "document.updated"' in prompt
+    assert '"path": "long-document.txt"' in prompt
+    assert "TAIL" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_claim_extraction_commits_lease_before_model_inference(
+    intelligence_session_factory,
+):
+    observed = {}
+
+    async def inspect_lease(**kwargs):
+        async with intelligence_session_factory() as session:
+            signal = (
+                await session.execute(select(CompanySignal))
+            ).scalar_one()
+            observed.update(
+                status=signal.claim_extraction_status,
+                lease_owner=signal.claim_extraction_lease_owner,
+                lease_expires_at=signal.claim_extraction_lease_expires_at,
+            )
+        return {"claims": []}
+
+    llm = AsyncMock()
+    llm.invoke_json.side_effect = inspect_lease
+    service = CompanyIntelligenceService(llm_gateway=llm)
+    await service.ingest_signal(
+        source_key="repository",
+        signal_type="document.updated",
+        external_id="lease-visible.txt",
+        payload={"content": "A company operating statement."},
+        trust_class="internal",
+    )
+
+    result = await service.process_pending_signals()
+
+    assert result["processed"] == 1
+    assert observed["status"] == "processing"
+    assert observed["lease_owner"].startswith("claim-extraction:")
+    assert observed["lease_expires_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_claim_extraction_backoff_defers_immediate_retry(
+    intelligence_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "company_claim_extraction_retry_base_seconds", 60)
+    llm = AsyncMock(side_effect=RuntimeError("provider unavailable"))
+    service = CompanyIntelligenceService(llm_gateway=llm)
+    await service.ingest_signal(
+        source_key="repository",
+        signal_type="document.updated",
+        external_id="retry-later.txt",
+        payload={"content": "Evidence requiring extraction."},
+        trust_class="internal",
+    )
+
+    first = await service.process_pending_signals()
+    second = await service.process_pending_signals()
+
+    assert first["extraction_failures"] == 1
+    assert second["claimed"] == 0
+    assert llm.invoke_json.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_claim_extraction_lease_is_reclaimed(
+    intelligence_session_factory,
+):
+    llm = AsyncMock()
+    llm.invoke_json.return_value = {"claims": []}
+    service = CompanyIntelligenceService(llm_gateway=llm)
+    signal = await service.ingest_signal(
+        source_key="repository",
+        signal_type="document.updated",
+        external_id="expired-lease.txt",
+        payload={"content": "Recoverable evidence."},
+        trust_class="internal",
+    )
+    async with intelligence_session_factory() as session:
+        leased = await session.get(CompanySignal, signal["id"])
+        leased.claim_extraction_status = "processing"
+        leased.claim_extraction_lease_owner = "dead-worker"
+        leased.claim_extraction_lease_expires_at = utc_now() - timedelta(seconds=1)
+        await session.commit()
+
+    result = await service.process_pending_signals()
+
+    async with intelligence_session_factory() as session:
+        recovered = await session.get(CompanySignal, signal["id"])
+    assert result["processed"] == 1
+    assert recovered.status == "processed"
+    assert recovered.claim_extraction_status == "insufficient"
+    assert recovered.claim_extraction_lease_owner is None
 
 
 @pytest.mark.asyncio

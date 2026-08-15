@@ -61,6 +61,7 @@ class LLMGateway:
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        json_schema: dict | None = None,
     ) -> str:
         model = model or self._default_model
         route = self._primary_route(model)
@@ -98,6 +99,7 @@ class LLMGateway:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     trigger="circuit_open",
+                    json_schema=json_schema,
                 )
             raise
         import litellm
@@ -126,6 +128,11 @@ class LLMGateway:
                     request["api_key"] = route["api_key"]
                 if route["api_base"]:
                     request["api_base"] = route["api_base"]
+                if json_schema:
+                    request["response_format"] = self._structured_response_format(
+                        route=route,
+                        schema=json_schema,
+                    )
                 response = await asyncio.wait_for(
                     litellm.acompletion(**request),
                     timeout=max(
@@ -171,6 +178,7 @@ class LLMGateway:
                             temperature=temperature,
                             max_tokens=max_tokens,
                             trigger=category,
+                            json_schema=json_schema,
                         )
                     raise
                 backoff = max(0.0, settings.llm_retry_backoff_seconds) * (2**attempt)
@@ -195,6 +203,7 @@ class LLMGateway:
         temperature: float,
         max_tokens: int,
         trigger: str,
+        json_schema: dict | None = None,
     ) -> str:
         """Invoke the retained local open model after a retryable hosted failure."""
         import litellm
@@ -221,6 +230,11 @@ class LLMGateway:
         }
         if route["api_key"]:
             request["api_key"] = route["api_key"]
+        if json_schema:
+            request["response_format"] = self._structured_response_format(
+                route=route,
+                schema=json_schema,
+            )
         logger.warning(
             "Routing LLM invoke to local fallback: agent=%s trigger=%s",
             agent_id,
@@ -262,6 +276,12 @@ class LLMGateway:
                 str(local_messages[-1].get("content") or "") + "\n/no_think"
             )
         return local_messages
+
+    @staticmethod
+    def _structured_response_format(*, route: dict, schema: dict) -> dict:
+        if route.get("local"):
+            return {"type": "json_object", "schema": schema}
+        return {"type": "json_object"}
 
     async def validate_provider(self, *, force: bool = False) -> dict:
         now = utc_now()
@@ -534,6 +554,7 @@ class LLMGateway:
         agent_id: str = "default",
         model: str | None = None,
         max_tokens: int = 4096,
+        json_schema: dict | None = None,
     ) -> dict:
         response = await self.invoke(
             system_prompt=system_prompt + "\nAlways respond with valid JSON only.",
@@ -542,6 +563,7 @@ class LLMGateway:
             model=model,
             temperature=0.3,
             max_tokens=max_tokens,
+            json_schema=json_schema,
         )
         try:
             # Try to extract JSON from response (handle markdown code blocks)

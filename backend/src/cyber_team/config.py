@@ -138,6 +138,10 @@ class Settings(BaseSettings):
     company_model_min_provenance_coverage: float = 0.6
     company_model_min_confidence: float = 0.72
     company_claim_extraction_max_attempts: int = 3
+    company_claim_extraction_batch_size: int = 10
+    company_claim_extraction_input_max_chars: int = 6000
+    company_claim_extraction_lease_seconds: int = 300
+    company_claim_extraction_retry_base_seconds: int = 60
     company_discovery_interval_seconds: int = 3600
     strategy_review_interval_seconds: int = 86400
     domain_loop_interval_seconds: int = 900

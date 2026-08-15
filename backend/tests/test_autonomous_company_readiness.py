@@ -129,6 +129,55 @@ async def test_stale_claim_extraction_failure_is_an_explicit_blocker(
 
 
 @pytest.mark.asyncio
+async def test_stale_low_trust_extraction_is_visible_but_not_a_global_blocker(
+    readiness_session_factory,
+):
+    async with readiness_session_factory() as session:
+        source = CompanySource(
+            id="source-public-research",
+            company_namespace="company:test",
+            source_key="public_research",
+            source_type="searxng",
+            name="Public research",
+            status="active",
+            trust_class="public_secondary",
+            sensitivity="public",
+            config={},
+            cursor={},
+            last_success_at=utc_now(),
+        )
+        session.add(source)
+        session.add(
+            CompanySignal(
+                id="signal-advisory-extraction",
+                company_namespace="company:test",
+                source_id=source.id,
+                signal_type="research.results",
+                external_id="research-query",
+                status="pending",
+                trust_class="public_secondary",
+                sensitivity="public",
+                content_hash="advisory-content-hash",
+                redacted_payload={},
+                injection_status="clear",
+                claim_extraction_status="failed",
+                claim_extraction_attempts=2,
+                claim_extraction_error="llm_claim_extraction_failed:TimeoutError",
+                idempotency_key="signal-advisory-extraction",
+                received_at=utc_now() - timedelta(hours=2),
+            )
+        )
+        await session.commit()
+
+    result = await AutonomousCompanyReadinessService(llm_gateway=FakeLLM()).summary()
+
+    extraction = result["sections"]["claim_extraction"]
+    assert extraction["status"] == "advisory_degraded"
+    assert extraction["blocking"] is False
+    assert extraction["advisory_stale_failed"] == 1
+
+
+@pytest.mark.asyncio
 async def test_ready_control_plane_has_fresh_sources_model_strategy_and_mandates(
     readiness_session_factory,
 ):

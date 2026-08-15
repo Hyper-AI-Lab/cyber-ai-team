@@ -60,21 +60,58 @@ class AutonomousCompanyReadinessService:
                 session,
                 CompanySignal.claim_extraction_status,
             )
-            stale_extraction_failures = int(
+            extraction_stale_before = utc_now() - timedelta(
+                seconds=max(
+                    1,
+                    settings.business_event_readiness_stale_after_seconds,
+                )
+            )
+            required_stale_extraction_failures = int(
                 (
                     await session.execute(
                         select(func.count(CompanySignal.id)).where(
                             CompanySignal.status == "pending",
                             CompanySignal.claim_extraction_status == "failed",
-                            CompanySignal.received_at <= (
-                                utc_now()
-                                - timedelta(
-                                    seconds=max(
-                                        1,
-                                        settings.business_event_readiness_stale_after_seconds,
-                                    )
-                                )
+                            CompanySignal.trust_class.in_(
+                                {"owner_locked", "canonical", "authenticated", "internal"}
                             ),
+                            CompanySignal.received_at <= extraction_stale_before,
+                        )
+                    )
+                ).scalar_one()
+            )
+            advisory_stale_extraction_failures = int(
+                (
+                    await session.execute(
+                        select(func.count(CompanySignal.id)).where(
+                            CompanySignal.status == "pending",
+                            CompanySignal.claim_extraction_status == "failed",
+                            CompanySignal.trust_class.notin_(
+                                {"owner_locked", "canonical", "authenticated", "internal"}
+                            ),
+                            CompanySignal.received_at <= extraction_stale_before,
+                        )
+                    )
+                ).scalar_one()
+            )
+            expired_extraction_leases = int(
+                (
+                    await session.execute(
+                        select(func.count(CompanySignal.id)).where(
+                            CompanySignal.status == "pending",
+                            CompanySignal.claim_extraction_status == "processing",
+                            CompanySignal.claim_extraction_lease_expires_at <= utc_now(),
+                        )
+                    )
+                ).scalar_one()
+            )
+            scheduled_extraction_retries = int(
+                (
+                    await session.execute(
+                        select(func.count(CompanySignal.id)).where(
+                            CompanySignal.status == "pending",
+                            CompanySignal.claim_extraction_status == "failed",
+                            CompanySignal.claim_extraction_available_at > utc_now(),
                         )
                     )
                 ).scalar_one()
@@ -247,20 +284,38 @@ class AutonomousCompanyReadinessService:
             ),
         }
         source_freshness = self._source_freshness(sources)
+        extraction_blocking = bool(
+            required_stale_extraction_failures or expired_extraction_leases
+        )
         claim_extraction = {
             "status": (
-                "stale_failed"
-                if stale_extraction_failures
+                "expired_lease"
+                if expired_extraction_leases
+                else "stale_failed"
+                if required_stale_extraction_failures
+                else "advisory_degraded"
+                if advisory_stale_extraction_failures
                 else "retrying"
                 if extraction_counts.get("failed", 0)
                 else "ready"
             ),
-            "blocking": stale_extraction_failures > 0,
+            "blocking": extraction_blocking,
             "counts": extraction_counts,
-            "stale_failed": stale_extraction_failures,
+            "stale_failed": required_stale_extraction_failures,
+            "required_stale_failed": required_stale_extraction_failures,
+            "advisory_stale_failed": advisory_stale_extraction_failures,
+            "expired_leases": expired_extraction_leases,
+            "scheduled_retries": scheduled_extraction_retries,
             "detail": (
-                "Claim extraction failures exceeded the processing window."
-                if stale_extraction_failures
+                "A claim-extraction lease expired before completion and must be reclaimed."
+                if expired_extraction_leases
+                else "Required-source claim extraction failures exceeded the processing window."
+                if required_stale_extraction_failures
+                else (
+                    "Low-trust evidence extraction is degraded without blocking "
+                    "canonical operations."
+                )
+                if advisory_stale_extraction_failures
                 else "Claim extraction failures remain retryable within the processing window."
                 if extraction_counts.get("failed", 0)
                 else "Evidence claim extraction is healthy."

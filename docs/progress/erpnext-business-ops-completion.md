@@ -6702,3 +6702,30 @@
   - `backend/tests/test_autonomous_company_readiness.py`.
 - Next step:
   - Replace serialized oversized claim extraction with compact signal-type envelopes, short transaction claims, leases/backoff, and provider-supported structured output.
+
+### 2026-08-15T11:50:38Z — STEP-263 — Made evidence extraction bounded, leased, and schema-constrained
+- Files/services changed:
+  - Added durable claim-extraction availability, lease-owner, and lease-expiry state through additive migration `0019_claim_extraction_leases`.
+  - Refactored company-intelligence processing into short claim/finalize transactions with model inference outside database locks, bounded batches, exponential retry backoff, expired-lease reclamation, and finite terminal disposition.
+  - Replaced the 60,000-character generic model prompt with source-specific email, research, website, and document envelopes capped by configuration.
+  - Added llama.cpp schema-constrained JSON generation plus application-level response validation.
+  - Split claim-extraction readiness into required-source blockers, low-trust advisory degradation, scheduled retries, and expired leases.
+- Commands run:
+  - Focused Ruff over changed backend, migration, and test files.
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest -q backend/tests/test_company_intelligence.py backend/tests/test_autonomous_company_readiness.py backend/tests/test_llm_gateway.py`.
+  - `PYTHONPATH=src ../.venv-quality/bin/alembic upgrade head --sql` from `backend/`.
+  - Python compileall over backend source and tests.
+- Result:
+  - Ruff and compileall pass; Alembic emits a complete PostgreSQL upgrade through revision `0019_claim_extraction_leases`.
+  - All 43 focused tests pass, including bounded prompt size, committed lease visibility before inference, delayed retry, expired-lease recovery, strict local response format, and non-blocking low-trust extraction degradation.
+  - Discovery inference can no longer monopolize one long database transaction or immediately retry a failing model in a tight loop.
+- Evidence:
+  - `backend/src/cyber_team/company/intelligence.py`.
+  - `backend/src/cyber_team/llm/gateway.py`.
+  - `backend/src/cyber_team/operations/readiness_v3.py`.
+  - `backend/alembic/versions/0019_claim_extraction_leases.py`.
+  - `backend/tests/test_company_intelligence.py`.
+  - `backend/tests/test_autonomous_company_readiness.py`.
+  - `backend/tests/test_llm_gateway.py`.
+- Next step:
+  - Replace provider reachability as the model-readiness criterion with task-level capability evaluations for claim extraction, company-model synthesis, strategy, domain planning, and Observer review.
