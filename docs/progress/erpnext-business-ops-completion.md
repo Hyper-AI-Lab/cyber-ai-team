@@ -7123,3 +7123,19 @@
   - `backend/src/cyber_team/operations/work_portfolio.py` and `scripts/outcome-autonomy-smoke.py`.
 - Next step:
   - Commit and push the bounded role-loop contract, build a new immutable release, and repeat the same end-to-end outcome-autonomy proof.
+
+### 2026-08-15T18:04:20Z — STEP-282 — Verified immutable 0.3.27 autonomy release candidate
+- Files/services changed:
+  - Built immutable `cyber-team-core:0.3.27` and `cyber-team-ui:0.3.27` images containing the bounded mandate-reasoning and immutable action-reference contract.
+  - Generated the release manifest without changing the running staging deployment.
+- Commands run:
+  - `RELEASE_VERSION=0.3.27 RELEASE_ALLOW_DIRTY=1 SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`.
+- Result:
+  - All 418 backend tests and all 31 frontend tests passed.
+  - Ruff, compileall, frontend typecheck/build, dependency audits, secret/GCP/resource-policy scans, Compose validation, legacy and seeded PostgreSQL migration rehearsals through revision `0021`, and isolated Compose smoke passed.
+  - Trivy reported zero vulnerabilities for both versioned images.
+- Evidence:
+  - `dist/releases/0.3.27.json`.
+  - Docker images `cyber-team-core:0.3.27` and `cyber-team-ui:0.3.27`.
+- Next step:
+  - Commit and push the release evidence, promote `0.3.27` to staging with backup first, and rerun the same live outcome-autonomy acceptance proof.
