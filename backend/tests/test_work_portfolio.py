@@ -280,6 +280,57 @@ async def test_completed_audit_event_is_documented_as_no_action(
 
 
 @pytest.mark.asyncio
+async def test_historical_event_disposition_is_projected_to_source_signal(
+    portfolio_session_factory,
+):
+    now = utc_now()
+    source = CompanySource(
+        id="source-finite-disposition",
+        company_namespace="company:test",
+        source_key="repository",
+        source_type="document",
+        name="Repository",
+        trust_class="internal",
+        sensitivity="internal",
+    )
+    signal = CompanySignal(
+        id="signal-finite-disposition",
+        company_namespace="company:test",
+        source_id=source.id,
+        signal_type="document.updated",
+        status="processed",
+        disposition="accepted",
+        trust_class="internal",
+        sensitivity="internal",
+        content_hash="finite-disposition",
+        redacted_payload={},
+        claim_extraction_status="completed",
+        idempotency_key="signal-finite-disposition",
+        processed_at=now,
+    )
+    routed_event = event(
+        "event-finite-disposition",
+        "evidence.document.updated",
+    )
+    routed_event.signal_id = signal.id
+    routed_event.status = "resolved"
+    routed_event.disposition = "no_action"
+    routed_event.disposition_reason = "Evidence was informational."
+    routed_event.resolved_at = now
+    async with portfolio_session_factory() as session:
+        session.add_all([source, signal, routed_event])
+        await session.commit()
+
+    result = await WorkPortfolioService().reconcile_signal_dispositions()
+
+    assert result == {"status": "completed", "examined": 1, "reconciled": 1}
+    async with portfolio_session_factory() as session:
+        stored = await session.get(CompanySignal, signal.id)
+    assert stored.status == "processed"
+    assert stored.disposition == "no_action"
+
+
+@pytest.mark.asyncio
 async def test_historical_successful_audit_work_is_reconciled_but_failure_remains(
     portfolio_session_factory,
 ):
@@ -356,6 +407,7 @@ async def test_historical_successful_audit_work_is_reconciled_but_failure_remain
         success_work = await session.get(BusinessWorkItem, "work-success")
         failed_work = await session.get(BusinessWorkItem, "work-failed")
         success_event = await session.get(BusinessEvent, "event-success")
+        success_signal = await session.get(CompanySignal, "signal-success")
         success_dispositions = (
             (
                 await session.execute(
@@ -371,6 +423,7 @@ async def test_historical_successful_audit_work_is_reconciled_but_failure_remain
     assert success_work.actual_outcome["classification"] == ("informational_audit_no_action")
     assert failed_work.status == "ready"
     assert success_event.status == "resolved"
+    assert success_signal.disposition == "no_action"
     assert [item.disposition for item in success_dispositions] == [
         "accepted_work_item",
         "no_action",

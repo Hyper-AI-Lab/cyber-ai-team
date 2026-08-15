@@ -407,6 +407,9 @@ class WorkPortfolioService:
         reconciled = await self.reconcile_internal_audit_feedback(
             limit=max(1_000, min(limit * 10, 10_000))
         )
+        reconciled_signals = await self.reconcile_signal_dispositions(
+            limit=max(1_000, min(limit * 10, 10_000))
+        )
         counts = {"accepted": 0, "duplicate": 0, "deferred": 0, "escalated": 0, "no_action": 0}
         async with async_session() as session:
             await self._ensure_outbox_records(session)
@@ -595,7 +598,44 @@ class WorkPortfolioService:
             "status": "completed",
             "processed": len(deliveries),
             "reconciled_no_action": reconciled["reconciled"],
+            "reconciled_signal_dispositions": reconciled_signals["reconciled"],
             "counts": counts,
+        }
+
+    async def reconcile_signal_dispositions(
+        self,
+        *,
+        limit: int = 10_000,
+    ) -> dict[str, Any]:
+        """Project each routed event's final disposition onto its source signal."""
+        safe_limit = max(1, min(limit, 50_000))
+        async with async_session() as session:
+            rows = (
+                await session.execute(
+                    select(CompanySignal, BusinessEvent)
+                    .join(BusinessEvent, BusinessEvent.signal_id == CompanySignal.id)
+                    .where(
+                        BusinessEvent.disposition.is_not(None),
+                        or_(
+                            CompanySignal.disposition.is_(None),
+                            CompanySignal.disposition != BusinessEvent.disposition,
+                        ),
+                    )
+                    .order_by(BusinessEvent.resolved_at, BusinessEvent.id)
+                    .with_for_update(skip_locked=True)
+                    .limit(safe_limit)
+                )
+            ).all()
+            now = utc_now()
+            for signal, event in rows:
+                signal.status = "processed"
+                signal.disposition = event.disposition
+                signal.processed_at = signal.processed_at or event.resolved_at or now
+            await session.commit()
+        return {
+            "status": "completed",
+            "examined": len(rows),
+            "reconciled": len(rows),
         }
 
     async def reconcile_internal_audit_feedback(
@@ -626,6 +666,7 @@ class WorkPortfolioService:
                 (
                     work,
                     event,
+                    signal,
                     str((signal.redacted_payload or {}).get("outcome") or "success").lower(),
                 )
                 for work, event, signal in rows
@@ -634,7 +675,7 @@ class WorkPortfolioService:
             if not informational:
                 return {"status": "completed", "examined": len(rows), "reconciled": 0}
 
-            event_ids = [event.id for _, event, _ in informational]
+            event_ids = [event.id for _, event, _, _ in informational]
             sequences = {
                 event_id: int(sequence or 0)
                 for event_id, sequence in (
@@ -661,7 +702,7 @@ class WorkPortfolioService:
                 .scalars()
                 .all()
             }
-            for work, event, outcome in informational:
+            for work, event, signal, outcome in informational:
                 work.status = "completed"
                 work.actual_outcome = {
                     **(work.actual_outcome or {}),
@@ -677,6 +718,9 @@ class WorkPortfolioService:
                 event.disposition = "no_action"
                 event.disposition_reason = reason
                 event.resolved_at = now
+                signal.status = "processed"
+                signal.disposition = "no_action"
+                signal.processed_at = signal.processed_at or now
                 delivery = deliveries.get(event.id)
                 if delivery:
                     delivery.status = "delivered"
@@ -3674,6 +3718,12 @@ class WorkPortfolioService:
         event.disposition_reason = reason[:8000]
         event.work_item_id = work_item_id
         event.resolved_at = now
+        if event.signal_id:
+            signal = await session.get(CompanySignal, event.signal_id)
+            if signal:
+                signal.status = "processed"
+                signal.disposition = disposition
+                signal.processed_at = signal.processed_at or now
         delivery.status = "delivered"
         delivery.delivered_at = now
         delivery.lease_owner = None

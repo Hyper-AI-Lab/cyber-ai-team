@@ -202,6 +202,55 @@ async def test_stale_low_trust_extraction_is_visible_but_not_a_global_blocker(
 
 
 @pytest.mark.asyncio
+async def test_signal_plane_blocks_processed_signal_without_finite_disposition(
+    readiness_session_factory,
+):
+    async with readiness_session_factory() as session:
+        source = CompanySource(
+            id="source-internal",
+            company_namespace="company:test",
+            source_key="cyber_team",
+            source_type="internal",
+            name="Cyber-Team",
+            status="active",
+            trust_class="internal",
+            sensitivity="internal",
+            config={},
+            cursor={},
+            last_success_at=utc_now(),
+        )
+        session.add(source)
+        session.add(
+            CompanySignal(
+                id="signal-undispositioned",
+                company_namespace="company:test",
+                source_id=source.id,
+                signal_type="audit.event",
+                external_id="audit-1",
+                status="processed",
+                disposition=None,
+                trust_class="internal",
+                sensitivity="internal",
+                content_hash="signal-undispositioned",
+                redacted_payload={},
+                injection_status="clear",
+                claim_extraction_status="completed",
+                idempotency_key="signal-undispositioned",
+                received_at=utc_now(),
+                processed_at=utc_now(),
+            )
+        )
+        await session.commit()
+
+    result = await AutonomousCompanyReadinessService(llm_gateway=FakeLLM()).summary()
+
+    signal_plane = result["sections"]["company_signals"]
+    assert signal_plane["status"] == "undispositioned"
+    assert signal_plane["blocking"] is True
+    assert signal_plane["undispositioned_processed"] == 1
+
+
+@pytest.mark.asyncio
 async def test_ready_control_plane_has_fresh_sources_model_strategy_and_mandates(
     readiness_session_factory,
 ):

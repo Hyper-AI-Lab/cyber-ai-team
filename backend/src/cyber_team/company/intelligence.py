@@ -157,13 +157,50 @@ CLAIM_EXTRACTION_SCHEMA = {
     "required": ["claims"],
     "additionalProperties": False,
 }
-INTERNAL_AUDIT_FEEDBACK_EVENT_TYPES = {
-    "company.signal_ingested",
+INTERNAL_AUDIT_FEEDBACK_PREFIXES = (
+    "action_policy.",
+    "autonomous_operations.",
+    "business_event.",
+    "business_work.",
+    "company.",
+    "company_builder.",
+    "company_context.",
+    "control.",
+    "domain_operations.",
+    "executive_",
+    "live_canary_",
+    "memory_",
+    "observer.",
+    "operating_cadence.",
+    "orchestration_governor.",
+    "outcome_",
+    "outsourcing_request.",
+    "role_gap.",
+    "shadow_",
+    "supervisor.",
+    "team_activation.",
+)
+CONSEQUENTIAL_AUDIT_EVENT_TYPES = {
+    "agent_capability_grant.revoked",
+    "approval_reconciliation_required",
+    "approval_refresh_required",
+    "data_subject.deleted",
+    "owner_adjudicated",
+    "tool.approval_invalid",
+    "tool.policy_denied",
+    "workflow.run_failed",
+    "workflow.run_rejected",
 }
-INTERNAL_AUDIT_ROUTINE_SUCCESS_EVENT_TYPES = {
-    "authorization.allowed",
-    "auth.refresh",
-    "auth.websocket_ticket",
+CONSEQUENTIAL_AUDIT_OUTCOMES = {
+    "blocked",
+    "critical",
+    "denied",
+    "error",
+    "expired",
+    "failed",
+    "failure",
+    "rejected",
+    "revoked",
 }
 INFORMATIONAL_AUDIT_OUTCOMES = {
     "allowed",
@@ -1499,7 +1536,10 @@ class CompanyIntelligenceService:
                 title=item.event_type,
             )
             count += int(not result["duplicate"])
-        for item in memories:
+        evidence_memories = [
+            item for item in memories if self._memory_is_company_evidence(item)
+        ]
+        for item in evidence_memories:
             result = await self.ingest_signal(
                 source_key="cyber_team",
                 signal_type="memory.entry",
@@ -1547,13 +1587,20 @@ class CompanyIntelligenceService:
 
     @staticmethod
     def _audit_is_company_evidence(item: AuditEvent) -> bool:
-        """Keep actionable audit evidence without recursively ingesting telemetry."""
-        if item.event_type in INTERNAL_AUDIT_FEEDBACK_EVENT_TYPES:
+        """Keep consequential evidence without turning telemetry into new work."""
+        event_type = str(item.event_type or "").lower()
+        if event_type.startswith(INTERNAL_AUDIT_FEEDBACK_PREFIXES):
             return False
-        return not (
-            item.event_type in INTERNAL_AUDIT_ROUTINE_SUCCESS_EVENT_TYPES
-            and str(item.outcome or "").lower() in INFORMATIONAL_AUDIT_OUTCOMES
+        return bool(
+            event_type in CONSEQUENTIAL_AUDIT_EVENT_TYPES
+            or str(item.outcome or "").lower() in CONSEQUENTIAL_AUDIT_OUTCOMES
         )
+
+    @staticmethod
+    def _memory_is_company_evidence(item: MemoryEntry) -> bool:
+        """Only explicitly promoted memory may re-enter the evidence plane."""
+        metadata = item.metadata_ if isinstance(item.metadata_, dict) else {}
+        return metadata.get("company_evidence") is True
 
     @staticmethod
     def _signal_routing_metadata(signal: CompanySignal) -> dict[str, Any]:

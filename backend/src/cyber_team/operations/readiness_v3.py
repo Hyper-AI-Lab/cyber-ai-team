@@ -62,6 +62,17 @@ class AutonomousCompanyReadinessService:
                 session,
                 CompanySignal.claim_extraction_status,
             )
+            signal_counts = await self._counts(session, CompanySignal.status)
+            signal_disposition_counts = {
+                str(key): int(value)
+                for key, value in (
+                    await session.execute(
+                        select(CompanySignal.disposition, func.count())
+                        .where(CompanySignal.disposition.is_not(None))
+                        .group_by(CompanySignal.disposition)
+                    )
+                ).all()
+            }
             extraction_stale_before = utc_now() - timedelta(
                 seconds=max(
                     1,
@@ -114,6 +125,26 @@ class AutonomousCompanyReadinessService:
                             CompanySignal.status == "pending",
                             CompanySignal.claim_extraction_status == "failed",
                             CompanySignal.claim_extraction_available_at > utc_now(),
+                        )
+                    )
+                ).scalar_one()
+            )
+            stale_pending_signals = int(
+                (
+                    await session.execute(
+                        select(func.count(CompanySignal.id)).where(
+                            CompanySignal.status == "pending",
+                            CompanySignal.received_at <= extraction_stale_before,
+                        )
+                    )
+                ).scalar_one()
+            )
+            undispositioned_processed_signals = int(
+                (
+                    await session.execute(
+                        select(func.count(CompanySignal.id)).where(
+                            CompanySignal.status.in_({"processed", "quarantined"}),
+                            CompanySignal.disposition.is_(None),
                         )
                     )
                 ).scalar_one()
@@ -307,6 +338,37 @@ class AutonomousCompanyReadinessService:
             ),
         }
         source_freshness = self._source_freshness(sources)
+        signal_plane_blocking = bool(
+            stale_pending_signals or undispositioned_processed_signals
+        )
+        signal_plane = {
+            "status": (
+                "undispositioned"
+                if undispositioned_processed_signals
+                else "stale_pending"
+                if stale_pending_signals
+                else "processing"
+                if signal_counts.get("pending", 0)
+                else "ready"
+            ),
+            "blocking": signal_plane_blocking,
+            "counts": signal_counts,
+            "disposition_counts": signal_disposition_counts,
+            "stale_pending": stale_pending_signals,
+            "undispositioned_processed": undispositioned_processed_signals,
+            "processing_window_seconds": max(
+                1, settings.business_event_readiness_stale_after_seconds
+            ),
+            "detail": (
+                "Processed company signals are missing a terminal disposition."
+                if undispositioned_processed_signals
+                else "Company signals exceeded the evidence-processing window."
+                if stale_pending_signals
+                else "Company signals are being processed within the allowed window."
+                if signal_counts.get("pending", 0)
+                else "Every company signal has a finite recorded disposition."
+            ),
+        }
         extraction_blocking = bool(
             required_stale_extraction_failures or expired_extraction_leases
         )
@@ -471,6 +533,7 @@ class AutonomousCompanyReadinessService:
         sections = {
             "company_model": company_model,
             "source_freshness": source_freshness,
+            "company_signals": signal_plane,
             "claim_extraction": claim_extraction,
             "mandates": mandates,
             "domain_controls": {

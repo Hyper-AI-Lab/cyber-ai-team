@@ -6782,3 +6782,28 @@
   - `backend/tests/test_api_operations.py`.
 - Next step:
   - Eliminate audit/self-observation feedback churn and prove that every accepted company signal reaches one finite, explicit disposition without manufacturing recursive evidence.
+
+### 2026-08-15T12:38:03Z — STEP-266 — Closed recursive audit and memory feedback paths
+- Files/services changed:
+  - Replaced broad internal-audit ingestion with a positive consequential-evidence policy: explicit control/security events and failed, blocked, denied, rejected, expired, revoked, or critical outcomes remain eligible, while company-intelligence, work-routing, Governor, Observer, outcome, cadence, and other self-observation telemetry cannot recursively re-enter the evidence plane.
+  - Required `company_evidence=true` metadata before an internal memory entry can be promoted into company evidence; normal workflow outputs and executive reflections remain recallable memory but no longer manufacture new business signals.
+  - Projected each terminal business-event disposition back to its source signal, including a bounded historical reconciliation pass for existing rows.
+  - Added company-signal readiness for processing, stale pending, and processed-without-disposition states.
+  - Added regression tests for audit allowlisting, skipped-row cursor progress, explicit memory promotion, historical disposition reconciliation, and undispositioned-signal readiness blocking.
+- Commands run:
+  - Focused Ruff and Python compileall over company intelligence, work portfolio, readiness, and their tests.
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest -q backend/tests/test_company_intelligence.py backend/tests/test_work_portfolio.py backend/tests/test_autonomous_company_readiness.py`.
+  - `git diff --check`.
+- Result:
+  - All 75 focused tests pass; Ruff, compileall, and diff hygiene pass.
+  - Routine Cyber-Team telemetry and runtime reflections can no longer recursively create evidence/work/audit churn.
+  - Consequential failures and security/control decisions remain observable, and every routed signal has a finite disposition visible in readiness.
+- Evidence:
+  - `backend/src/cyber_team/company/intelligence.py`.
+  - `backend/src/cyber_team/operations/work_portfolio.py`.
+  - `backend/src/cyber_team/operations/readiness_v3.py`.
+  - `backend/tests/test_company_intelligence.py`.
+  - `backend/tests/test_work_portfolio.py`.
+  - `backend/tests/test_autonomous_company_readiness.py`.
+- Next step:
+  - Complete the Owner Console surfaces for model qualifications, evidence leases/signals, governed action candidates, and outcome-learning backlog so the owner can inspect the full evidence-to-outcome chain without raw API or database access.
