@@ -7063,3 +7063,21 @@
   - `cyber-team-core:0.3.26` and `cyber-team-ui:0.3.26` local image artifacts.
 - Next step:
   - Push the release evidence, perform backup-first promotion of `0.3.26`, and rerun live v3 model qualification.
+
+### 2026-08-15T16:57:11Z — STEP-279 — Promoted deterministic qualification release 0.3.26
+- Files/services changed:
+  - Captured a fresh staging PostgreSQL backup before deployment.
+  - Promoted exact `cyber-team-core:0.3.26` and `cyber-team-ui:0.3.26` artifacts to staging.
+- Commands run:
+  - `RELEASE_VERSION=0.3.26 ./scripts/promote-staging.sh` in dry-run mode.
+  - `RELEASE_VERSION=0.3.26 PROMOTE_DRY_RUN=0 ./scripts/promote-staging.sh`.
+  - Public health/readiness, image identity, schema revision, backup artifact, and promotion record verification.
+- Result:
+  - The backup-first promotion and public login/dashboard/API/WebSocket/tool-readiness smoke passed.
+  - `/health` reports version `0.3.26` and build SHA `aed1d6df6db40547504ca2ff22e84ca7e63451c8`.
+  - PostgreSQL, Redis, Qdrant, Temporal, and OPA are ready; the database remains at migration `0021`.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.26-20260815-165434.dump` (151 MiB).
+  - `dist/promotions/staging/0.3.26-20260815-165658.json`.
+- Next step:
+  - Run and persist the v3 task-level model qualification, requiring an exact 5/5 live result before autonomous outcome acceptance.
