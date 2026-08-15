@@ -7231,3 +7231,17 @@
   - Failed work `work_3c51248f803a45638f824b0de1f68e58` in staging PostgreSQL.
 - Next step:
   - Commit and push the closed selection grammar, verify/promote a new immutable release, and repeat the unchanged live acceptance scenario.
+
+### 2026-08-15T19:36:20Z — STEP-288 — Verified immutable 0.3.29 closed-selection release
+- Files/services changed:
+  - Built immutable `cyber-team-core:0.3.29` and `cyber-team-ui:0.3.29` images with universal role loop v6.
+- Commands run:
+  - Full `scripts/release-check.sh` gate for release `0.3.29`, including quality, migration rehearsal, Compose smoke, image builds, and image scans.
+- Result:
+  - All 420 backend tests and all 31 frontend tests passed.
+  - Lint, compilation, build/typecheck, dependency audits, secret/GCP/FOSS checks, migration rehearsals, Compose smoke, and diff hygiene passed.
+  - Both versioned images reported zero vulnerabilities.
+- Evidence:
+  - `dist/releases/0.3.29.json`.
+- Next step:
+  - Promote `0.3.29` backup-first and run the unchanged live outcome-autonomy acceptance scenario.
