@@ -7024,3 +7024,25 @@
   - Public staging health/readiness responses captured on 2026-08-15.
 - Next step:
   - Persist a fresh live 5/5 model-capability evaluation, then exercise the complete governed action-to-outcome acceptance path.
+
+### 2026-08-15T16:28:59Z — STEP-277 — Made model qualification deterministic and policy-complete
+- Files/services changed:
+  - Added an optional JSON-inference temperature parameter while preserving the existing `0.3` default for application callers.
+  - Versioned the autonomous capability contract from v2 to v3.
+  - Added an explicit policy statement to every qualification task and set qualification sampling to temperature zero.
+  - Kept the exact per-field scoring threshold unchanged.
+- Commands run:
+  - Live staging `POST /api/operations/model-capabilities/evaluate` against release `0.3.25`.
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest -q backend/tests/test_model_capabilities.py backend/tests/test_llm_gateway.py`.
+  - Focused Ruff, compileall, and `git diff --check`.
+- Result:
+  - The live v2 run passed claim extraction, company-model synthesis, strategy generation, and Observer review, but failed domain planning at 0.667 because it returned `no_action` after correctly determining `owner_approval_required`.
+  - Inspection proved the evaluator referred to an unstated domain disposition policy and sampled non-deterministically at temperature `0.3`; it was an evaluation-contract defect, not grounds to lower the threshold.
+  - The v3 contract now states that an over-threshold unapproved external action must become a durable `approval_request`, and all qualification calls are deterministic.
+  - All 18 focused tests passed; lint, compilation, and diff hygiene passed.
+- Evidence:
+  - Live failed run `modelcaprun_0dfdd6990865489c94ff2ba5f73d4314` retained in `model_capability_evaluations`.
+  - `backend/src/cyber_team/operations/model_capabilities.py`.
+  - `backend/src/cyber_team/llm/gateway.py`.
+- Next step:
+  - Commit and push the v3 contract, build and promote a new immutable release, then repeat the complete live qualification without weakening acceptance.
