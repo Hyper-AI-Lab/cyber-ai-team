@@ -7277,3 +7277,20 @@
   - Failed work `work_e0b038e7d1b742eaafad81344401065b` and memory `d0ac9016-1444-450c-84bb-d743a20b4113`.
 - Next step:
   - Verify/promote the v7 mandate-aware release and rerun the unchanged outcome-autonomy acceptance scenario.
+
+### 2026-08-15T20:49:07Z — STEP-291 — Verified immutable 0.3.30 mandate-aware release
+- Files/services changed:
+  - Built immutable `cyber-team-core:0.3.30` and `cyber-team-ui:0.3.30` images with universal role loop v7 and durable mandate authority in trusted decision context.
+  - Reclaimed disposable Docker build cache and superseded pre-rollback Cyber-Team image layers after the first image build exhausted host disk; retained running release `0.3.29`, its dependencies, persistent volumes, and the `0.3.30` candidate.
+- Commands run:
+  - Full `scripts/release-check.sh` gate for release `0.3.30`, including quality, both migration rehearsals, isolated Compose smoke, immutable image builds, and Trivy image scans.
+  - Docker build-cache prune and removal of superseded Cyber-Team release images after the capacity-only interruption, followed by a complete gate restart.
+- Result:
+  - The first release attempt stopped only because the Docker filesystem reached `ENOSPC`; no test or product behavior failed.
+  - The restarted release passed all 420 backend tests and all 31 frontend tests.
+  - Ruff, compileall, Alembic offline SQL, Python/Node dependency audits, production frontend build/typecheck, secret scan, Google Cloud isolation, FOSS resource policy, Compose configuration, both PostgreSQL migration rehearsals, isolated Compose smoke, and diff hygiene passed.
+  - Both immutable images reported zero vulnerabilities.
+- Evidence:
+  - `dist/releases/0.3.30.json`.
+- Next step:
+  - Promote `0.3.30` backup-first and rerun the unchanged live outcome-autonomy scenario through safe execution, outcome assessment, and high-impact approval gating.
