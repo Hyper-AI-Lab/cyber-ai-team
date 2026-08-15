@@ -15,10 +15,12 @@ import {
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import ActionPolicyValidationPanel from './ActionPolicyValidationPanel'
+import OutcomeAutonomyPanel from './OutcomeAutonomyPanel'
 
 interface Props {
   readiness?: any
   onChanged?: () => Promise<void> | void
+  onNavigate?: (view: 'approvals') => void
 }
 
 const tone: Record<string, string> = {
@@ -44,13 +46,15 @@ function when(value?: string | null) {
   return value ? new Date(value).toLocaleString() : 'not recorded'
 }
 
-export default function AutonomousCompanyPanel({ readiness, onChanged }: Props) {
+export default function AutonomousCompanyPanel({ readiness, onChanged, onNavigate }: Props) {
   const [mandates, setMandates] = useState<any[]>([])
   const [events, setEvents] = useState<any[]>([])
   const [work, setWork] = useState<any[]>([])
   const [outcomes, setOutcomes] = useState<any[]>([])
   const [specifications, setSpecifications] = useState<any[]>([])
   const [controls, setControls] = useState<any[]>([])
+  const [modelCapabilities, setModelCapabilities] = useState<any | null>(null)
+  const [actionCandidates, setActionCandidates] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
   const [changingDomain, setChangingDomain] = useState<string | null>(null)
@@ -60,13 +64,24 @@ export default function AutonomousCompanyPanel({ readiness, onChanged }: Props) 
     setLoading(true)
     setError(null)
     try {
-      const [nextMandates, nextEvents, nextWork, nextOutcomes, nextSpecs, nextControls] = await Promise.all([
+      const [
+        nextMandates,
+        nextEvents,
+        nextWork,
+        nextOutcomes,
+        nextSpecs,
+        nextControls,
+        nextCapabilities,
+        nextCandidates,
+      ] = await Promise.all([
         api.listAgentMandates({ status: 'active', limit: 200 }),
         api.listBusinessEvents({ limit: 100 }),
         api.listBusinessWorkItems({ limit: 100 }),
         api.listOutcomeAssessments({ limit: 100 }),
         api.listWorkflowSpecifications({ limit: 100 }),
         api.listDomainAutonomyControls(),
+        api.getModelCapabilities(),
+        api.listAutonomousActionCandidates({ limit: 100 }),
       ])
       setMandates(nextMandates.items || nextMandates || [])
       setEvents(nextEvents.items || nextEvents || [])
@@ -74,6 +89,8 @@ export default function AutonomousCompanyPanel({ readiness, onChanged }: Props) 
       setOutcomes(nextOutcomes.items || nextOutcomes || [])
       setSpecifications(nextSpecs.items || nextSpecs || [])
       setControls(nextControls.items || nextControls || [])
+      setModelCapabilities(nextCapabilities)
+      setActionCandidates(nextCandidates.items || nextCandidates || [])
     } catch (reason: any) {
       setError(reason.message || 'Autonomous company control plane is unavailable.')
     } finally {
@@ -184,12 +201,20 @@ export default function AutonomousCompanyPanel({ readiness, onChanged }: Props) 
       <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Health icon={ShieldCheck} title="Evidence and strategy" value={section.source_freshness?.status || 'unavailable'} detail={`${section.company_model?.critical_unknowns?.length || 0} critical unknowns · ${section.strategy?.status || 'strategy unavailable'}`} />
         <Health icon={GitFork} title="Workflow compiler" value={section.workflow_compiler?.status || 'unavailable'} detail={`${specifications.filter((item) => item.status === 'active').length} active immutable specifications`} />
-        <Health icon={Clock3} title="Outcome learning" value={section.action_probation?.status || 'unavailable'} detail={`${outcomes.filter((item) => item.recommendation === 'rollback').length} rollback recommendations · latest ${when(section.work_portfolio?.latest_outcome_at)}`} />
+        <Health icon={Clock3} title="Outcome learning" value={section.outcome_learning?.status || 'unavailable'} detail={`${section.outcome_learning?.unassessed_work || 0} unassessed · ${outcomes.filter((item) => item.recommendation === 'rollback').length} rollback recommendations · latest ${when(section.outcome_learning?.latest_assessment_at)}`} />
         <Health icon={BriefcaseBusiness} title="Portfolio bounds" value={section.work_portfolio?.status || 'unavailable'} detail={`${(section.work_portfolio?.saturated_domains || []).length} saturated · ${(section.work_portfolio?.recovery_required_domains || []).length} recovery required`} />
       </div>
 
       {events.some((item) => item.status === 'pending') && <div className="mt-4 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /><span>Pending events are waiting for outbox delivery or mandate routing. The next Temporal cycle will reconcile them.</span></div>}
       {section.work_portfolio?.blocking && <div className="mt-4 flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /><span>{section.work_portfolio.detail || 'The work portfolio requires bounded recovery before domain expansion.'}</span></div>}
+      <OutcomeAutonomyPanel
+        readiness={section}
+        modelCapabilities={modelCapabilities}
+        actionCandidates={actionCandidates}
+        outcomes={outcomes}
+        loading={loading}
+        onNavigate={onNavigate}
+      />
       <ActionPolicyValidationPanel onChanged={onChanged} />
     </section>
   )

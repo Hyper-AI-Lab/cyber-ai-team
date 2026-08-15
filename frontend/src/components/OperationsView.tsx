@@ -1128,6 +1128,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
 
       <AutonomousCompanyPanel
         readiness={readiness}
+        onNavigate={onNavigate ? (view) => onNavigate(view) : undefined}
         onChanged={async () => {
           await loadReadiness()
           await loadExecutive()

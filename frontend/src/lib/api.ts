@@ -933,6 +933,26 @@ class ApiClient {
     return this.request('/api/operations/company-cycle/run', { method: 'POST' });
   }
 
+  async getModelCapabilities() {
+    return this.request('/api/operations/model-capabilities');
+  }
+
+  async evaluateModelCapabilities(tasks: string[] = []) {
+    return this.request('/api/operations/model-capabilities/evaluate', {
+      method: 'POST',
+      body: JSON.stringify({ tasks }),
+    });
+  }
+
+  async listAutonomousActionCandidates(filters: {
+    status?: string;
+    limit?: number;
+  } = {}) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 200) });
+    if (filters.status) params.set('status', filters.status);
+    return this.request(`/api/operations/action-candidates?${params.toString()}`);
+  }
+
   async listWorkflowSpecifications(filters: { status?: string; limit?: number } = {}) {
     const params = new URLSearchParams({ limit: String(filters.limit ?? 100) });
     if (filters.status) params.set('status', filters.status);

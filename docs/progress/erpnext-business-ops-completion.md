@@ -6807,3 +6807,33 @@
   - `backend/tests/test_autonomous_company_readiness.py`.
 - Next step:
   - Complete the Owner Console surfaces for model qualifications, evidence leases/signals, governed action candidates, and outcome-learning backlog so the owner can inspect the full evidence-to-outcome chain without raw API or database access.
+
+### 2026-08-15T12:55:29Z — STEP-267 — Completed evidence-to-outcome Owner Console visibility
+- Files/services changed:
+  - Extended the frontend API client with model-capability read/evaluate and autonomous action-candidate listing methods.
+  - Added the `Evidence-to-Outcome Integrity` Operations panel with live signal/disposition health, extraction lease/retry state, task-level model qualification, governed action candidates, Observer/policy/approval trace identifiers, and outcome backlog status.
+  - Corrected the existing Outcome Learning health card to use outcome-assessment readiness instead of action-policy probation.
+  - Added an Approvals navigation action when action candidates are waiting for owner authorization, plus explicit empty states for no qualification evidence and no justified action.
+  - Added the official MIT-licensed Vite React transform for real TSX component tests and updated the existing Nano ID override from `3.3.17` to patched MIT release `3.3.18`.
+- Commands run:
+  - `npm test -- --run`.
+  - `npx tsc --noEmit`.
+  - `npm run build`.
+  - `npm audit --audit-level=high`.
+  - `git diff --check`.
+- Result:
+  - All 31 frontend tests pass, including rendered component states and API request contracts.
+  - TypeScript and the optimized Next.js production build pass.
+  - npm audit reports zero vulnerabilities after the Nano ID patch.
+  - The owner can now inspect the complete evidence-to-outcome control path without raw API calls or database IDs.
+- Evidence:
+  - `frontend/src/components/operations/OutcomeAutonomyPanel.tsx`.
+  - `frontend/src/components/operations/OutcomeAutonomyPanel.test.tsx`.
+  - `frontend/src/components/operations/AutonomousCompanyPanel.tsx`.
+  - `frontend/src/components/OperationsView.tsx`.
+  - `frontend/src/lib/api.ts`.
+  - `frontend/src/lib/api.test.ts`.
+  - `frontend/vitest.config.mts`.
+  - `frontend/package.json` and `frontend/package-lock.json`.
+- Next step:
+  - Run the complete release gate, rehearse and apply migrations through `0021`, deploy staging with backup first, drain bounded outcome/disposition backlogs, qualify the live inference route, and execute outcome-based autonomy acceptance before the soak.

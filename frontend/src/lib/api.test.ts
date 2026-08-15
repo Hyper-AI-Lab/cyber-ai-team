@@ -1101,4 +1101,34 @@ describe('ApiClient', () => {
       dry_run: true,
     })
   })
+
+  it('reads and evaluates outcome-autonomy controls', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ summary: { qualified: 5 } }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'passed' }))
+      .mockResolvedValueOnce(jsonResponse({ count: 1, items: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+    client.setTokens('access-1')
+
+    await client.getModelCapabilities()
+    await client.evaluateModelCapabilities(['observer_review'])
+    await client.listAutonomousActionCandidates({
+      status: 'approval_required',
+      limit: 25,
+    })
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://api.test/api/operations/model-capabilities',
+    )
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/operations/model-capabilities/evaluate',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({
+      tasks: ['observer_review'],
+    })
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/operations/action-candidates?limit=25&status=approval_required',
+    )
+  })
 })
