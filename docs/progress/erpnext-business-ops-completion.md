@@ -7196,3 +7196,17 @@
   - Docker images `cyber-team-core:0.3.28` and `cyber-team-ui:0.3.28`.
 - Next step:
   - Commit and push the release evidence, promote `0.3.28` backup-first, and repeat the live outcome-autonomy acceptance proof.
+
+### 2026-08-15T18:59:58Z — STEP-286 — Promoted schema-constrained action selection to staging
+- Files/services changed:
+  - Promoted immutable `cyber-team-core:0.3.28` and `cyber-team-ui:0.3.28` images to the core, worker, and UI staging services.
+  - Captured a fresh PostgreSQL backup before container replacement.
+- Commands run:
+  - Dry-run and live `scripts/promote-staging.sh` for release `0.3.28`.
+- Result:
+  - Backup, deployment, dependency health, owner login, dashboard/integration/tool reads, WebSocket ticket, approval queue, safe approval rejection, and compose smoke all passed.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.28-20260815-185720.dump`.
+  - `dist/promotions/staging/0.3.28-20260815-185945.json`.
+- Next step:
+  - Run the identical live outcome-autonomy proof against the schema-constrained domain decision path.
