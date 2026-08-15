@@ -38,8 +38,9 @@ class AutonomousCompanyReadinessService:
         "jurisdictions",
     }
 
-    def __init__(self, *, llm_gateway=None):
+    def __init__(self, *, llm_gateway=None, model_capability_service=None):
         self._llm = llm_gateway
+        self._model_capabilities = model_capability_service
 
     async def summary(self) -> dict[str, Any]:
         async with async_session() as session:
@@ -540,11 +541,33 @@ class AutonomousCompanyReadinessService:
                 "detail": "LLM gateway is unavailable.",
             }
         result = await self._llm.validate_provider()
-        blocking = bool(result.get("blocking", result.get("mode") != "live"))
+        infrastructure_blocking = bool(
+            result.get("blocking", result.get("mode") != "live")
+        )
+        capabilities = (
+            await self._model_capabilities.summary()
+            if self._model_capabilities and not infrastructure_blocking
+            else None
+        )
+        blocking = bool(
+            infrastructure_blocking
+            or (capabilities and capabilities.get("blocking"))
+        )
         return {
             **result,
-            "status": "ready" if not blocking else result.get("mode"),
+            "status": (
+                "ready"
+                if not blocking
+                else "not_qualified"
+                if capabilities and capabilities.get("blocking")
+                else result.get("mode")
+            ),
             "blocking": blocking,
+            "infrastructure": {
+                "status": "ready" if not infrastructure_blocking else result.get("mode"),
+                "blocking": infrastructure_blocking,
+            },
+            "capabilities": capabilities,
         }
 
     @staticmethod

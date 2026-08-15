@@ -331,6 +331,11 @@ class AgentManager:
                 user_message=task,
                 agent_id=agent_id,
                 conversation_id=conversation_id,
+                **(
+                    {"capability_task": "domain_planning"}
+                    if getattr(self._llm, "capability_gating_enabled", False)
+                    else {}
+                ),
             )
             if self._metrics:
                 self._metrics.record_llm_invocation(agent_id, "success", source_type)
@@ -464,6 +469,11 @@ class AgentManager:
                 user_message=task,
                 agent_id=agent["id"],
                 conversation_id=conversation_id,
+                **(
+                    {"capability_task": "domain_planning"}
+                    if getattr(self._llm, "capability_gating_enabled", False)
+                    else {}
+                ),
             )
             if self._metrics:
                 self._metrics.record_llm_invocation(agent["id"], "success", source_type)
@@ -711,6 +721,11 @@ Propose a new role to fill this gap. Return JSON with:
             system_prompt="You are a role design specialist. Always respond with valid JSON.",
             user_message=prompt,
             agent_id="role_gap_analyzer",
+            **(
+                {"capability_task": "domain_planning"}
+                if getattr(self._llm, "capability_gating_enabled", False)
+                else {}
+            ),
         )
         return {"proposal": result}
 

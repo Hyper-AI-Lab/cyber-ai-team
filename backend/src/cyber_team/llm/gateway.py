@@ -38,6 +38,7 @@ class LLMGateway:
         self._consecutive_failures = 0
         self._circuit_open_until = 0.0
         self._last_invocation_result: dict | None = None
+        self._capability_checker = None
 
         # Integrate Langfuse tracing if API keys are configured
         if settings.langfuse_public_key and settings.langfuse_secret_key:
@@ -62,9 +63,13 @@ class LLMGateway:
         temperature: float = 0.7,
         max_tokens: int = 4096,
         json_schema: dict | None = None,
+        capability_task: str | None = None,
+        route_hint: str | None = None,
     ) -> str:
         model = model or self._default_model
-        route = self._primary_route(model)
+        route = self._local_route() if route_hint == "local" else self._primary_route(model)
+        if route_hint == "local":
+            model = route["model"]
         if not route["local"] and not settings.llm_external_inference_allowed:
             if settings.llm_local_fallback_enabled:
                 route = self._local_route()
@@ -74,6 +79,16 @@ class LLMGateway:
                     "External LLM inference is blocked by the zero-spend policy. "
                     "Confirm a zero-cost provider or enable the local fallback."
                 )
+        if capability_task and self._capability_checker:
+            try:
+                await self._require_capability(capability_task, route)
+            except Exception:
+                if route["local"] or not settings.llm_local_fallback_enabled:
+                    raise
+                local_route = self._local_route()
+                await self._require_capability(capability_task, local_route)
+                route = local_route
+                model = route["model"]
 
         messages = [{"role": "system", "content": system_prompt}]
 
@@ -100,6 +115,7 @@ class LLMGateway:
                     max_tokens=max_tokens,
                     trigger="circuit_open",
                     json_schema=json_schema,
+                    capability_task=capability_task,
                 )
             raise
         import litellm
@@ -179,6 +195,7 @@ class LLMGateway:
                             max_tokens=max_tokens,
                             trigger=category,
                             json_schema=json_schema,
+                            capability_task=capability_task,
                         )
                     raise
                 backoff = max(0.0, settings.llm_retry_backoff_seconds) * (2**attempt)
@@ -204,11 +221,14 @@ class LLMGateway:
         max_tokens: int,
         trigger: str,
         json_schema: dict | None = None,
+        capability_task: str | None = None,
     ) -> str:
         """Invoke the retained local open model after a retryable hosted failure."""
         import litellm
 
         route = self._local_route()
+        if capability_task and self._capability_checker:
+            await self._require_capability(capability_task, route)
         local_messages = self._prepare_local_messages(messages)
         metadata = {
             "generation_name": f"{agent_id}-completion-local-fallback",
@@ -531,6 +551,43 @@ class LLMGateway:
             "local": True,
         }
 
+    def set_capability_checker(self, checker) -> None:
+        self._capability_checker = checker
+
+    @property
+    def capability_gating_enabled(self) -> bool:
+        return bool(self._capability_checker and settings.model_capability_enforcement_enabled)
+
+    async def _require_capability(self, task_type: str, route: dict) -> None:
+        if not settings.model_capability_enforcement_enabled:
+            return
+        await self._capability_checker(
+            task_type=task_type,
+            provider=route["provider"],
+            model=route["model"],
+        )
+
+    def effective_route_identity(self) -> dict[str, str | bool]:
+        last = self._last_validation_result or {}
+        if last.get("provider") and not last.get("blocking"):
+            return {
+                "provider": str(last["provider"]),
+                "model": str(last.get("model") or self._default_model),
+                "local": last.get("provider") == "llama_cpp",
+            }
+        if self._primary_route(self._default_model)["local"] or (
+            not settings.llm_external_inference_allowed
+            and settings.llm_local_fallback_enabled
+        ):
+            route = self._local_route()
+        else:
+            route = self._primary_route(self._default_model)
+        return {
+            "provider": route["provider"],
+            "model": route["model"],
+            "local": route["local"],
+        }
+
     def _merge_runtime_status(self, result: dict, now) -> dict:
         runtime = self.runtime_status()
         merged = {**result, "runtime_health": runtime}
@@ -555,6 +612,8 @@ class LLMGateway:
         model: str | None = None,
         max_tokens: int = 4096,
         json_schema: dict | None = None,
+        capability_task: str | None = None,
+        route_hint: str | None = None,
     ) -> dict:
         response = await self.invoke(
             system_prompt=system_prompt + "\nAlways respond with valid JSON only.",
@@ -564,6 +623,8 @@ class LLMGateway:
             temperature=0.3,
             max_tokens=max_tokens,
             json_schema=json_schema,
+            capability_task=capability_task,
+            route_hint=route_hint,
         )
         try:
             # Try to extract JSON from response (handle markdown code blocks)

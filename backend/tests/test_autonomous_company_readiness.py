@@ -41,6 +41,17 @@ class FakeLocalFallbackLLM:
         }
 
 
+class FakeModelCapabilities:
+    async def summary(self):
+        return {
+            "status": "not_qualified",
+            "blocking": True,
+            "qualified": 4,
+            "required": 5,
+            "items": [{"task_type": "observer_review", "status": "not_evaluated"}],
+        }
+
+
 @pytest.fixture
 async def readiness_session_factory(monkeypatch):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -77,6 +88,19 @@ async def test_healthy_local_fallback_satisfies_model_availability():
     assert result["mode"] == "local_fallback"
     assert result["status"] == "ready"
     assert result["blocking"] is False
+
+
+@pytest.mark.asyncio
+async def test_reachable_model_without_task_evidence_is_not_autonomy_ready():
+    result = await AutonomousCompanyReadinessService(
+        llm_gateway=FakeLocalFallbackLLM(),
+        model_capability_service=FakeModelCapabilities(),
+    )._model_availability()
+
+    assert result["infrastructure"]["status"] == "ready"
+    assert result["status"] == "not_qualified"
+    assert result["blocking"] is True
+    assert result["capabilities"]["qualified"] == 4
 
 
 @pytest.mark.asyncio

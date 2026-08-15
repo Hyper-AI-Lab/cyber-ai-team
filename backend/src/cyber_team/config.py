@@ -124,6 +124,13 @@ class Settings(BaseSettings):
     llm_local_api_key: str = ""
     llm_local_timeout_seconds: float = 180.0
     llm_local_max_tokens: int = 1024
+    model_capability_enforcement_enabled: bool = True
+    model_capability_required_tasks: str = (
+        "claim_extraction,company_model_synthesis,strategy_generation,"
+        "domain_planning,observer_review"
+    )
+    model_capability_min_score: float = 0.8
+    model_capability_ttl_seconds: int = 86400
     searxng_enabled: bool = False
     searxng_url: str = "http://searxng:8080"
     company_research_queries_per_cycle: int = 3
@@ -359,6 +366,14 @@ class Settings(BaseSettings):
             "llama-cpp",
             "openai_compatible_local",
         }
+
+    @property
+    def model_capability_required_task_items(self) -> list[str]:
+        return [
+            item.strip()
+            for item in self.model_capability_required_tasks.split(",")
+            if item.strip()
+        ]
 
     @property
     def llm_external_inference_allowed(self) -> bool:

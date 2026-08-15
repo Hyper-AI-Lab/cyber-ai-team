@@ -36,6 +36,7 @@ async def activity_services():
     from cyber_team.operations.executive import ExecutiveCompanyOSService
     from cyber_team.operations.governor import OrchestrationGovernorService
     from cyber_team.operations.memory_steward import MemoryStewardService
+    from cyber_team.operations.model_capabilities import ModelCapabilityService
     from cyber_team.operations.outcomes import OutcomeLearningService
     from cyber_team.operations.planning import AutonomousPlanningService
     from cyber_team.operations.readiness import ProductionReadinessEvidenceService
@@ -50,6 +51,11 @@ async def activity_services():
     erpnext = ERPNextClient()
     registry = ToolRegistry()
     action_policy = ActionPolicyService(audit_service=audit)
+    model_capabilities = ModelCapabilityService(
+        llm_gateway=worker_llm_gateway,
+        audit_service=audit,
+    )
+    worker_llm_gateway.set_capability_checker(model_capabilities.assert_qualified)
     manager = AgentManager(
         memory_service=memory,
         audit_service=audit,

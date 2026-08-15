@@ -257,6 +257,10 @@ class StrategyCycleRequest(BaseModel):
     company_namespace: str | None = Field(default=None, max_length=200)
 
 
+class ModelCapabilityEvaluationRequest(BaseModel):
+    tasks: list[str] | None = None
+
+
 class DomainOperationsRunRequest(BaseModel):
     agent_id: str | None = Field(default=None, max_length=64)
     max_items: int = Field(default=1, ge=1, le=10)
@@ -1280,6 +1284,43 @@ async def run_autonomous_company_cycle(
 ):
     await require_authorization(request, principal, "run", "autonomous_company_cycle")
     result = await request.app.state.autonomous_company_cycle_service.run(trigger="owner_manual")
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.get("/model-capabilities")
+async def list_model_capabilities(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "model_capability")
+    service = request.app.state.model_capability_service
+    return {
+        "summary": await service.summary(),
+        "history": await service.list_evaluations(limit=100),
+    }
+
+
+@router.post("/model-capabilities/evaluate")
+async def evaluate_model_capabilities(
+    data: ModelCapabilityEvaluationRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "run",
+        "model_capability",
+        context=data.model_dump(),
+    )
+    try:
+        result = await request.app.state.model_capability_service.evaluate(
+            tasks=data.tasks,
+            actor=principal.email,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
     _clear_operations_readiness_cache(request)
     return result
 

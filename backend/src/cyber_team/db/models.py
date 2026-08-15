@@ -909,6 +909,31 @@ class CompanySource(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
 
+class ModelCapabilityEvaluation(Base):
+    __tablename__ = "model_capability_evaluations"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "task_type",
+            name="uq_model_capability_evaluations_run_task",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(64), index=True)
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    model: Mapped[str] = mapped_column(String(240), index=True)
+    task_type: Mapped[str] = mapped_column(String(100), index=True)
+    prompt_contract_version: Mapped[str] = mapped_column(String(80), index=True)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    threshold: Mapped[float] = mapped_column(Float, default=0.8)
+    cases: Mapped[list] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
 class CompanySignal(Base):
     __tablename__ = "company_signals"
     __table_args__ = (

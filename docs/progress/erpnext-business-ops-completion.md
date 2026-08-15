@@ -6729,3 +6729,29 @@
   - `backend/tests/test_llm_gateway.py`.
 - Next step:
   - Replace provider reachability as the model-readiness criterion with task-level capability evaluations for claim extraction, company-model synthesis, strategy, domain planning, and Observer review.
+
+### 2026-08-15T12:06:14Z — STEP-264 — Gated autonomous inference by task-level capability evidence
+- Files/services changed:
+  - Added durable `model_capability_evaluations` through additive migration `0020_model_capability_evaluations`.
+  - Added five cognitive task contracts: claim extraction, company-model synthesis, strategy generation, domain planning, and Observer review.
+  - Added owner-authorized model-capability list/evaluate APIs and mounted the same qualification service in FastAPI and Temporal worker service graphs.
+  - Extended the LLM gateway to route gated work only to a fresh-qualified provider/model pair, including qualification-aware local fallback, and to fail before inference when no route qualifies.
+  - Split model readiness into infrastructure reachability and cognitive task qualification; updated the standalone local benchmark to the same five contracts with schema-constrained output.
+- Commands run:
+  - Focused Ruff and Python compileall over changed source, API, worker, migration, script, and tests.
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest -q` across model capability, LLM gateway, autonomous readiness, operations API, company intelligence, strategy, and memory-protocol suites.
+  - `PYTHONPATH=src ../.venv-quality/bin/alembic upgrade head --sql` from `backend/`.
+- Result:
+  - All 88 focused tests pass; Ruff and compileall pass; Alembic emits PostgreSQL upgrade SQL through revision `0020_model_capability_evaluations`.
+  - A reachable model with missing, failed, or expired task evidence is no longer autonomy-ready.
+  - Qualified local fallback is selected when the hosted route lacks task evidence; an unqualified fallback is blocked before any provider invocation.
+- Evidence:
+  - `backend/src/cyber_team/operations/model_capabilities.py`.
+  - `backend/src/cyber_team/llm/gateway.py`.
+  - `backend/src/cyber_team/operations/readiness_v3.py`.
+  - `backend/alembic/versions/0020_model_capability_evaluations.py`.
+  - `backend/tests/test_model_capabilities.py`.
+  - `backend/tests/test_llm_gateway.py`.
+  - `scripts/benchmark-local-model.py`.
+- Next step:
+  - Add a typed autonomous action-candidate lifecycle so domain agents can propose evidence-backed actions that flow through Observer, OPA, approval, execution, and outcome assessment rather than stopping at advisory domain work.

@@ -825,6 +825,11 @@ class CompanyStrategyService:
                         sort_keys=True,
                     ),
                     agent_id=self.STRATEGY_AGENT_ID,
+                    **(
+                        {"capability_task": "strategy_generation"}
+                        if getattr(self._llm, "capability_gating_enabled", False)
+                        else {}
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001 - fail closed on provider errors.
                 return self._generation_failure(

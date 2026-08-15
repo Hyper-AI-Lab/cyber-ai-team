@@ -22,6 +22,53 @@ def owner_principal():
     )
 
 
+def test_model_capability_routes_expose_summary_history_and_evaluation(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    app.state.model_capability_service = AsyncMock()
+    app.state.model_capability_service.summary.return_value = {
+        "status": "ready",
+        "qualified": 5,
+        "required": 5,
+    }
+    app.state.model_capability_service.list_evaluations.return_value = {
+        "count": 5,
+        "items": [],
+    }
+    app.state.model_capability_service.evaluate.return_value = {
+        "run_id": "modelcaprun-1",
+        "status": "passed",
+    }
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+
+    with TestClient(app) as client:
+        listed = client.get("/api/operations/model-capabilities")
+        evaluated = client.post(
+            "/api/operations/model-capabilities/evaluate",
+            json={"tasks": ["claim_extraction"]},
+        )
+
+    assert listed.status_code == 200
+    assert listed.json()["summary"]["qualified"] == 5
+    assert evaluated.status_code == 200
+    assert evaluated.json()["status"] == "passed"
+    app.state.model_capability_service.evaluate.assert_awaited_once_with(
+        tasks=["claim_extraction"],
+        actor="owner@example.com",
+    )
+
+
 def test_readiness_compaction_preserves_summary_and_omits_embedded_backlogs():
     payload = {
         "status": "ready",

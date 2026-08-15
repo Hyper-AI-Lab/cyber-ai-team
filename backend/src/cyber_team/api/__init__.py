@@ -62,6 +62,7 @@ from cyber_team.operations.executive_briefing import ExecutiveBriefEmailService
 from cyber_team.operations.governor import OrchestrationGovernorService
 from cyber_team.operations.memory_conflicts import MemoryCanonicalConflictService
 from cyber_team.operations.memory_steward import MemoryStewardService
+from cyber_team.operations.model_capabilities import ModelCapabilityService
 from cyber_team.operations.outcomes import OutcomeLearningService
 from cyber_team.operations.owner_attention import OwnerAttentionNotificationService
 from cyber_team.operations.planning import AutonomousPlanningService
@@ -112,6 +113,13 @@ async def lifespan(app: FastAPI):
         audit_service=app.state.audit_service,
     )
     app.state.llm_gateway = LLMGateway()
+    app.state.model_capability_service = ModelCapabilityService(
+        llm_gateway=app.state.llm_gateway,
+        audit_service=app.state.audit_service,
+    )
+    app.state.llm_gateway.set_capability_checker(
+        app.state.model_capability_service.assert_qualified
+    )
     app.state.company_intelligence_service = CompanyIntelligenceService(
         llm_gateway=app.state.llm_gateway,
         memory_service=app.state.memory_service,
@@ -230,7 +238,8 @@ async def lifespan(app: FastAPI):
         audit_service=app.state.audit_service,
     )
     app.state.autonomous_company_readiness_service = AutonomousCompanyReadinessService(
-        llm_gateway=app.state.llm_gateway
+        llm_gateway=app.state.llm_gateway,
+        model_capability_service=app.state.model_capability_service,
     )
     app.state.orchestration_governor_service = OrchestrationGovernorService(
         agent_manager=app.state.agent_manager,

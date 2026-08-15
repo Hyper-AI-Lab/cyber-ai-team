@@ -1853,6 +1853,11 @@ class CompanyIntelligenceService:
                 agent_id=self.DISCOVERY_AGENT_ID,
                 max_tokens=128,
                 json_schema=CLAIM_EXTRACTION_SCHEMA,
+                **(
+                    {"capability_task": "claim_extraction"}
+                    if getattr(self._llm, "capability_gating_enabled", False)
+                    else {}
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - retain only a safe failure class.
             raise ClaimExtractionError(

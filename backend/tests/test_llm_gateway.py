@@ -416,3 +416,73 @@ async def test_local_invoke_uses_llama_cpp_schema_constrained_response_format(
 
     assert result == {"claims": []}
     assert seen["response_format"] == {"type": "json_object", "schema": schema}
+
+
+@pytest.mark.asyncio
+async def test_capability_gate_routes_to_qualified_local_model(monkeypatch):
+    monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)
+    monkeypatch.setattr(settings, "llm_local_fallback_enabled", True)
+    monkeypatch.setattr(settings, "llm_local_api_base", "http://llama:8080/v1")
+    monkeypatch.setattr(settings, "llm_local_model", "local/qualified-model")
+    monkeypatch.setattr(settings, "model_capability_enforcement_enabled", True)
+    providers = []
+    completion_models = []
+
+    async def checker(*, task_type, provider, model):
+        providers.append((task_type, provider, model))
+        if provider != "llama_cpp":
+            raise RuntimeError("primary model is not qualified")
+
+    async def fake_completion(**kwargs):
+        completion_models.append(kwargs["model"])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Qualified."))],
+            usage=SimpleNamespace(total_tokens=8),
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=fake_completion),
+    )
+    gateway = LLMGateway()
+    gateway.set_capability_checker(checker)
+
+    result = await gateway.invoke(
+        "System",
+        "Task",
+        capability_task="domain_planning",
+    )
+
+    assert result == "Qualified."
+    assert [item[1] for item in providers] == ["mistral", "llama_cpp"]
+    assert completion_models == ["local/qualified-model"]
+
+
+@pytest.mark.asyncio
+async def test_capability_gate_fails_closed_before_model_invocation(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "llama_cpp")
+    monkeypatch.setattr(settings, "llm_api_base", "http://llama:8080/v1")
+    monkeypatch.setattr(settings, "model_capability_enforcement_enabled", True)
+    completion = AsyncMock()
+
+    async def checker(**kwargs):
+        raise RuntimeError("task capability is missing")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=completion),
+    )
+    gateway = LLMGateway()
+    gateway.set_capability_checker(checker)
+
+    with pytest.raises(RuntimeError, match="capability is missing"):
+        await gateway.invoke(
+            "System",
+            "Task",
+            capability_task="observer_review",
+        )
+
+    completion.assert_not_awaited()
