@@ -7210,3 +7210,24 @@
   - `dist/promotions/staging/0.3.28-20260815-185945.json`.
 - Next step:
   - Run the identical live outcome-autonomy proof against the schema-constrained domain decision path.
+
+### 2026-08-15T19:13:51Z — STEP-287 — Closed the local action-selection output grammar
+- Files/services changed:
+  - Replaced the broad mandate-shaped selection response with a closed five-field contract: disposition, exact immutable reference, confidence, concise rationale, and bounded unknowns.
+  - Added trusted server-side expansion into the existing durable mandate assessment and governed action proposal shape.
+  - Removed schema-repair retries from immutable action selection; malformed or unavailable references now fail once and visibly.
+  - Reduced the trusted prompt projection and output ceiling while retaining memory recall and complete trace IDs.
+  - Versioned the universal role loop to v6 and added invalid-reference/no-action parser coverage.
+- Commands run:
+  - Live outcome-autonomy proof against staging `0.3.28`.
+  - llama.cpp token/timing and persisted work inspection.
+  - Focused 66-test Pytest suite, Ruff, compileall, and `git diff --check`.
+- Result:
+  - Release `0.3.28` reduced prompt evaluation to 448 tokens and completed the first model response in 282 seconds, but the open-ended response consumed the 128-token ceiling and was invalid JSON; one schema-repair call then timed out. No candidate or tool execution occurred.
+  - The v6 contract cannot emit nested plans, effects, or envelopes and is expanded only after exact schema and reference validation by trusted code.
+  - All 66 focused tests passed; lint, compilation, and diff hygiene passed.
+- Evidence:
+  - `dist/outcome-autonomy/outcome-autonomy-smoke-20260815T190034Z.json`.
+  - Failed work `work_3c51248f803a45638f824b0de1f68e58` in staging PostgreSQL.
+- Next step:
+  - Commit and push the closed selection grammar, verify/promote a new immutable release, and repeat the unchanged live acceptance scenario.

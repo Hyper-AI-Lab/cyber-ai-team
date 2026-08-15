@@ -95,9 +95,10 @@ but cannot be represented as an executive-ready model.
   expired options before Observer or policy review.
 - Use a bounded, schema-constrained action-selection contract for immutable options. The
   domain agent still recalls relevant memory and makes the business choice, while the
-  response is limited to rationale, confidence, unknowns, disposition, expected outcome,
-  and the exact option reference. This keeps local FOSS inference usable under constrained
-  compute without moving authority, evidence, impact, or tool parameters into model text.
+  response is limited to disposition, the exact option reference, confidence, one concise
+  rationale, and unknowns. Trusted server code expands this into the durable mandate result.
+  This keeps local FOSS inference usable under constrained compute without moving authority,
+  evidence, impact, expected effects, or tool parameters into model text.
 - Validate tool grants, readiness, parameter schema, mandate authority, evidence freshness,
   model capability, Observer consensus, OPA, impact thresholds, daily limits, and action
   probation before execution.

@@ -1792,14 +1792,11 @@ def action_candidate_assessment():
 def action_candidate_ref_assessment(candidate_ref: str):
     return json.dumps(
         {
-            "assessment": "The supplied action is supported by the available evidence.",
-            "confidence": 0.91,
-            "unknowns": [],
-            "recommended_action": "continue",
-            "expected_outcome": {"type": "verified_evidence_recalled"},
-            "role_state_claims": [],
-            "proposed_work": [],
+            "disposition": "select",
             "selected_action_candidate_ref": candidate_ref,
+            "confidence": 0.91,
+            "rationale": "The supplied action is supported by the available evidence.",
+            "unknowns": [],
         }
     )
 
@@ -1895,13 +1892,40 @@ async def test_domain_agent_selects_immutable_action_candidate_by_reference(
     assert stored.status == "executed"
     selection_call = manager.invoke_agent.await_args_list[0]
     assert selection_call.kwargs["memory_limit"] == 1
-    assert selection_call.kwargs["max_tokens"] == 128
+    assert selection_call.kwargs["max_tokens"] == 96
     assert selection_call.kwargs["temperature"] == 0.0
     assert selection_call.kwargs["json_schema"] == (
         portfolio_module.ACTION_SELECTION_RESULT_SCHEMA
     )
     assert "candidate-option:memory-read" in selection_call.args[1]
-    assert len(selection_call.args[1]) < 1800
+    assert len(selection_call.args[1]) < 1300
+
+
+def test_action_selection_parser_rejects_unavailable_reference():
+    with pytest.raises(ValueError, match="unavailable action reference"):
+        WorkPortfolioService._parse_action_selection_result(
+            action_candidate_ref_assessment("candidate-option:invented"),
+            available_refs={"candidate-option:memory-read"},
+        )
+
+
+def test_action_selection_parser_expands_no_action_without_work():
+    result = WorkPortfolioService._parse_action_selection_result(
+        json.dumps(
+            {
+                "disposition": "no_action",
+                "selected_action_candidate_ref": "",
+                "confidence": 0.82,
+                "rationale": "The evidence does not justify the supplied action.",
+                "unknowns": ["customer impact"],
+            }
+        ),
+        available_refs={"candidate-option:memory-read"},
+    )
+
+    assert result["recommended_action"] == "no_action"
+    assert result["proposed_work"] == []
+    assert result["expected_outcome"] == {"type": "documented_no_action"}
 
 
 @pytest.mark.asyncio
