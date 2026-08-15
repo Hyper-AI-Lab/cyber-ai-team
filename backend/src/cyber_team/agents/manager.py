@@ -296,6 +296,8 @@ class AgentManager:
         source_type: str = "agent_invocation",
         trace_metadata: dict[str, Any] | None = None,
         report_role_gap: bool = True,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         agent = await self.get_agent(agent_id)
         if not agent:
@@ -326,6 +328,11 @@ class AgentManager:
         # Build prompt and invoke LLM
         system_prompt = agent["instructions"] + memory_context.prompt_context
         try:
+            invocation_options: dict[str, Any] = {}
+            if temperature is not None:
+                invocation_options["temperature"] = temperature
+            if max_tokens is not None:
+                invocation_options["max_tokens"] = max_tokens
             result = await self._llm.invoke(
                 system_prompt=system_prompt,
                 user_message=task,
@@ -336,6 +343,7 @@ class AgentManager:
                     if getattr(self._llm, "capability_gating_enabled", False)
                     else {}
                 ),
+                **invocation_options,
             )
             if self._metrics:
                 self._metrics.record_llm_invocation(agent_id, "success", source_type)

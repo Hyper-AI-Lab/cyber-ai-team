@@ -103,6 +103,20 @@ class PolicyMemory(FakeMemory):
         }
 
 
+class LongPolicyMemory(PolicyMemory):
+    async def recall_with_policy(self, data):
+        result = await super().recall_with_policy(data)
+        result["items"] = [
+            {
+                **result["items"][0],
+                "id": f"memory-{index}",
+                "content": f"memory-{index}:" + ("x" * 1_000),
+            }
+            for index in range(8)
+        ]
+        return result
+
+
 def agent():
     return {
         "id": "ops_agent",
@@ -162,6 +176,20 @@ async def test_memory_protocol_falls_back_to_legacy_namespace_recall():
     assert context.read_policy["strategy"] == "agent-namespace-only"
     assert context.recalled_memory_ids == ["legacy-memory-1"]
     assert "[agent_private] Legacy namespace memory." in context.prompt_context
+
+
+@pytest.mark.asyncio
+async def test_memory_protocol_bounds_reasoning_context_without_losing_trace_ids():
+    memory = LongPolicyMemory()
+    context = await AgentMemoryProtocol(memory).prepare_invocation(
+        agent=agent(),
+        task="Assess the current operating evidence.",
+        invocation_id="invoke-bounded",
+    )
+
+    assert len(context.recalled_memory_ids) == 8
+    assert context.prompt_context.count("[agent_private]") == 4
+    assert len(context.prompt_context) < 1_200
 
 
 @pytest.mark.asyncio

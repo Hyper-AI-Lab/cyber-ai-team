@@ -89,6 +89,10 @@ but cannot be represented as an executive-ready model.
   result, policy result, approval binding, execution record, and outcome link.
 - Let domain agents propose only allowlisted typed actions. Model output cannot grant tool
   authority or bypass deterministic validation.
+- When the control plane already has an immutable typed action option, let an agent select
+  it by opaque reference instead of asking the model to repeat risk, evidence, and impact
+  fields. Resolve the reference server-side and reject missing, ambiguous, altered, or
+  expired options before Observer or policy review.
 - Validate tool grants, readiness, parameter schema, mandate authority, evidence freshness,
   model capability, Observer consensus, OPA, impact thresholds, daily limits, and action
   probation before execution.

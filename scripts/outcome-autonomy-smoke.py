@@ -111,14 +111,11 @@ def choose_agent(
     return str(selected["agent_id"])
 
 
-def typed_candidate_description(candidate: dict[str, Any]) -> str:
+def typed_candidate_description(candidate_ref: str, candidate: dict[str, Any]) -> str:
     return (
-        "Evaluate this staging acceptance evidence against the active mandate. Return a "
-        "grounded assessment and exactly one proposed_work item with work_type "
-        "action_candidate. Copy the following typed action_candidate exactly; it is a "
-        "proposal for deterministic Observer and policy review, not permission to "
-        "execute: "
-        + json.dumps(candidate, sort_keys=True, separators=(",", ":"))
+        "Evaluate this staging evidence against the active mandate. If the supplied "
+        f"{candidate['tool_name']} option is supported, set selected_action_candidate_ref "
+        f"to {candidate_ref}. Do not copy its envelope or execute it."
     )
 
 
@@ -132,12 +129,13 @@ def create_candidate_work(
     risk_level: str,
 ) -> str:
     evidence_id = candidate["evidence_ids"][0]
+    candidate_ref = f"{run_key}:{suffix}"
     status, result = api.request(
         "POST",
         "/api/operations/work-items",
         {
             "title": f"Outcome autonomy {suffix} acceptance {run_key}",
-            "description": typed_candidate_description(candidate),
+            "description": typed_candidate_description(candidate_ref, candidate),
             "work_type": "domain_assessment",
             "assigned_agent_id": agent_id,
             "payload": {
@@ -145,6 +143,9 @@ def create_candidate_work(
                 "evidence_ids": [evidence_id],
                 "acceptance_run": run_key,
                 "external_side_effects": False,
+                "action_candidate_options": [
+                    {"id": candidate_ref, "candidate": candidate}
+                ],
             },
             "acceptance_criteria": [
                 "typed_action_candidate_recorded",

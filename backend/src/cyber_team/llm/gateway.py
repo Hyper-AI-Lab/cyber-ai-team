@@ -129,7 +129,9 @@ class LLMGateway:
             metadata["trace_id"] = conversation_id
             metadata["session_id"] = conversation_id
 
-        attempts = max(1, settings.llm_retry_attempts)
+        # Replaying the same deterministic local prompt after a CPU timeout only
+        # consumes the full timeout again. Hosted transient failures retain retries.
+        attempts = 1 if route["local"] else max(1, settings.llm_retry_attempts)
         last_error: Exception | None = None
         for attempt in range(attempts):
             try:

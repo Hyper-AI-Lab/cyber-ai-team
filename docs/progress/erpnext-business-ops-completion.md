@@ -7098,3 +7098,28 @@
   - Control evidence emitted by `ModelCapabilityService.evaluate`.
 - Next step:
   - Run the focused staging outcome-autonomy smoke to prove generated action, Observer/policy gate, execution, outcome assessment, reflection, graph linkage, and high-impact blocking end to end.
+
+### 2026-08-15T17:32:40Z — STEP-281 — Bounded real mandate reasoning and removed deterministic local retry waste
+- Files/services changed:
+  - Added immutable action-option references so an agent selects a control-plane candidate without re-emitting or altering its risk envelope.
+  - Added bounded authoritative-context and evidence projections for role reasoning while retaining the full context for grounding, hashing, audit, and persisted outcomes.
+  - Bounded recalled memory text in prompts without dropping recalled IDs or trace coverage.
+  - Made mandate reasoning deterministic with a 384-token output ceiling and prevented identical local prompts from retrying after a CPU timeout.
+  - Updated the outcome-autonomy smoke to supply validated action options and require agent selection by exact reference.
+  - Versioned the universal role loop to v4.
+- Commands run:
+  - `scripts/outcome-autonomy-smoke.py` against live staging release `0.3.26`.
+  - Read-only work-item, memory-trace, core, and llama.cpp runtime inspection.
+  - `PYTHONPATH=backend/src .venv-quality/bin/pytest -q backend/tests/test_work_portfolio.py backend/tests/test_llm_gateway.py backend/tests/test_memory_protocol.py`.
+  - Focused Ruff, compileall, script compilation, and `git diff --check`.
+- Result:
+  - The first live outcome smoke passed release, owner login, finite-signal, extraction, mandate, and 5/5 model gates, then failed visibly when a roughly 2,050-token real mandate prompt exceeded the 300-second local bound.
+  - The prior generic retry policy replayed the same local prompt three times and held the work lease for roughly 15 minutes; the work ultimately closed as `failed` with `TimeoutError` and a trace rather than fake success.
+  - The corrected design lets the LLM make the business choice while the trusted control plane retains the complete typed envelope and performs all mandate, tool, evidence, Observer, OPA, approval, and execution checks.
+  - All 64 focused tests passed; lint, compilation, and diff hygiene passed.
+- Evidence:
+  - `dist/outcome-autonomy/outcome-autonomy-smoke-20260815T170541Z.json`.
+  - Failed work `work_5396ba8818444c50bd3a417376a1ffe5` and memory trace `86ef8135-fc82-4693-a746-2cec1f1793bd` retained in staging.
+  - `backend/src/cyber_team/operations/work_portfolio.py` and `scripts/outcome-autonomy-smoke.py`.
+- Next step:
+  - Commit and push the bounded role-loop contract, build a new immutable release, and repeat the same end-to-end outcome-autonomy proof.

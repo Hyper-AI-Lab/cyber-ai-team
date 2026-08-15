@@ -547,6 +547,9 @@ async def test_role_loop_completes_advisory_work_without_side_effects(
     assert trace["authoritative_context_hash"]
     task = manager.invoke_agent.await_args.args[1]
     assert "AUTHORITATIVE CURRENT OPERATING CONTEXT" in task
+    assert len(task) < 4_000
+    assert manager.invoke_agent.await_args.kwargs["temperature"] == 0.0
+    assert manager.invoke_agent.await_args.kwargs["max_tokens"] == 384
     context = result["items"][0]["actual_outcome"]["authoritative_context"]
     assert context["role_family"] == "knowledge"
     assert context["active_family_agent_count"] == 1
@@ -1786,6 +1789,21 @@ def action_candidate_assessment():
     )
 
 
+def action_candidate_ref_assessment(candidate_ref: str):
+    return json.dumps(
+        {
+            "assessment": "The supplied action is supported by the available evidence.",
+            "confidence": 0.91,
+            "unknowns": [],
+            "recommended_action": "continue",
+            "expected_outcome": {"type": "verified_evidence_recalled"},
+            "role_state_claims": [],
+            "proposed_work": [],
+            "selected_action_candidate_ref": candidate_ref,
+        }
+    )
+
+
 @pytest.mark.asyncio
 async def test_domain_agent_action_candidate_flows_through_observer_policy_and_tool(
     portfolio_session_factory,
@@ -1827,6 +1845,54 @@ async def test_domain_agent_action_candidate_flows_through_observer_policy_and_t
     assert candidate.policy_decision["source"] == "test_opa"
     assert work.actual_outcome["action_executed"] is True
     assert tools.calls[0][1]["_action_envelope"]["observer_status"] == "agreed"
+
+
+@pytest.mark.asyncio
+async def test_domain_agent_selects_immutable_action_candidate_by_reference(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    candidate_ref = "candidate-option:memory-read"
+    candidate = json.loads(action_candidate_assessment())["proposed_work"][0][
+        "action_candidate"
+    ]
+    manager = AsyncMock()
+    manager.invoke_agent.return_value = action_candidate_ref_assessment(candidate_ref)
+    tools = FakeActionTools()
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        company_intelligence_service=FakeIntelligence(),
+        tool_registry=tools,
+        action_policy_service=AllowActionPolicy(),
+    )
+    await service.ensure_active_agent_mandates()
+    await service.create_work_item(
+        title="Choose a governed evidence action",
+        description="Select the supplied candidate by reference.",
+        work_type="domain_assessment",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={
+            "evidence_ids": ["ev-1"],
+            "action_candidate_options": [
+                {"id": candidate_ref, "candidate": candidate}
+            ],
+        },
+        acceptance_criteria=["next_action_recorded"],
+        idempotency_key="typed-action-ref-parent",
+    )
+
+    proposed = await service.run_domain_loop("knowledge-agent", prepare=False)
+    executed = await service.run_domain_loop("knowledge-agent", prepare=False)
+
+    candidate_id = proposed["items"][0]["actual_outcome"]["action_candidate_ids"][0]
+    async with portfolio_session_factory() as session:
+        stored = await session.get(AutonomousActionCandidate, candidate_id)
+    assert proposed["items"][0]["status"] == "completed"
+    assert executed["items"][0]["status"] == "completed"
+    assert stored.tool_name == "memory_recall"
+    assert stored.params == {"query": "verified evidence"}
+    assert stored.status == "executed"
 
 
 @pytest.mark.asyncio

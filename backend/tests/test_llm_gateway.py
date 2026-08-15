@@ -256,6 +256,35 @@ async def test_zero_spend_policy_routes_to_local_fallback(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_local_timeout_is_not_retried_with_identical_prompt(monkeypatch):
+    monkeypatch.setattr(settings, "mistral_api_key", "")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", False)
+    monkeypatch.setattr(settings, "llm_external_spend_limit_usd", 0.0)
+    monkeypatch.setattr(settings, "llm_local_fallback_enabled", True)
+    monkeypatch.setattr(settings, "llm_local_api_base", "http://llama:8080/v1")
+    monkeypatch.setattr(settings, "llm_local_model", "local/test-open-model")
+    monkeypatch.setattr(settings, "llm_retry_attempts", 3)
+    monkeypatch.setattr(settings, "llm_retry_backoff_seconds", 0)
+    calls = 0
+
+    async def fake_completion(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise TimeoutError
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=fake_completion),
+    )
+
+    with pytest.raises(TimeoutError):
+        await LLMGateway().invoke("System", "Task", agent_id="ops")
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_retryable_hosted_failure_routes_to_local_fallback(monkeypatch):
     monkeypatch.setattr(settings, "mistral_api_key", "test-key")
     monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)

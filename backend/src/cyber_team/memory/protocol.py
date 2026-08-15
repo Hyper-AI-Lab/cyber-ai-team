@@ -280,9 +280,9 @@ class AgentMemoryProtocol:
                 f"- {excluded_count} memory item(s) were excluded because canonical "
                 "ERPNext/company-context records supersede or conflict with them.",
             )
-        for memory in context.items[:8]:
+        for memory in context.items[:4]:
             scope = memory.get("scope") or "agent_private"
-            content = str(memory.get("content") or "").strip()
+            content = self.excerpt(str(memory.get("content") or "").strip(), 180)
             if content:
                 lines.append(f"- [{scope}] {content}")
         return "\n".join(lines)
