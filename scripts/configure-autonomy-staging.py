@@ -9,7 +9,6 @@ from pathlib import Path
 
 
 VALUES = {
-    "APP_VERSION": "0.3.23",
     "COMPANY_AUTONOMY_ENABLED": "true",
     "COMPANY_AUTONOMY_TEMPORAL_SCHEDULE_ENABLED": "true",
     "COMPANY_AUTONOMY_SIGNAL_WORKFLOW_ID": "cyberteam-autonomous-company-signals-v4",
@@ -54,7 +53,7 @@ def main() -> int:
     parser.add_argument(
         "--enable-local-llm-fallback",
         action="store_true",
-        help="Enable the retained local Qwen fallback after its service is validated.",
+        help="Enable the task-qualified local FOSS fallback after validation.",
     )
     parser.add_argument(
         "--action-policy-canary-email-recipient",
@@ -82,8 +81,12 @@ def main() -> int:
         updates.update(
             {
                 "LLM_LOCAL_FALLBACK_ENABLED": "true",
-                "LLM_LOCAL_MODEL": "openai/ggml-org/Qwen3-1.7B-GGUF:Q4_K_M",
-                "LLM_LOCAL_MODEL_REPO": "ggml-org/Qwen3-1.7B-GGUF:Q4_K_M",
+                "LLM_LOCAL_MODEL": (
+                    "openai/mistralai/Ministral-3-3B-Instruct-2512-GGUF:Q4_K_M"
+                ),
+                "LLM_LOCAL_MODEL_REPO": (
+                    "mistralai/Ministral-3-3B-Instruct-2512-GGUF:Q4_K_M"
+                ),
                 "LLM_LOCAL_TIMEOUT_SECONDS": "180",
                 "LLM_LOCAL_MAX_TOKENS": "1024",
                 "LOCAL_MODEL_CACHE_VOLUME": "cyber-team_local-model-cache",

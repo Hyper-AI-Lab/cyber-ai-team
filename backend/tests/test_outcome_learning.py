@@ -9,6 +9,8 @@ from cyber_team.config import settings
 from cyber_team.db import Base
 from cyber_team.db.models import (
     Agent,
+    AgentMandate,
+    AutonomousActionCandidate,
     BusinessWorkItem,
     OperationGraphEdge,
     OperationGraphNode,
@@ -140,6 +142,125 @@ async def test_terminal_outcome_batches_advance_past_assessed_work(
         assert (
             await session.execute(select(func.count(OutcomeAssessment.id)))
         ).scalar_one() == 5
+
+
+@pytest.mark.asyncio
+async def test_specific_outcome_assessment_records_reflection_and_is_idempotent(
+    outcome_session_factory,
+):
+    work_id = "work-specific-outcome"
+    async with outcome_session_factory() as session:
+        session.add(
+            work_item(
+                work_id,
+                actual_outcome={"result": "recorded"},
+            )
+        )
+        await session.commit()
+    service = OutcomeLearningService(action_policy_service=FakePolicy())
+
+    first = await service.assess_specific_work(work_id)
+    second = await service.assess_specific_work(work_id)
+
+    assert first["assessed"] == 1
+    assert first["reflection"] is not None
+    assert second["assessed"] == 0
+    assert second["reflection"] is None
+    assert second["assessment"]["duplicate"] is True
+
+
+@pytest.mark.asyncio
+async def test_action_candidate_is_linked_to_execution_outcome(
+    outcome_session_factory,
+):
+    parent = work_item("work-action-parent")
+    execution = work_item(
+        "work-action-execution",
+        actual_outcome={"action_executed": True, "side_effects_executed": False},
+    )
+    execution.payload = {"action_candidate_id": "action-candidate-outcome"}
+    async with outcome_session_factory() as session:
+        session.add(
+            Agent(
+                id="action-agent",
+                role_family="operations",
+                role_name="Action Agent",
+                instructions="Execute safe internal work.",
+                tools=["company_profile_read"],
+                memory_namespace="company:test:operations",
+                status="active",
+            )
+        )
+        session.add(parent)
+        session.add(execution)
+        await session.flush()
+        mandate = AgentMandate(
+            id="mandate-action-outcome",
+            agent_id="action-agent",
+            version=1,
+            status="active",
+            objective_ids=[],
+            authority={"read_tools": ["company_profile_read"]},
+            budget={},
+            inputs=[],
+            outputs=[],
+            kpi_keys=[],
+            cadence={},
+            escalation_rules=[],
+            metadata_={},
+            created_by="test",
+        )
+        session.add(mandate)
+        await session.flush()
+        session.add(
+            AutonomousActionCandidate(
+                id="action-candidate-outcome",
+                company_namespace="company:test",
+                parent_work_item_id=parent.id,
+                agent_id="action-agent",
+                mandate_id=mandate.id,
+                action_class="internal_read",
+                tool_name="company_profile_read",
+                params={},
+                action_envelope={"expected_effect": "Read company profile."},
+                evidence_ids=["evidence-action"],
+                expected_outcome={"profile_read": True},
+                status="executed",
+                risk_level="low",
+                confidence=0.95,
+                reversible=True,
+                external_side_effect=False,
+                execution_work_item_id=execution.id,
+                result={"success": True},
+                idempotency_key="action-candidate-outcome",
+            )
+        )
+        await session.commit()
+    service = OutcomeLearningService(action_policy_service=FakePolicy())
+
+    result = await service.assess_specific_work(execution.id)
+
+    async with outcome_session_factory() as session:
+        candidate = await session.get(
+            AutonomousActionCandidate, "action-candidate-outcome"
+        )
+        candidate_node = (
+            await session.execute(
+                select(OperationGraphNode).where(
+                    OperationGraphNode.source_id == candidate.id
+                )
+            )
+        ).scalar_one()
+        edges = (
+            await session.execute(
+                select(OperationGraphEdge).where(
+                    OperationGraphEdge.source_node_id == candidate_node.id
+                )
+            )
+        ).scalars().all()
+    assert candidate.result["outcome_assessment_id"] == result["assessment"]["id"]
+    assert candidate.result["outcome_recommendation"] == "continue"
+    assert {edge.edge_type for edge in edges} == {"compiled_to", "measured_by"}
 
 
 @pytest.mark.asyncio

@@ -64,6 +64,17 @@
     "typescript": "Apache-2.0",
     "vitest": "MIT"
   },
+  "models": [
+    {
+      "match": "mistralai/Ministral-3-3B-Instruct-2512-GGUF",
+      "license": "Apache-2.0",
+      "purpose": "task-qualified local company reasoning and zero-spend continuity",
+      "cost_model": "free_self_hosted",
+      "self_hostable": true,
+      "hosted_service_dependency": false,
+      "data_sharing_risk": "local_processing_only"
+    }
+  ],
   "docker": [
     {"match": "python:3.12-slim", "license": "Python-2.0", "purpose": "backend build and runtime"},
     {"match": "node:20-alpine", "license": "MIT", "purpose": "owner-console build and runtime"},

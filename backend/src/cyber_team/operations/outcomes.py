@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from cyber_team.config import settings
 from cyber_team.db import async_session
 from cyber_team.db.models import (
+    AutonomousActionCandidate,
     BusinessWorkItem,
     ExecutiveReflection,
     OperationGraphEdge,
@@ -75,6 +76,20 @@ class OutcomeLearningService:
             "status": "completed",
             "assessed": len(created),
             "items": created,
+            "reflection": reflection,
+            "remediation": remediation,
+        }
+
+    async def assess_specific_work(self, work_item_id: str) -> dict[str, Any]:
+        """Assess one terminal work item without waiting behind an older batch."""
+        assessment = await self.assess_work_item(work_item_id)
+        created = not assessment.get("duplicate")
+        reflection = await self._reflect([assessment]) if created else None
+        remediation = await self._open_repeated_failure_outsourcing()
+        return {
+            "status": "completed",
+            "assessed": int(created),
+            "assessment": assessment,
             "reflection": reflection,
             "remediation": remediation,
         }
@@ -340,6 +355,69 @@ class OutcomeLearningService:
                     metadata_={},
                 )
             )
+            candidate_id = str(
+                (work.payload or {}).get("action_candidate_id") or ""
+            )
+            if candidate_id:
+                candidate = await session.get(AutonomousActionCandidate, candidate_id)
+                candidate_node = (
+                    await session.execute(
+                        select(OperationGraphNode).where(
+                            OperationGraphNode.idempotency_key
+                            == f"autonomous_action_candidate:{candidate_id}"
+                        )
+                    )
+                ).scalar_one_or_none()
+                if candidate and not candidate_node:
+                    candidate_node = OperationGraphNode(
+                        id=f"opnode_{uuid.uuid4().hex}",
+                        node_type="action_candidate",
+                        title=f"Action candidate: {candidate.tool_name}"[:240],
+                        summary=str(
+                            (candidate.action_envelope or {}).get("expected_effect")
+                            or "Governed autonomous action candidate."
+                        )[:2000],
+                        source_type="autonomous_action_candidate",
+                        source_id=candidate.id,
+                        agent_id=candidate.agent_id,
+                        tool_name=candidate.tool_name,
+                        risk_level=candidate.risk_level,
+                        confidence=candidate.confidence,
+                        impact_score=0.0,
+                        memory_namespace=candidate.company_namespace,
+                        tags=[candidate.action_class, candidate.tool_name],
+                        metadata_={
+                            "parent_work_item_id": candidate.parent_work_item_id,
+                            "mandate_id": candidate.mandate_id,
+                        },
+                        idempotency_key=f"autonomous_action_candidate:{candidate.id}",
+                    )
+                    session.add(candidate_node)
+                    await session.flush()
+                if candidate and candidate_node:
+                    candidate.result = {
+                        **(candidate.result or {}),
+                        "outcome_assessment_id": assessment["id"],
+                        "outcome_recommendation": assessment["recommendation"],
+                    }
+                    session.add_all(
+                        [
+                            OperationGraphEdge(
+                                id=f"opedge_{uuid.uuid4().hex}",
+                                source_node_id=candidate_node.id,
+                                target_node_id=work_node.id,
+                                edge_type="compiled_to",
+                                metadata_={},
+                            ),
+                            OperationGraphEdge(
+                                id=f"opedge_{uuid.uuid4().hex}",
+                                source_node_id=candidate_node.id,
+                                target_node_id=outcome_node.id,
+                                edge_type="measured_by",
+                                metadata_={},
+                            ),
+                        ]
+                    )
             await session.commit()
 
     async def _open_repeated_failure_outsourcing(self) -> dict[str, Any]:

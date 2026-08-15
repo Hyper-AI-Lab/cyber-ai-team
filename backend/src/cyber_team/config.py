@@ -120,7 +120,9 @@ class Settings(BaseSettings):
     llm_external_spend_limit_usd: float = 0.0
     llm_local_fallback_enabled: bool = False
     llm_local_api_base: str = "http://llama-cpp:8080/v1"
-    llm_local_model: str = "openai/ggml-org/Qwen3-1.7B-GGUF:Q4_K_M"
+    llm_local_model: str = (
+        "openai/mistralai/Ministral-3-3B-Instruct-2512-GGUF:Q4_K_M"
+    )
     llm_local_api_key: str = ""
     llm_local_timeout_seconds: float = 180.0
     llm_local_max_tokens: int = 1024

@@ -113,6 +113,36 @@ def test_action_candidate_route_is_owner_authorized(monkeypatch):
     authorization.assert_awaited_once()
 
 
+def test_specific_outcome_assessment_is_owner_authorized(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    app.state.outcome_learning_service = AsyncMock()
+    app.state.outcome_learning_service.assess_specific_work.return_value = {
+        "status": "completed",
+        "assessed": 1,
+        "assessment": {"work_item_id": "work-1"},
+    }
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    authorization = AsyncMock(return_value=None)
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        authorization,
+    )
+
+    response = TestClient(app).post("/api/operations/outcomes/work-1/assess")
+
+    assert response.status_code == 200
+    assert response.json()["assessment"]["work_item_id"] == "work-1"
+    app.state.outcome_learning_service.assess_specific_work.assert_awaited_once_with(
+        "work-1"
+    )
+    authorization.assert_awaited_once()
+
+
 def test_readiness_compaction_preserves_summary_and_omits_embedded_backlogs():
     payload = {
         "status": "ready",

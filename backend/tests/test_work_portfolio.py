@@ -1362,6 +1362,40 @@ async def test_cancel_generated_work_cancels_descendants_and_records_evidence(
         acceptance_criteria=["reviewed"],
         idempotency_key="cancel-unrelated",
     )
+    async with portfolio_session_factory() as session:
+        mandate = (
+            await session.execute(
+                select(AgentMandate).where(AgentMandate.agent_id == "knowledge-agent")
+            )
+        ).scalar_one()
+        session.add(
+            AutonomousActionCandidate(
+                id="action-candidate-cancelled",
+                company_namespace="company:test",
+                parent_work_item_id=parent["id"],
+                agent_id="knowledge-agent",
+                mandate_id=mandate.id,
+                action_class="internal_read",
+                tool_name="company_profile_read",
+                params={},
+                action_envelope={},
+                evidence_ids=["evidence-cancel"],
+                expected_outcome={},
+                status="ready",
+                risk_level="low",
+                confidence=0.95,
+                reversible=True,
+                external_side_effect=False,
+                execution_work_item_id=child["id"],
+                idempotency_key="action-candidate-cancelled",
+            )
+        )
+        linked_child = await session.get(BusinessWorkItem, child["id"])
+        linked_child.payload = {
+            **(linked_child.payload or {}),
+            "action_candidate_id": "action-candidate-cancelled",
+        }
+        await session.commit()
 
     result = await service.cancel_work_item(
         parent["id"],
@@ -1372,17 +1406,23 @@ async def test_cancel_generated_work_cancels_descendants_and_records_evidence(
 
     assert result["cancelled_count"] == 3
     assert result["cancelled_ids"] == sorted([parent["id"], child["id"], grandchild["id"]])
+    assert result["closed_action_candidate_ids"] == ["action-candidate-cancelled"]
     async with portfolio_session_factory() as session:
         cancelled = [
             await session.get(BusinessWorkItem, item_id) for item_id in result["cancelled_ids"]
         ]
         independent = await session.get(BusinessWorkItem, unrelated["id"])
+        candidate = await session.get(
+            AutonomousActionCandidate, "action-candidate-cancelled"
+        )
     assert all(item.status == "cancelled" for item in cancelled)
     assert all(
         item.actual_outcome["classification"] == "owner_cancelled_invalid_generated_work"
         for item in cancelled
     )
     assert independent.status == "ready"
+    assert candidate.status == "blocked"
+    assert candidate.error == "owner_cancelled_linked_work"
     audit.record_control_evidence.assert_awaited_once()
 
 

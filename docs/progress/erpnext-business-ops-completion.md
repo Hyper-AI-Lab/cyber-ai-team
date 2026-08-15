@@ -6860,3 +6860,106 @@
   - `scripts/migration-rehearsal.sh` output on 2026-08-15.
 - Next step:
   - Build the exact release SHA, back up staging, apply migrations, deploy core/worker/UI, and execute live evidence-to-outcome acceptance checks.
+
+### 2026-08-15T14:20:51Z — STEP-269 — Verified release candidate 0.3.24 end to end
+- Files/services changed:
+  - Added the reviewed MIT license entry for `@vitejs/plugin-react` to the release policy inventory before this run; no application source changed during the gate.
+  - Built exact `cyber-team-core:0.3.24` and `cyber-team-ui:0.3.24` artifacts for commit `68ff1a74bbc85e768c1f4225e21cd32370302d3f`.
+- Commands run:
+  - `RELEASE_VERSION=0.3.24 RELEASE_ALLOW_DIRTY=1 SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`.
+- Result:
+  - Ruff and all 410 backend tests passed; compileall and the complete Alembic offline chain passed.
+  - Backend dependency audit, secret scan, Google Cloud isolation, FOSS resource policy, Compose validation, and diff hygiene passed.
+  - Frontend production build, typecheck, all 31 tests, and npm runtime audit passed with zero vulnerabilities.
+  - Real PostgreSQL migration rehearsals passed from both legacy pre-Alembic and representative seeded `0001` states through `0021_autonomous_action_candidates`.
+  - The isolated Compose login/dashboard/API smoke passed and cleaned up its temporary project.
+  - Trivy found zero OS or language-package vulnerabilities in both versioned images.
+- Evidence:
+  - `dist/releases/0.3.24.json`.
+  - `cyber-team-core:0.3.24` and `cyber-team-ui:0.3.24` local image artifacts.
+  - Release-gate output captured on 2026-08-15.
+- Next step:
+  - Validate the staging promotion plan, capture a PostgreSQL backup, deploy exact release `0.3.24`, and verify the live schema/build identity before outcome-autonomy acceptance.
+
+### 2026-08-15T14:24:29Z — STEP-270 — Promoted release 0.3.24 to staging with backup-first controls
+- Files/services changed:
+  - Captured a fresh staging PostgreSQL backup before replacing application containers.
+  - Promoted exact `cyber-team-core:0.3.24` and `cyber-team-ui:0.3.24` images to the `cyberteam-staging` core, worker, and UI services.
+  - Applied the additive schema chain through `0021_autonomous_action_candidates` during controlled startup.
+- Commands run:
+  - `RELEASE_VERSION=0.3.24 ./scripts/promote-staging.sh` in dry-run mode.
+  - `RELEASE_VERSION=0.3.24 PROMOTE_DRY_RUN=0 ./scripts/promote-staging.sh`.
+  - Staging Compose service, image, schema-version, `/health`, and `/ready` verification commands.
+- Result:
+  - Backup-first promotion completed successfully and the public login/dashboard/API/WebSocket/tool-readiness smoke passed.
+  - The smoke created an email-tool approval and rejected it without replaying a live side effect.
+  - Core and worker run `cyber-team-core:0.3.24`; UI runs `cyber-team-ui:0.3.24`.
+  - `/health` reports version `0.3.24` and build SHA `68ff1a74bbc85e768c1f4225e21cd32370302d3f`; `/ready` reports PostgreSQL, Redis, Qdrant, Temporal, and OPA ready.
+  - The live database records Alembic revision `0021_autonomous_action_candidates`.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.24-20260815-142121.dump` (147 MiB).
+  - `dist/releases/0.3.24.json`.
+  - `dist/promotions/staging/0.3.24-20260815-142341.json`.
+- Next step:
+  - Run live evidence-to-outcome acceptance: inspect readiness/backlogs, qualify the live model route by autonomy task, exercise finite signal disposition, prove one governed internal action plus one gated action, and verify outcome/reflection graph linkage.
+
+### 2026-08-15T15:32:56Z — STEP-271 — Qualified a zero-spend local model by autonomy task
+- Files/services changed:
+  - Replaced vocabulary-ambiguous model probes with bounded structured task contracts for claim extraction, company-model synthesis, strategy generation, domain planning, and Observer prompt-injection review.
+  - Defined the prompt-injection classification policy explicitly without weakening the all-fields pass requirement.
+  - Selected the official Apache-2.0 `mistralai/Ministral-3-3B-Instruct-2512-GGUF:Q4_K_M` artifact after repository-specific evaluation; rejected Qwen3 1.7B and Qwen3 4B as executive defaults after task-contract failures.
+  - Standardized the selected model across application, Compose, staging/production example, and idempotent staging configuration defaults.
+  - Extended the release resource-policy gate with model license, cost, self-hostability, hosted-dependency, and data-sharing metadata validation.
+- Commands run:
+  - Repository-specific local-model benchmarks through the loopback-only pinned llama.cpp endpoint.
+  - Focused model capability tests, Ruff, Python compilation, FOSS resource-policy check, and diff hygiene.
+- Result:
+  - Ministral passed 5/5 task contracts with no threshold reduction; the corrected report score is 1.0.
+  - Mean benchmark latency was 126,058.5 ms while PostgreSQL outcome backfill competed for the four-core host, so readiness may qualify the route but operational evidence must continue to report its constrained throughput.
+  - No automatic paid-provider upgrade or external-spend path was added.
+- Evidence:
+  - `dist/local-model-benchmarks/ministral-3-3b-task-contract-v2-policy-20260815.json`.
+  - `backend/src/cyber_team/operations/model_capabilities.py`.
+  - `config/foss-resource-inventory.json`.
+  - `scripts/benchmark-local-model.py` and `scripts/resource-policy-check.py`.
+- Next step:
+  - Deploy the qualified prompt contract/model identity and persist a fresh 5/5 capability run through Cyber-Team's live API.
+
+### 2026-08-15T15:32:56Z — STEP-272 — Closed governed actions into measured outcomes
+- Files/services changed:
+  - Added an owner-authorized direct outcome-assessment route for a specific terminal work item so a new consequential action does not wait behind historical backlog.
+  - Linked autonomous action-candidate nodes to compiled tool work and resulting outcome assessments in the operation graph.
+  - Persisted outcome assessment and recommendation identifiers back onto the originating action candidate.
+  - Made owner cancellation of generated tool work close the linked nonterminal action candidate with explicit cancellation evidence instead of leaving a phantom pending action.
+  - Added a focused staging acceptance harness that proves one safe internal action is generated, Observer/policy reviewed, executed, assessed, reflected, and graph-linked while a $501 ERPNext action is gated and cleaned up before mutation.
+- Commands run:
+  - Focused API, outcome-learning, work-portfolio, and model capability test suites.
+  - Ruff, Python compilation, acceptance-script compilation, and diff hygiene.
+- Result:
+  - All 73 initially focused tests passed; the expanded set including soak tests passed 75 tests before lint cleanup, and all changed-file lint checks now pass.
+  - Repeated direct assessment is idempotent, and action-candidate cancellation and graph linkage have regression coverage.
+  - The live acceptance is intentionally pending deployment of these exact changes.
+- Evidence:
+  - `backend/src/cyber_team/operations/outcomes.py`.
+  - `backend/src/cyber_team/operations/work_portfolio.py`.
+  - `backend/src/cyber_team/api/routes/operations.py`.
+  - `scripts/outcome-autonomy-smoke.py`.
+- Next step:
+  - Build and deploy the exact release, then run the focused outcome-autonomy smoke against staging.
+
+### 2026-08-15T15:32:56Z — STEP-273 — Made the staging soak outcome-autonomy aware
+- Files/services changed:
+  - Extended each strict soak sample beyond health/login/aggregate readiness to verify finite signals and events, bounded extraction, complete mandates, bounded portfolio work, current outcome learning, fresh task-level model qualification, current action candidates, and durable Temporal delivery.
+  - Added focused tests proving stale outcomes or an under-qualified model fail the soak even when infrastructure endpoints respond.
+- Commands run:
+  - `PYTHONPATH=src ../.venv-quality/bin/pytest -q tests/test_staging_soak_script.py` as part of the expanded 75-test focused run.
+  - Ruff, Python compilation, and diff hygiene over the soak script and test.
+- Result:
+  - A green health endpoint can no longer satisfy the 24-hour closure gate while the evidence-to-outcome autonomy chain is degraded.
+  - Historical staging outcome backfill remains visible and blocking; 7,291 historical records were assessed during bounded live batches before this checkpoint, with the remaining append-only backlog continuing to drain.
+- Evidence:
+  - `scripts/staging-soak.py`.
+  - `backend/tests/test_staging_soak_script.py`.
+  - Live `/api/operations/readiness` evidence captured on 2026-08-15.
+- Next step:
+  - Complete the full release gate, backup-first staging promotion, focused live acceptance, bounded historical outcome drain, and strict 24-hour outcome soak.

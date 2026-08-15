@@ -53,6 +53,7 @@ def main() -> int:
     _check_python_requirements(failures, inventory)
     _check_node_lock(failures, warnings, inventory)
     _check_docker_images(failures, warnings, inventory)
+    _check_local_models(failures, inventory)
     _check_static_tool_proposals(failures)
     if warnings:
         print("Resource policy warnings:")
@@ -180,6 +181,59 @@ def _check_docker_images(failures: list[str], warnings: list[str], inventory: di
                 lowered = image.lower()
                 if any(marker in lowered for marker in DENIED_LICENSE_MARKERS):
                     failures.append(f"{path}:{lineno} uses denied image `{image}`.")
+
+
+def _check_local_models(failures: list[str], inventory: dict) -> None:
+    reviewed = inventory.get("models") or []
+    for item in reviewed:
+        for field in (
+            "match",
+            "license",
+            "purpose",
+            "cost_model",
+            "self_hostable",
+            "hosted_service_dependency",
+            "data_sharing_risk",
+        ):
+            if field not in item:
+                failures.append(f"Model inventory entry omits `{field}`: {item}")
+        if item.get("cost_model") != "free_self_hosted":
+            failures.append(f"Local model is not zero-spend/self-hosted: {item.get('match')}")
+        if item.get("self_hostable") is not True:
+            failures.append(f"Local model is not self-hostable: {item.get('match')}")
+        if item.get("hosted_service_dependency") is not False:
+            failures.append(
+                f"Local model requires a hosted service: {item.get('match')}"
+            )
+        license_name = str(item.get("license") or "").lower()
+        if not any(marker in license_name for marker in ALLOWED_LICENSE_MARKERS):
+            failures.append(
+                f"Local model has an unreviewed license: {item.get('match')}={license_name}"
+            )
+
+    references: list[tuple[Path, int, str]] = []
+    files = [
+        ROOT / "deploy" / "environments" / "staging.env.example",
+        ROOT / "deploy" / "environments" / "production.env.example",
+        ROOT / "docker-compose.yml",
+        ROOT / "scripts" / "configure-autonomy-staging.py",
+    ]
+    pattern = re.compile(
+        r"(?:LLM_LOCAL_MODEL_REPO(?:\}|\"|')?\s*(?::[-=]|=|:\s*)\s*[\"']?)"
+        r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)"
+    )
+    for path in files:
+        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+            match = pattern.search(line)
+            if match:
+                references.append((path, lineno, match.group(1)))
+    if not references:
+        failures.append("No local model repository defaults were found for policy review.")
+    for path, lineno, model in references:
+        if not any(str(item.get("match") or "").startswith(model) for item in reviewed):
+            failures.append(
+                f"{path}:{lineno} local model `{model}` lacks reviewed FOSS metadata."
+            )
 
 
 def _image_from_line(line: str) -> str | None:

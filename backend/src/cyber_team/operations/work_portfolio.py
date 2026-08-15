@@ -35,6 +35,7 @@ from cyber_team.db.models import (
     ObserverReview,
     OperatingKPIDefinition,
     OperatingKPIObservation,
+    OperationGraphNode,
     RoleGap,
     RoleManifest,
 )
@@ -1311,6 +1312,37 @@ class WorkPortfolioService:
                 item.completed_at = now
                 item.updated_at = now
                 cancelled.append(item)
+            candidate_ids = {
+                str((item.payload or {}).get("action_candidate_id") or "")
+                for item in cancelled
+                if (item.payload or {}).get("action_candidate_id")
+            }
+            closed_candidates = []
+            if candidate_ids:
+                action_candidates = (
+                    (
+                        await session.execute(
+                            select(AutonomousActionCandidate).where(
+                                AutonomousActionCandidate.id.in_(candidate_ids)
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for candidate in action_candidates:
+                    if candidate.status in {"executed", "blocked"}:
+                        continue
+                    candidate.status = "blocked"
+                    candidate.error = "owner_cancelled_linked_work"
+                    candidate.result = {
+                        **(candidate.result or {}),
+                        "cancellation_reason": clean_reason[:4000],
+                        "cancelled_by": actor[:200],
+                        "cancelled_at": now.isoformat(),
+                    }
+                    candidate.completed_at = now
+                    closed_candidates.append(candidate.id)
             await session.commit()
             result = {
                 "status": "completed",
@@ -1319,6 +1351,7 @@ class WorkPortfolioService:
                 "include_descendants": include_descendants,
                 "cancelled_count": len(cancelled),
                 "cancelled_ids": sorted(item.id for item in cancelled),
+                "closed_action_candidate_ids": sorted(closed_candidates),
                 "reason": clean_reason[:4000],
             }
         if self._audit:
@@ -2654,6 +2687,52 @@ class WorkPortfolioService:
                             idempotency_key=candidate_key,
                         )
                     )
+                    if settings.operation_graph_indexing_enabled:
+                        session.add(
+                            OperationGraphNode(
+                                id=f"opnode_{uuid.uuid4().hex}",
+                                node_type="action_candidate",
+                                title=(
+                                    f"Action candidate: {candidate_payload['tool_name']}"
+                                )[:240],
+                                summary=candidate_payload["expected_effect"][:2000],
+                                source_type="autonomous_action_candidate",
+                                source_id=candidate_id,
+                                agent_id=parent.assigned_agent_id,
+                                tool_name=candidate_payload["tool_name"],
+                                risk_level=str(
+                                    readiness.get("risk_level") or "low"
+                                )[:20],
+                                confidence=candidate_payload["confidence"],
+                                impact_score=min(
+                                    1.0,
+                                    max(
+                                        0.0,
+                                        candidate_payload["financial_exposure_usd"]
+                                        / max(
+                                            1.0,
+                                            settings.governor_financial_action_limit_usd,
+                                        ),
+                                    ),
+                                ),
+                                memory_namespace=parent.company_namespace,
+                                tags=[
+                                    candidate_payload["action_class"],
+                                    candidate_payload["tool_name"],
+                                    "external_side_effect"
+                                    if candidate_payload["external_side_effect"]
+                                    else "safe_internal",
+                                ],
+                                metadata_={
+                                    "parent_work_item_id": parent.id,
+                                    "mandate_id": mandate.id,
+                                    "contract_version": ACTION_CANDIDATE_CONTRACT_VERSION,
+                                },
+                                idempotency_key=(
+                                    f"autonomous_action_candidate:{candidate_id}"
+                                ),
+                            )
+                        )
                     action_candidate_ids.append(candidate_id)
                     pending_candidate_ids.append(candidate_id)
                     continue

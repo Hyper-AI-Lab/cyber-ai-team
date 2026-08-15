@@ -1803,6 +1803,29 @@ async def assess_terminal_work(
     return await request.app.state.outcome_learning_service.assess_terminal_work(limit=limit)
 
 
+@router.post("/outcomes/{work_item_id}/assess")
+async def assess_specific_terminal_work(
+    work_item_id: str,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "run",
+        "outcome_assessment",
+        work_item_id,
+    )
+    try:
+        result = await request.app.state.outcome_learning_service.assess_specific_work(
+            work_item_id
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    _clear_operations_readiness_cache(request)
+    return result
+
+
 @router.get("/executive-brief")
 async def get_executive_brief(
     request: Request,

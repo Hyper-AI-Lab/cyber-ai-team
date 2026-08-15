@@ -112,12 +112,14 @@ class Api:
         )
         readiness_latency_ms = round((time.monotonic() - readiness_started) * 1000, 2)
         blockers = readiness.get("blockers") or []
+        autonomy_ok, autonomy = autonomy_gate(readiness)
         readiness_ok = (
             login_status == 200
             and bool(token)
             and readiness_status == 200
             and readiness.get("status") == "ready"
             and not blockers
+            and autonomy_ok
         )
         return {
             "sampled_at": utc_now(),
@@ -139,7 +141,69 @@ class Api:
                 "blockers": blockers,
                 "latency_ms": readiness_latency_ms,
             },
+            "outcome_autonomy": autonomy,
         }
+
+
+def autonomy_gate(readiness: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+    """Require the complete evidence-to-outcome control loop on every soak sample."""
+    autonomous = readiness.get("autonomous_company") or {}
+    sections = autonomous.get("sections") or {}
+    signals = sections.get("company_signals") or {}
+    extraction = sections.get("claim_extraction") or {}
+    mandates = sections.get("mandates") or {}
+    events = sections.get("business_events") or {}
+    portfolio = sections.get("work_portfolio") or {}
+    outcomes = sections.get("outcome_learning") or {}
+    candidates = sections.get("action_candidates") or {}
+    model = sections.get("model_availability") or {}
+    capabilities = model.get("capabilities") or {}
+    delivery = sections.get("temporal_delivery") or {}
+    checks = {
+        "autonomous_company": autonomous.get("status") == "ready",
+        "signals_finite": signals.get("status") == "ready"
+        and signals.get("stale_pending") == 0
+        and signals.get("undispositioned_processed") == 0,
+        "extraction_bounded": extraction.get("status") == "ready"
+        and extraction.get("expired_leases") == 0
+        and extraction.get("stale_failed") == 0,
+        "mandates_complete": mandates.get("status") == "ready"
+        and mandates.get("missing_mandates") == 0,
+        "events_finite": events.get("status") == "ready"
+        and events.get("stale_unexplained") == 0
+        and events.get("unexplained") == 0,
+        "portfolio_bounded": portfolio.get("status") in {"ready", "bounded"}
+        and not portfolio.get("saturated_domains")
+        and not portfolio.get("recovery_required_domains"),
+        "outcomes_current": outcomes.get("status") == "ready"
+        and outcomes.get("stale_unassessed_work") == 0,
+        "model_task_qualified": model.get("status") == "ready"
+        and capabilities.get("status") == "ready"
+        and capabilities.get("qualified") == capabilities.get("required"),
+        "action_candidates_current": candidates.get("stale_proposed") == 0,
+        "durable_delivery": delivery.get("status") == "ready",
+    }
+    return all(checks.values()), {
+        "status": "passed" if all(checks.values()) else "failed",
+        "checks": checks,
+        "signal_counts": signals.get("counts") or {},
+        "signal_dispositions": signals.get("disposition_counts") or {},
+        "outcome_counts": {
+            "terminal_work": outcomes.get("terminal_work"),
+            "assessed_work": outcomes.get("assessed_work"),
+            "unassessed_work": outcomes.get("unassessed_work"),
+            "stale_unassessed_work": outcomes.get("stale_unassessed_work"),
+        },
+        "action_candidate_counts": candidates.get("counts") or {},
+        "model": {
+            "provider": model.get("provider"),
+            "name": model.get("model"),
+            "status": model.get("status"),
+            "capability_status": capabilities.get("status"),
+            "qualified": capabilities.get("qualified"),
+            "required": capabilities.get("required"),
+        },
+    }
 
 
 def parse_args() -> argparse.Namespace:
