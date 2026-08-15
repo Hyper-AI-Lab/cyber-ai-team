@@ -145,6 +145,7 @@ async def lifespan(app: FastAPI):
         audit_service=app.state.audit_service,
         company_intelligence_service=app.state.company_intelligence_service,
         tool_registry=app.state.tool_registry,
+        action_policy_service=app.state.action_policy_service,
     )
     app.state.outcome_learning_service = OutcomeLearningService(
         action_policy_service=app.state.action_policy_service,

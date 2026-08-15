@@ -1325,6 +1325,21 @@ async def evaluate_model_capabilities(
     return result
 
 
+@router.get("/action-candidates")
+async def list_autonomous_action_candidates(
+    request: Request,
+    status: str | None = None,
+    limit: int = 200,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "autonomous_action_candidate")
+    items = await request.app.state.work_portfolio_service.list_action_candidates(
+        status=status,
+        limit=limit,
+    )
+    return {"count": len(items), "items": items}
+
+
 @router.post("/domain-loops/run")
 async def run_domain_operations(
     data: DomainOperationsRunRequest,

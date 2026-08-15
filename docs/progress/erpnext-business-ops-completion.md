@@ -6755,3 +6755,30 @@
   - `scripts/benchmark-local-model.py`.
 - Next step:
   - Add a typed autonomous action-candidate lifecycle so domain agents can propose evidence-backed actions that flow through Observer, OPA, approval, execution, and outcome assessment rather than stopping at advisory domain work.
+
+### 2026-08-15T12:27:52Z — STEP-265 — Added governed autonomous action execution lifecycle
+- Files/services changed:
+  - Added durable `autonomous_action_candidates` through additive migration `0021_autonomous_action_candidates`.
+  - Extended domain-agent planning with a strict typed action contract covering tool, parameters, evidence, expected outcome, confidence, reversibility, risk, and side-effect classification.
+  - Added deterministic tool grant/readiness checks, evidence-subset validation, credential-parameter rejection, read-only Observer review, OPA action-envelope evaluation, exact approval waiting/resume, and candidate execution/result state transitions.
+  - Added owner-authorized `GET /api/operations/action-candidates` and readiness counts for proposed, approval-required, executed, blocked, and stale action candidates.
+  - Added service and API regression tests for autonomous internal execution, approval wait/resume, and unsafe credential-bearing proposals.
+- Commands run:
+  - Focused Pytest over work portfolio, action policy/workflow compiler, readiness, and Operations API suites.
+  - Focused Ruff and Python compileall over changed backend source, migration, and tests.
+  - `PYTHONPATH=src ../.venv-quality/bin/alembic upgrade head --sql` from `backend/`.
+  - `git diff --check`.
+- Result:
+  - All 83 broad focused tests pass, followed by 42 service/API tests after the route assertion was added; Ruff, compileall, and diff hygiene pass.
+  - Alembic emits a complete PostgreSQL upgrade through revision `0021_autonomous_action_candidates`.
+  - Domain-agent work can now become an auditable, evidence-backed action that is reviewed, policy-evaluated, approval-gated when required, executed through the registered tool path, and available to outcome learning; it no longer stops at an advisory recommendation.
+- Evidence:
+  - `backend/src/cyber_team/operations/work_portfolio.py`.
+  - `backend/src/cyber_team/db/models.py`.
+  - `backend/src/cyber_team/operations/readiness_v3.py`.
+  - `backend/src/cyber_team/api/routes/operations.py`.
+  - `backend/alembic/versions/0021_autonomous_action_candidates.py`.
+  - `backend/tests/test_work_portfolio.py`.
+  - `backend/tests/test_api_operations.py`.
+- Next step:
+  - Eliminate audit/self-observation feedback churn and prove that every accepted company signal reaches one finite, explicit disposition without manufacturing recursive evidence.

@@ -14,6 +14,7 @@ from cyber_team.db.models import (
     ActionClassPolicy,
     Agent,
     AgentMandate,
+    AutonomousActionCandidate,
     BusinessEvent,
     BusinessEventDelivery,
     BusinessWorkItem,
@@ -164,7 +165,14 @@ class AutonomousCompanyReadinessService:
                     )
                     .where(
                         BusinessWorkItem.status.in_(
-                            {"proposed", "ready", "leased", "blocked_dependency", "unassigned"}
+                            {
+                                "proposed",
+                                "ready",
+                                "leased",
+                                "blocked_dependency",
+                                "unassigned",
+                                "waiting_approval",
+                            }
                         )
                     )
                     .group_by(Agent.role_family)
@@ -193,6 +201,20 @@ class AutonomousCompanyReadinessService:
             ).scalar_one_or_none()
             latest_outcome = await self._latest(
                 session, OutcomeAssessment, OutcomeAssessment.created_at
+            )
+            action_candidate_counts = await self._counts(
+                session,
+                AutonomousActionCandidate.status,
+            )
+            stale_action_candidates = int(
+                (
+                    await session.execute(
+                        select(func.count(AutonomousActionCandidate.id)).where(
+                            AutonomousActionCandidate.status == "proposed",
+                            AutonomousActionCandidate.created_at <= stale_before,
+                        )
+                    )
+                ).scalar_one()
             )
             terminal_work = int(
                 (
@@ -496,6 +518,29 @@ class AutonomousCompanyReadinessService:
                 ),
             },
             "outcome_learning": outcome_learning,
+            "action_candidates": {
+                "status": (
+                    "stale_proposed"
+                    if stale_action_candidates
+                    else "active"
+                    if action_candidate_counts
+                    else "idle"
+                ),
+                "blocking": stale_action_candidates > 0,
+                "counts": action_candidate_counts,
+                "stale_proposed": stale_action_candidates,
+                "approval_required": action_candidate_counts.get("approval_required", 0),
+                "executed": action_candidate_counts.get("executed", 0),
+                "blocked": action_candidate_counts.get("blocked", 0),
+                "contract_version": "autonomous-action-candidate-v1",
+                "detail": (
+                    "One or more action candidates were not reviewed within the window."
+                    if stale_action_candidates
+                    else "Typed action candidates are durably reviewed and tracked."
+                    if action_candidate_counts
+                    else "No domain action candidate has been proposed yet."
+                ),
+            },
             "strategy": strategy,
             "workflow_compiler": workflows,
             "action_probation": probation,

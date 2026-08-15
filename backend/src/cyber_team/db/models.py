@@ -1346,6 +1346,66 @@ class BusinessWorkItem(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class AutonomousActionCandidate(Base):
+    __tablename__ = "autonomous_action_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "idempotency_key",
+            name="uq_autonomous_action_candidates_idempotency_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    company_namespace: Mapped[str] = mapped_column(String(200), index=True)
+    parent_work_item_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("business_work_items.id"),
+        index=True,
+    )
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id"), index=True)
+    mandate_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("agent_mandates.id"),
+        index=True,
+    )
+    action_class: Mapped[str] = mapped_column(String(120), index=True)
+    tool_name: Mapped[str] = mapped_column(String(100), index=True)
+    params: Mapped[dict] = mapped_column(JSON, default=dict)
+    action_envelope: Mapped[dict] = mapped_column(JSON, default=dict)
+    evidence_ids: Mapped[list] = mapped_column(JSON, default=list)
+    expected_outcome: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(30), default="proposed", index=True)
+    risk_level: Mapped[str] = mapped_column(String(20), default="low", index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    reversible: Mapped[bool] = mapped_column(Boolean, default=False)
+    external_side_effect: Mapped[bool] = mapped_column(Boolean, default=False)
+    observer_review_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("observer_reviews.id"),
+        nullable=True,
+        index=True,
+    )
+    policy_decision: Mapped[dict] = mapped_column(JSON, default=dict)
+    approval_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("approval_requests.id"),
+        nullable=True,
+        index=True,
+    )
+    execution_work_item_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("business_work_items.id"),
+        nullable=True,
+        index=True,
+    )
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(240), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
 class BusinessWorkItemDependency(Base):
     __tablename__ = "business_work_item_dependencies"
     __table_args__ = (

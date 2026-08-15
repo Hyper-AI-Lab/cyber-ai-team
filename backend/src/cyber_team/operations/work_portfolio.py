@@ -17,6 +17,8 @@ from cyber_team.db import async_session
 from cyber_team.db.models import (
     Agent,
     AgentMandate,
+    ApprovalRequest,
+    AutonomousActionCandidate,
     BusinessEvent,
     BusinessEventDelivery,
     BusinessEventDisposition,
@@ -30,6 +32,7 @@ from cyber_team.db.models import (
     MemoryEntry,
     MemoryStewardFinding,
     MemoryTrace,
+    ObserverReview,
     OperatingKPIDefinition,
     OperatingKPIObservation,
     RoleGap,
@@ -91,6 +94,7 @@ EVENT_FAMILY_MAP = {
 }
 
 SAFE_AGENT_PROPOSED_WORK_TYPES = {
+    "action_candidate",
     "analysis",
     "capability_proposal",
     "domain_assessment",
@@ -121,6 +125,7 @@ NONTERMINAL_WORK_STATUSES = {
     "leased",
     "blocked_dependency",
     "unassigned",
+    "waiting_approval",
 }
 TERMINAL_WORK_STATUSES = {"completed", "failed", "blocked", "cancelled"}
 PROPOSAL_STOP_WORDS = {
@@ -171,6 +176,27 @@ ROLE_STATE_CLAIM_STATES = {
 }
 ROLE_STATE_CLAIM_SCOPES = {"current", "historical", "hypothetical"}
 ROLE_STATE_CLAIM_CONTRACT_VERSION = "role-state-claims-v1"
+ACTION_CANDIDATE_CONTRACT_VERSION = "autonomous-action-candidate-v1"
+ACTION_CANDIDATE_FIELDS = {
+    "tool_name",
+    "params",
+    "action_class",
+    "expected_effect",
+    "evidence_ids",
+    "confidence",
+    "reversible",
+    "financial_exposure_usd",
+    "financial_daily_usd",
+    "recipients",
+    "data_sensitivity",
+    "external_side_effect",
+    "fresh_backup",
+    "benchmark_fresh",
+    "memory_coverage_fresh",
+}
+SENSITIVE_ACTION_PARAMETER_PATTERN = re.compile(
+    r"(?i)(password|secret|token|api[_-]?key|credential|authorization)"
+)
 
 
 class WorkPortfolioService:
@@ -185,11 +211,13 @@ class WorkPortfolioService:
         audit_service=None,
         company_intelligence_service=None,
         tool_registry=None,
+        action_policy_service=None,
     ) -> None:
         self._agent_manager = agent_manager
         self._audit = audit_service
         self._intelligence = company_intelligence_service
         self._tools = tool_registry
+        self._action_policy = action_policy_service
 
     async def ensure_active_agent_mandates(
         self,
@@ -1278,7 +1306,9 @@ class WorkPortfolioService:
                         select(BusinessWorkItem)
                         .where(
                             BusinessWorkItem.assigned_agent_id == agent_id,
-                            BusinessWorkItem.status.in_({"ready", "leased", "blocked_dependency"}),
+                            BusinessWorkItem.status.in_(
+                                {"ready", "leased", "blocked_dependency", "waiting_approval"}
+                            ),
                             (BusinessWorkItem.lease_expires_at.is_(None))
                             | (BusinessWorkItem.lease_expires_at <= now),
                         )
@@ -1291,6 +1321,45 @@ class WorkPortfolioService:
                 .all()
             )
             for item in candidates:
+                if item.status == "waiting_approval":
+                    approval = (
+                        await session.get(ApprovalRequest, item.approval_id)
+                        if item.approval_id
+                        else None
+                    )
+                    approval_executable = bool(
+                        approval
+                        and approval.status == "approved"
+                        and not approval.consumed_at
+                        and (
+                            approval.expires_at is None
+                            or approval.expires_at > now
+                        )
+                    )
+                    approval_pending = bool(
+                        approval
+                        and approval.status == "pending"
+                        and (
+                            approval.expires_at is None
+                            or approval.expires_at > now
+                        )
+                    )
+                    if approval_pending:
+                        continue
+                    if not approval_executable:
+                        item.approval_id = None
+                        candidate_id = str(
+                            (item.payload or {}).get("action_candidate_id") or ""
+                        )
+                        candidate = (
+                            await session.get(AutonomousActionCandidate, candidate_id)
+                            if candidate_id
+                            else None
+                        )
+                        if candidate:
+                            candidate.approval_id = None
+                            candidate.status = "approval_required"
+                    item.status = "ready"
                 dependencies = (
                     (
                         await session.execute(
@@ -1373,11 +1442,17 @@ class WorkPortfolioService:
             "benchmark, capability, policy, approval, workflow, or context states. "
             "Each proposed_work item may contain "
             "title, description, work_type, priority, acceptance_criteria, and "
-            "expected_outcome, plus optional target_role_gap_id. work_type must be "
+            "expected_outcome, plus optional target_role_gap_id or action_candidate. "
+            "work_type must be "
             "one of: "
             f"{', '.join(sorted(SAFE_AGENT_PROPOSED_WORK_TYPES))}. "
-            "Never include tool calls, credentials, executable "
-            "instructions, or external side effects."
+            "For action_candidate only, action_candidate must contain tool_name, params, "
+            "action_class, expected_effect, evidence_ids, confidence, reversible, "
+            "financial_exposure_usd, financial_daily_usd, recipients, data_sensitivity, "
+            "external_side_effect, fresh_backup, benchmark_fresh, and "
+            "memory_coverage_fresh. Cite only available_evidence_ids. This is a proposal, "
+            "not permission or an execution instruction. Never include credentials and "
+            "never claim that an external side effect already occurred."
         )
         try:
             result = await self._agent_manager.invoke_agent(
@@ -1444,8 +1519,9 @@ class WorkPortfolioService:
                 "not represent KPI, benchmark, capability, policy, approval, workflow, "
                 "or context state as a role_state_claim. proposed_work remains limited "
                 f"to these work types: {', '.join(sorted(SAFE_AGENT_PROPOSED_WORK_TYPES))}. "
-                "No tool calls, credentials, executable instructions, or external "
-                "side effects are allowed.\n"
+                "An action_candidate may describe a registered tool proposal using the "
+                "typed action_candidate contract, but it is not execution permission. "
+                "No credentials or claims of completed external side effects are allowed.\n"
                 "AUTHORITATIVE CONTEXT: "
                 f"{json.dumps(authoritative_context, sort_keys=True, default=str)[:16000]}\n"
                 "PREVIOUS CANDIDATE (UNTRUSTED): "
@@ -1542,6 +1618,7 @@ class WorkPortfolioService:
                 "reused_work_item_ids": [],
                 "suppressed_proposals": [],
                 "rejected_proposals": [],
+                "action_candidate_ids": [],
             }
             if grounding["status"] == "blocked"
             else await self._create_agent_proposed_work(item, assessment)
@@ -1550,6 +1627,7 @@ class WorkPortfolioService:
         created_ids = proposal_result["created_work_item_ids"]
         reused_ids = proposal_result["reused_work_item_ids"]
         suppressed = proposal_result["suppressed_proposals"]
+        action_candidate_ids = proposal_result.get("action_candidate_ids", [])
         requested_follow_up = bool(
             assessment["proposed_work"] or assessment["rejected_proposals"] or suppressed
         )
@@ -1558,7 +1636,9 @@ class WorkPortfolioService:
             "revise",
             "escalate",
         }
-        follow_up_accounted_for = bool(created_ids or reused_ids or suppressed)
+        follow_up_accounted_for = bool(
+            created_ids or reused_ids or suppressed or action_candidate_ids
+        )
         completion_blocked = grounding["status"] == "blocked" or (
             requested_follow_up and follow_up_required and not follow_up_accounted_for
         )
@@ -1576,6 +1656,7 @@ class WorkPortfolioService:
             "created_work_item_ids": created_ids,
             "reused_work_item_ids": reused_ids,
             "suppressed_proposals": suppressed,
+            "action_candidate_ids": action_candidate_ids,
             "grounding": grounding,
             "grounding_recovery": grounding_recovery,
             "authoritative_context": authoritative_context,
@@ -1717,6 +1798,17 @@ class WorkPortfolioService:
                 for gap in sorted(unresolved_gaps, key=lambda value: value.id)
             ],
             "family_work_status_counts": status_counts,
+            "available_evidence_ids": list(
+                dict.fromkeys(
+                    value
+                    for value in [
+                        item.event_id,
+                        str((item.payload or {}).get("source_id") or "") or None,
+                        *list((item.payload or {}).get("evidence_ids") or []),
+                    ]
+                    if value
+                )
+            )[:100],
             "latest_kpis": {
                 key: {
                     "observation_id": observation.id,
@@ -2216,6 +2308,22 @@ class WorkPortfolioService:
                 "_action_envelope": envelope,
             },
         )
+        output = result.output if isinstance(result.output, dict) else {}
+        if not result.success and output.get("approval_required"):
+            return await self._park_tool_work_for_approval(
+                item.id,
+                candidate_id=str((item.payload or {}).get("action_candidate_id") or ""),
+                approval_id=output.get("approval_id"),
+                result=output,
+                error=result.error,
+            )
+        await self._record_action_candidate_execution(
+            str((item.payload or {}).get("action_candidate_id") or ""),
+            success=bool(result.success),
+            result=result.output,
+            error=result.error,
+            approval_id=item.approval_id,
+        )
         return await self._finish_work(
             item.id,
             status="completed" if result.success else "blocked",
@@ -2227,6 +2335,71 @@ class WorkPortfolioService:
             },
             error=result.error,
         )
+
+    async def _park_tool_work_for_approval(
+        self,
+        work_item_id: str,
+        *,
+        candidate_id: str,
+        approval_id: str | None,
+        result: dict[str, Any],
+        error: str | None,
+    ) -> dict[str, Any]:
+        async with async_session() as session:
+            item = await session.get(BusinessWorkItem, work_item_id)
+            if not item:
+                raise ValueError("Work item no longer exists")
+            item.status = "waiting_approval" if approval_id else "ready"
+            item.approval_id = approval_id
+            item.actual_outcome = {
+                "approval_required": True,
+                "approval_id": approval_id,
+                "tool_name": (item.payload or {}).get("tool_name"),
+                "error": error,
+                "approval_detail": result,
+                "side_effects_executed": False,
+            }
+            item.lease_owner = None
+            item.lease_expires_at = None
+            item.updated_at = utc_now()
+            candidate = (
+                await session.get(AutonomousActionCandidate, candidate_id)
+                if candidate_id
+                else None
+            )
+            if candidate:
+                candidate.status = "approval_required"
+                candidate.approval_id = approval_id
+                candidate.result = {"approval_detail": result}
+                candidate.error = error
+            await session.commit()
+            return self._work_to_dict(item)
+
+    async def _record_action_candidate_execution(
+        self,
+        candidate_id: str,
+        *,
+        success: bool,
+        result: Any,
+        error: str | None,
+        approval_id: str | None,
+    ) -> None:
+        if not candidate_id:
+            return
+        async with async_session() as session:
+            candidate = await session.get(AutonomousActionCandidate, candidate_id)
+            if not candidate:
+                return
+            candidate.status = "executed" if success else "blocked"
+            candidate.result = {
+                "tool_result": result,
+                "action_executed": success,
+                "side_effects_executed": bool(success and candidate.external_side_effect),
+            }
+            candidate.error = error
+            candidate.approval_id = approval_id or candidate.approval_id
+            candidate.completed_at = utc_now()
+            await session.commit()
 
     async def _create_agent_proposed_work(
         self,
@@ -2253,6 +2426,8 @@ class WorkPortfolioService:
         created_ids: list[str] = []
         reused_ids: list[str] = []
         suppressed: list[dict[str, Any]] = []
+        action_candidate_ids: list[str] = []
+        pending_candidate_ids: list[str] = []
         cooldown_start = utc_now() - timedelta(hours=self._proposal_cooldown_hours())
         async with async_session() as session:
             agent = await session.get(Agent, parent.assigned_agent_id)
@@ -2332,6 +2507,112 @@ class WorkPortfolioService:
                 or parent.id
             )
             for index, proposal in enumerate(assessment["proposed_work"][:3]):
+                if proposal["work_type"] == "action_candidate":
+                    candidate_payload = proposal["action_candidate"]
+                    candidate_key = self._hash(
+                        {
+                            "contract": ACTION_CANDIDATE_CONTRACT_VERSION,
+                            "company_namespace": parent.company_namespace,
+                            "agent_id": parent.assigned_agent_id,
+                            "tool_name": candidate_payload["tool_name"],
+                            "params": candidate_payload["params"],
+                            "evidence_ids": candidate_payload["evidence_ids"],
+                            "expected_effect": candidate_payload["expected_effect"],
+                        }
+                    )
+                    existing_candidate = (
+                        await session.execute(
+                            select(AutonomousActionCandidate).where(
+                                AutonomousActionCandidate.idempotency_key == candidate_key
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if existing_candidate:
+                        action_candidate_ids.append(existing_candidate.id)
+                        if existing_candidate.execution_work_item_id:
+                            reused_ids.append(existing_candidate.execution_work_item_id)
+                        suppressed.append(
+                            {
+                                "index": index,
+                                "reason": "duplicate_action_candidate",
+                                "action_candidate_id": existing_candidate.id,
+                                "status": existing_candidate.status,
+                            }
+                        )
+                        continue
+                    validation_error = self._validate_action_candidate_proposal(
+                        parent=parent,
+                        agent=agent,
+                        mandate=mandate,
+                        candidate=candidate_payload,
+                    )
+                    if validation_error:
+                        assessment["rejected_proposals"].append(
+                            {
+                                "index": index,
+                                "reason": validation_error,
+                                "work_type": "action_candidate",
+                            }
+                        )
+                        continue
+                    readiness = self._tools.get_tool_readiness(
+                        candidate_payload["tool_name"],
+                        candidate_payload["params"],
+                    )
+                    candidate_id = f"actioncand_{uuid.uuid4().hex}"
+                    envelope = {
+                        "action_class": candidate_payload["action_class"],
+                        "actor": parent.assigned_agent_id,
+                        "actor_type": "agent",
+                        "target_type": "tool",
+                        "target_id": candidate_payload["tool_name"],
+                        "expected_effect": candidate_payload["expected_effect"],
+                        "evidence_ids": candidate_payload["evidence_ids"],
+                        "confidence": candidate_payload["confidence"],
+                        "reversible": candidate_payload["reversible"],
+                        "financial_exposure_usd": candidate_payload[
+                            "financial_exposure_usd"
+                        ],
+                        "financial_daily_usd": candidate_payload["financial_daily_usd"],
+                        "recipients": candidate_payload["recipients"],
+                        "data_sensitivity": candidate_payload["data_sensitivity"],
+                        "external_side_effect": candidate_payload[
+                            "external_side_effect"
+                        ],
+                        "fresh_backup": candidate_payload["fresh_backup"],
+                        "observer_status": "not_reviewed",
+                        "benchmark_fresh": candidate_payload["benchmark_fresh"],
+                        "memory_coverage_fresh": candidate_payload[
+                            "memory_coverage_fresh"
+                        ],
+                        "prompt_injection_suspected": False,
+                    }
+                    session.add(
+                        AutonomousActionCandidate(
+                            id=candidate_id,
+                            company_namespace=parent.company_namespace,
+                            parent_work_item_id=parent.id,
+                            agent_id=parent.assigned_agent_id,
+                            mandate_id=mandate.id,
+                            action_class=candidate_payload["action_class"],
+                            tool_name=candidate_payload["tool_name"],
+                            params=candidate_payload["params"],
+                            action_envelope=envelope,
+                            evidence_ids=candidate_payload["evidence_ids"],
+                            expected_outcome=proposal["expected_outcome"],
+                            status="proposed",
+                            risk_level=str(readiness.get("risk_level") or "low")[:20],
+                            confidence=candidate_payload["confidence"],
+                            reversible=candidate_payload["reversible"],
+                            external_side_effect=candidate_payload[
+                                "external_side_effect"
+                            ],
+                            idempotency_key=candidate_key,
+                        )
+                    )
+                    action_candidate_ids.append(candidate_id)
+                    pending_candidate_ids.append(candidate_id)
+                    continue
                 duplicate = self._semantic_duplicate_proposal(proposal, recent_items)
                 if duplicate:
                     reused_ids.append(duplicate.id)
@@ -2405,12 +2686,299 @@ class WorkPortfolioService:
                 recent_items.append(item)
                 nonterminal_count += 1
             await session.commit()
+        for candidate_id in pending_candidate_ids:
+            staged = await self._review_and_stage_action_candidate(candidate_id)
+            if staged.get("execution_work_item_id"):
+                created_ids.append(staged["execution_work_item_id"])
+            elif staged.get("status") == "blocked":
+                suppressed.append(
+                    {
+                        "reason": "action_candidate_blocked",
+                        "action_candidate_id": candidate_id,
+                        "detail": staged.get("error"),
+                    }
+                )
         return {
             "created_work_item_ids": created_ids,
             "reused_work_item_ids": list(dict.fromkeys(reused_ids)),
             "suppressed_proposals": suppressed,
             "rejected_proposals": [],
+            "action_candidate_ids": action_candidate_ids,
         }
+
+    def _validate_action_candidate_proposal(
+        self,
+        *,
+        parent: BusinessWorkItem,
+        agent: Agent,
+        mandate: AgentMandate,
+        candidate: dict[str, Any],
+    ) -> str | None:
+        if not self._tools or not self._action_policy:
+            return "action_control_plane_unavailable"
+        tool_name = candidate["tool_name"]
+        granted_tools = set((mandate.authority or {}).get("read_tools") or [])
+        if tool_name not in set(agent.tools or []) or tool_name not in granted_tools:
+            return "tool_not_granted_by_agent_mandate"
+        valid, _, validation_error = self._tools.validate_params(
+            tool_name,
+            candidate["params"],
+        )
+        if not valid:
+            return f"tool_parameters_invalid:{validation_error or 'invalid'}"[:500]
+        readiness = self._tools.get_tool_readiness(tool_name, candidate["params"])
+        if not readiness.get("executable"):
+            return "tool_not_ready"
+        if bool(readiness.get("side_effects")) != bool(
+            candidate["external_side_effect"]
+        ):
+            return "tool_side_effect_declaration_mismatch"
+        available_evidence = {
+            str(value)
+            for value in [
+                parent.event_id,
+                (parent.payload or {}).get("source_id"),
+                *((parent.payload or {}).get("evidence_ids") or []),
+            ]
+            if value
+        }
+        if not set(candidate["evidence_ids"]).issubset(available_evidence):
+            return "action_evidence_not_available_to_parent_work"
+        return None
+
+    async def _review_and_stage_action_candidate(
+        self,
+        candidate_id: str,
+    ) -> dict[str, Any]:
+        async with async_session() as session:
+            candidate = await session.get(AutonomousActionCandidate, candidate_id)
+            if not candidate:
+                raise ValueError("Action candidate no longer exists")
+            if candidate.status != "proposed":
+                return self._action_candidate_to_dict(candidate)
+            readiness = self._tools.get_tool_readiness(candidate.tool_name, candidate.params)
+            findings = []
+            payload_text = json.dumps(candidate.params, sort_keys=True, default=str)
+            injection = (
+                self._intelligence.classify_untrusted_content(payload_text)
+                if self._intelligence
+                else {"detected": False, "reason": None}
+            )
+            if injection["detected"]:
+                findings.append(
+                    {
+                        "severity": "critical",
+                        "type": "prompt_injection_candidate",
+                        "detail": injection.get("reason") or "Policy override text detected.",
+                    }
+                )
+            if not readiness.get("executable"):
+                findings.append(
+                    {
+                        "severity": "high",
+                        "type": "tool_not_ready",
+                        "detail": readiness.get("readiness_reason") or "Tool is not executable.",
+                    }
+                )
+            if candidate.confidence < settings.governor_min_confidence:
+                findings.append(
+                    {
+                        "severity": "medium",
+                        "type": "confidence_below_threshold",
+                        "detail": "Candidate confidence is below the autonomy threshold.",
+                    }
+                )
+            if not candidate.evidence_ids:
+                findings.append(
+                    {
+                        "severity": "high",
+                        "type": "missing_evidence",
+                        "detail": "Candidate has no provenance evidence.",
+                    }
+                )
+            envelope = dict(candidate.action_envelope or {})
+            if not envelope.get("benchmark_fresh"):
+                findings.append(
+                    {
+                        "severity": "medium",
+                        "type": "stale_benchmark",
+                        "detail": "Benchmark evidence is stale.",
+                    }
+                )
+            if not envelope.get("memory_coverage_fresh"):
+                findings.append(
+                    {
+                        "severity": "medium",
+                        "type": "stale_memory_coverage",
+                        "detail": "Memory coverage evidence is stale.",
+                    }
+                )
+            unresolved = [
+                item for item in findings if item["severity"] in {"high", "critical"}
+            ]
+            review_status = (
+                "agreed"
+                if not findings
+                else "escalated"
+                if unresolved
+                else "disagreed"
+            )
+            review = ObserverReview(
+                id=f"obs_{uuid.uuid4().hex}",
+                run_id=None,
+                status=review_status,
+                critique=(
+                    "Observer found no unresolved safety or evidence objection."
+                    if review_status == "agreed"
+                    else "Observer found action evidence or control concerns."
+                ),
+                findings=findings,
+                consensus_log=[
+                    {
+                        "speaker": "observer_agent",
+                        "message": "Reviewed the typed action without side-effect authority.",
+                    }
+                ],
+                unresolved_objections=unresolved,
+                confidence=0.95 if review_status == "agreed" else 0.75,
+                metadata_={
+                    "action_candidate_id": candidate.id,
+                    "tool_name": candidate.tool_name,
+                    "contract_version": ACTION_CANDIDATE_CONTRACT_VERSION,
+                    "side_effect_authority": "none",
+                },
+            )
+            session.add(review)
+            candidate.observer_review_id = review.id
+            candidate.reviewed_at = utc_now()
+            envelope["observer_status"] = review_status
+            envelope["prompt_injection_suspected"] = bool(injection["detected"])
+            candidate.action_envelope = envelope
+            if unresolved:
+                candidate.status = "blocked"
+                candidate.error = "observer_unresolved_objection"
+                candidate.completed_at = utc_now()
+                await session.commit()
+                return self._action_candidate_to_dict(candidate)
+            await session.commit()
+
+        if not self._action_policy:
+            return await self._block_action_candidate(
+                candidate_id,
+                "action_policy_service_unavailable",
+            )
+        decision = await self._action_policy.evaluate(
+            envelope,
+            approval_present=False,
+        )
+        async with async_session() as session:
+            candidate = (
+                await session.execute(
+                    select(AutonomousActionCandidate)
+                    .where(AutonomousActionCandidate.id == candidate_id)
+                    .with_for_update()
+                )
+            ).scalar_one()
+            candidate.policy_decision = decision
+            if not decision.get("allowed") and not decision.get("requires_approval"):
+                candidate.status = "blocked"
+                candidate.error = ",".join(decision.get("reasons") or ["policy_denied"])
+                candidate.completed_at = utc_now()
+                await session.commit()
+                return self._action_candidate_to_dict(candidate)
+            work_key = self._hash(
+                {
+                    "action_candidate_id": candidate.id,
+                    "contract": ACTION_CANDIDATE_CONTRACT_VERSION,
+                }
+            )
+            existing_work = (
+                await session.execute(
+                    select(BusinessWorkItem).where(
+                        BusinessWorkItem.idempotency_key == work_key
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_work:
+                candidate.execution_work_item_id = existing_work.id
+                await session.commit()
+                return self._action_candidate_to_dict(candidate)
+            work = BusinessWorkItem(
+                id=f"work_{uuid.uuid4().hex}",
+                company_namespace=candidate.company_namespace,
+                title=f"Execute governed action: {candidate.tool_name}"[:240],
+                description=(
+                    "Execute the immutable typed action candidate after Observer and "
+                    "policy review."
+                ),
+                work_type="tool_action",
+                status="ready",
+                priority="medium" if candidate.external_side_effect else "low",
+                risk_level=candidate.risk_level,
+                assigned_agent_id=candidate.agent_id,
+                mandate_id=candidate.mandate_id,
+                payload={
+                    "action_candidate_id": candidate.id,
+                    "tool_name": candidate.tool_name,
+                    "params": candidate.params,
+                    "action_envelope": candidate.action_envelope,
+                    "proposal_depth": 0,
+                },
+                acceptance_criteria=[
+                    "observer_review_recorded",
+                    "opa_policy_decision_recorded",
+                    "approval_consumed_if_required",
+                    "tool_result_recorded",
+                    "outcome_assessment_required",
+                ],
+                expected_outcome=candidate.expected_outcome,
+                actual_outcome={},
+                policy_decision=decision,
+                idempotency_key=work_key,
+                created_by="chief_operating_agent",
+            )
+            session.add(work)
+            await session.flush()
+            candidate.execution_work_item_id = work.id
+            candidate.status = (
+                "approval_required" if decision.get("requires_approval") else "ready"
+            )
+            await session.commit()
+            return self._action_candidate_to_dict(candidate)
+
+    async def _block_action_candidate(
+        self,
+        candidate_id: str,
+        error: str,
+    ) -> dict[str, Any]:
+        async with async_session() as session:
+            candidate = await session.get(AutonomousActionCandidate, candidate_id)
+            if not candidate:
+                raise ValueError("Action candidate no longer exists")
+            candidate.status = "blocked"
+            candidate.error = error
+            candidate.completed_at = utc_now()
+            await session.commit()
+            return self._action_candidate_to_dict(candidate)
+
+    async def list_action_candidates(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        async with async_session() as session:
+            query = select(AutonomousActionCandidate)
+            if status:
+                query = query.where(AutonomousActionCandidate.status == status)
+            items = (
+                await session.execute(
+                    query.order_by(desc(AutonomousActionCandidate.created_at)).limit(
+                        max(1, min(limit, 500))
+                    )
+                )
+            ).scalars().all()
+        return [self._action_candidate_to_dict(item) for item in items]
 
     async def _record_grounding_recovery(
         self,
@@ -2716,7 +3284,7 @@ class WorkPortfolioService:
             "acceptance_criteria",
             "expected_outcome",
         }
-        optional_proposal = {"target_role_gap_id"}
+        optional_proposal = {"target_role_gap_id", "action_candidate"}
         for index, proposal in enumerate(proposals):
             if (
                 not isinstance(proposal, dict)
@@ -2750,6 +3318,29 @@ class WorkPortfolioService:
             if not isinstance(proposal["expected_outcome"], dict):
                 rejected.append({"index": index, "reason": "expected_outcome_invalid"})
                 continue
+            action_candidate = proposal.get("action_candidate")
+            if work_type == "action_candidate":
+                try:
+                    action_candidate = WorkPortfolioService._normalize_action_candidate(
+                        action_candidate
+                    )
+                except ValueError as exc:
+                    rejected.append(
+                        {
+                            "index": index,
+                            "reason": "action_candidate_invalid",
+                            "detail": str(exc),
+                        }
+                    )
+                    continue
+            elif action_candidate is not None:
+                rejected.append(
+                    {
+                        "index": index,
+                        "reason": "action_candidate_requires_matching_work_type",
+                    }
+                )
+                continue
             normalized.append(
                 {
                     **proposal,
@@ -2759,6 +3350,11 @@ class WorkPortfolioService:
                     **(
                         {"target_role_gap_id": str(proposal.get("target_role_gap_id") or "")[:64]}
                         if proposal.get("target_role_gap_id")
+                        else {}
+                    ),
+                    **(
+                        {"action_candidate": action_candidate}
+                        if action_candidate is not None
                         else {}
                     ),
                 }
@@ -2773,6 +3369,82 @@ class WorkPortfolioService:
             "proposed_work": normalized,
             "rejected_proposals": rejected,
         }
+
+    @staticmethod
+    def _normalize_action_candidate(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict) or set(value) != ACTION_CANDIDATE_FIELDS:
+            raise ValueError("Action candidate does not match the typed contract.")
+        tool_name = str(value["tool_name"] or "").strip()
+        action_class = str(value["action_class"] or "").strip()
+        expected_effect = str(value["expected_effect"] or "").strip()
+        params = value["params"]
+        evidence_ids = value["evidence_ids"]
+        if not tool_name or not re.fullmatch(r"[a-z][a-z0-9_]{1,99}", tool_name):
+            raise ValueError("Action candidate tool_name is invalid.")
+        if not action_class or len(action_class) > 120:
+            raise ValueError("Action candidate action_class is invalid.")
+        if not expected_effect or len(expected_effect) > 2000:
+            raise ValueError("Action candidate expected_effect is invalid.")
+        if not isinstance(params, dict):
+            raise ValueError("Action candidate params must be an object.")
+        if WorkPortfolioService._contains_sensitive_action_parameter(params):
+            raise ValueError("Action candidate params may not contain credentials.")
+        if not isinstance(evidence_ids, list) or not evidence_ids or not all(
+            isinstance(item, str) and item.strip() for item in evidence_ids
+        ):
+            raise ValueError("Action candidate evidence_ids must be a non-empty string array.")
+        try:
+            confidence = float(value["confidence"])
+            financial_exposure = float(value["financial_exposure_usd"])
+            financial_daily = float(value["financial_daily_usd"])
+            recipients = int(value["recipients"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Action candidate impact values are invalid.") from exc
+        if not 0 <= confidence <= 1:
+            raise ValueError("Action candidate confidence must be between 0 and 1.")
+        if min(financial_exposure, financial_daily, recipients) < 0:
+            raise ValueError("Action candidate impact values cannot be negative.")
+        boolean_fields = {
+            "reversible",
+            "external_side_effect",
+            "fresh_backup",
+            "benchmark_fresh",
+            "memory_coverage_fresh",
+        }
+        if any(not isinstance(value[field], bool) for field in boolean_fields):
+            raise ValueError("Action candidate control flags must be booleans.")
+        return {
+            "tool_name": tool_name,
+            "params": params,
+            "action_class": action_class,
+            "expected_effect": expected_effect,
+            "evidence_ids": list(dict.fromkeys(item[:200] for item in evidence_ids))[:100],
+            "confidence": confidence,
+            "reversible": value["reversible"],
+            "financial_exposure_usd": financial_exposure,
+            "financial_daily_usd": financial_daily,
+            "recipients": recipients,
+            "data_sensitivity": str(value["data_sensitivity"] or "internal")[:40],
+            "external_side_effect": value["external_side_effect"],
+            "fresh_backup": value["fresh_backup"],
+            "benchmark_fresh": value["benchmark_fresh"],
+            "memory_coverage_fresh": value["memory_coverage_fresh"],
+        }
+
+    @staticmethod
+    def _contains_sensitive_action_parameter(value: Any) -> bool:
+        if isinstance(value, dict):
+            return any(
+                SENSITIVE_ACTION_PARAMETER_PATTERN.search(str(key))
+                or WorkPortfolioService._contains_sensitive_action_parameter(item)
+                for key, item in value.items()
+            )
+        if isinstance(value, list):
+            return any(
+                WorkPortfolioService._contains_sensitive_action_parameter(item)
+                for item in value
+            )
+        return False
 
     async def _finish_work(
         self,
@@ -2791,7 +3463,7 @@ class WorkPortfolioService:
             item.lease_owner = None
             item.lease_expires_at = None
             item.updated_at = utc_now()
-            item.completed_at = utc_now() if status == "completed" else None
+            item.completed_at = utc_now() if status in TERMINAL_WORK_STATUSES else None
             await session.commit()
             result = self._work_to_dict(item)
         if self._audit:
@@ -3243,5 +3915,38 @@ class WorkPortfolioService:
             "created_by": item.created_by,
             "created_at": item.created_at.isoformat(),
             "updated_at": item.updated_at.isoformat(),
+            "completed_at": item.completed_at.isoformat() if item.completed_at else None,
+        }
+
+    @staticmethod
+    def _action_candidate_to_dict(
+        item: AutonomousActionCandidate,
+    ) -> dict[str, Any]:
+        return {
+            "id": item.id,
+            "company_namespace": item.company_namespace,
+            "parent_work_item_id": item.parent_work_item_id,
+            "agent_id": item.agent_id,
+            "mandate_id": item.mandate_id,
+            "action_class": item.action_class,
+            "tool_name": item.tool_name,
+            "params": item.params,
+            "action_envelope": item.action_envelope,
+            "evidence_ids": item.evidence_ids,
+            "expected_outcome": item.expected_outcome,
+            "status": item.status,
+            "risk_level": item.risk_level,
+            "confidence": item.confidence,
+            "reversible": item.reversible,
+            "external_side_effect": item.external_side_effect,
+            "observer_review_id": item.observer_review_id,
+            "policy_decision": item.policy_decision,
+            "approval_id": item.approval_id,
+            "execution_work_item_id": item.execution_work_item_id,
+            "result": item.result,
+            "error": item.error,
+            "contract_version": ACTION_CANDIDATE_CONTRACT_VERSION,
+            "created_at": item.created_at.isoformat(),
+            "reviewed_at": item.reviewed_at.isoformat() if item.reviewed_at else None,
             "completed_at": item.completed_at.isoformat() if item.completed_at else None,
         }

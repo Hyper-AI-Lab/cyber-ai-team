@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -13,6 +14,8 @@ from cyber_team.db import Base
 from cyber_team.db.models import (
     Agent,
     AgentMandate,
+    ApprovalRequest,
+    AutonomousActionCandidate,
     BusinessEvent,
     BusinessEventDelivery,
     BusinessEventDisposition,
@@ -26,6 +29,7 @@ from cyber_team.db.models import (
     MemoryEntry,
     MemoryStewardFinding,
     MemoryTrace,
+    ObserverReview,
     RoleGap,
 )
 from cyber_team.operations import work_portfolio as portfolio_module
@@ -37,6 +41,84 @@ class FakeIntelligence:
     def classify_untrusted_content(value):
         detected = "ignore previous instructions" in value.lower()
         return {"detected": detected, "reason": "test" if detected else None}
+
+
+class AllowActionPolicy:
+    async def evaluate(self, envelope, *, approval_present=False):
+        return {
+            "allowed": True,
+            "requires_approval": False,
+            "reasons": [],
+            "source": "test_opa",
+            "envelope": envelope,
+        }
+
+
+class ApprovalActionPolicy:
+    async def evaluate(self, envelope, *, approval_present=False):
+        return {
+            "allowed": bool(approval_present),
+            "requires_approval": not approval_present,
+            "reasons": [] if approval_present else ["owner_approval_required"],
+            "source": "test_opa",
+            "envelope": envelope,
+        }
+
+
+class FakeActionTools:
+    def __init__(self, *, approval_factory=None):
+        self.approval_factory = approval_factory
+        self.calls = []
+
+    @staticmethod
+    def validate_params(tool_name, params):
+        return True, params, None
+
+    @staticmethod
+    def get_tool_readiness(tool_name, params=None):
+        return {
+            "state": "live",
+            "executable": True,
+            "side_effects": False,
+            "risk_level": "low",
+            "readiness_reason": None,
+        }
+
+    async def execute(self, tool_name, params):
+        self.calls.append((tool_name, params))
+        if self.approval_factory and not params.get("_approval_id"):
+            async with self.approval_factory() as session:
+                session.add(
+                    ApprovalRequest(
+                        id="approval-action-candidate",
+                        agent_id=params.get("_agent_id"),
+                        action_type=f"tool:{tool_name}",
+                        action_description="Execute candidate tool",
+                        action_payload={},
+                        requester=params.get("_agent_id") or "agent",
+                        requester_type="agent",
+                        risk_level="medium",
+                        target_type="tool",
+                        target_id=tool_name,
+                        status="pending",
+                        expires_at=utc_now() + timedelta(hours=1),
+                    )
+                )
+                await session.commit()
+            return SimpleNamespace(
+                success=False,
+                output={
+                    "approval_required": True,
+                    "approval_id": "approval-action-candidate",
+                    "tool_name": tool_name,
+                },
+                error="Approval required before executing this tool",
+            )
+        return SimpleNamespace(
+            success=True,
+            output={"record_id": "result-1"},
+            error=None,
+        )
 
 
 @pytest.fixture
@@ -1569,6 +1651,150 @@ async def test_tool_work_executes_only_a_mandate_granted_policy_gated_tool(
     params = tools.execute.await_args.args[1]
     assert params["_agent_id"] == "knowledge-agent"
     assert params["_conversation_id"] == created["id"]
+
+
+def action_candidate_assessment():
+    return json.dumps(
+        {
+            "assessment": "Verified evidence can be recalled to support the objective.",
+            "confidence": 0.91,
+            "unknowns": [],
+            "recommended_action": "continue",
+            "expected_outcome": {"type": "verified_evidence_recalled"},
+            "role_state_claims": [],
+            "proposed_work": [
+                {
+                    "title": "Recall verified evidence",
+                    "description": "Recall the exact evidence under the active mandate.",
+                    "work_type": "action_candidate",
+                    "priority": "medium",
+                    "acceptance_criteria": ["evidence_recalled"],
+                    "expected_outcome": {"type": "verified_evidence_recalled"},
+                    "action_candidate": {
+                        "tool_name": "memory_recall",
+                        "params": {"query": "verified evidence"},
+                        "action_class": "internal_read",
+                        "expected_effect": "Recall evidence without external mutation.",
+                        "evidence_ids": ["ev-1"],
+                        "confidence": 0.91,
+                        "reversible": True,
+                        "financial_exposure_usd": 0,
+                        "financial_daily_usd": 0,
+                        "recipients": 0,
+                        "data_sensitivity": "internal",
+                        "external_side_effect": False,
+                        "fresh_backup": True,
+                        "benchmark_fresh": True,
+                        "memory_coverage_fresh": True,
+                    },
+                }
+            ],
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_domain_agent_action_candidate_flows_through_observer_policy_and_tool(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    manager = AsyncMock()
+    manager.invoke_agent.return_value = action_candidate_assessment()
+    tools = FakeActionTools()
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        company_intelligence_service=FakeIntelligence(),
+        tool_registry=tools,
+        action_policy_service=AllowActionPolicy(),
+    )
+    await service.ensure_active_agent_mandates()
+    await service.create_work_item(
+        title="Assess verified evidence",
+        description="Choose the next supported action.",
+        work_type="domain_assessment",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={"evidence_ids": ["ev-1"]},
+        acceptance_criteria=["next_action_recorded"],
+        idempotency_key="typed-action-parent",
+    )
+
+    proposed = await service.run_domain_loop("knowledge-agent", prepare=False)
+    executed = await service.run_domain_loop("knowledge-agent", prepare=False)
+
+    candidate_id = proposed["items"][0]["actual_outcome"]["action_candidate_ids"][0]
+    async with portfolio_session_factory() as session:
+        candidate = await session.get(AutonomousActionCandidate, candidate_id)
+        review = await session.get(ObserverReview, candidate.observer_review_id)
+        work = await session.get(BusinessWorkItem, candidate.execution_work_item_id)
+    assert proposed["items"][0]["status"] == "completed"
+    assert executed["items"][0]["status"] == "completed"
+    assert review.status == "agreed"
+    assert candidate.status == "executed"
+    assert candidate.policy_decision["source"] == "test_opa"
+    assert work.actual_outcome["action_executed"] is True
+    assert tools.calls[0][1]["_action_envelope"]["observer_status"] == "agreed"
+
+
+@pytest.mark.asyncio
+async def test_action_candidate_waits_for_exact_owner_approval_then_resumes(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    manager = AsyncMock()
+    manager.invoke_agent.return_value = action_candidate_assessment()
+    tools = FakeActionTools(approval_factory=portfolio_session_factory)
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        company_intelligence_service=FakeIntelligence(),
+        tool_registry=tools,
+        action_policy_service=ApprovalActionPolicy(),
+    )
+    await service.ensure_active_agent_mandates()
+    await service.create_work_item(
+        title="Assess approval-gated evidence recall",
+        description="Choose an action and wait for exact approval.",
+        work_type="domain_assessment",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={"evidence_ids": ["ev-1"]},
+        acceptance_criteria=["approval_path_recorded"],
+        idempotency_key="approval-action-parent",
+    )
+
+    proposed = await service.run_domain_loop("knowledge-agent", prepare=False)
+    parked = await service.run_domain_loop("knowledge-agent", prepare=False)
+    candidate_id = proposed["items"][0]["actual_outcome"]["action_candidate_ids"][0]
+    async with portfolio_session_factory() as session:
+        candidate = await session.get(AutonomousActionCandidate, candidate_id)
+        work = await session.get(BusinessWorkItem, candidate.execution_work_item_id)
+        approval = await session.get(ApprovalRequest, "approval-action-candidate")
+        approval.status = "approved"
+        approval.reviewer = "owner@example.com"
+        approval.resolved_at = utc_now()
+        await session.commit()
+    resumed = await service.run_domain_loop("knowledge-agent", prepare=False)
+
+    async with portfolio_session_factory() as session:
+        candidate = await session.get(AutonomousActionCandidate, candidate_id)
+        work = await session.get(BusinessWorkItem, candidate.execution_work_item_id)
+    assert parked["items"][0]["status"] == "waiting_approval"
+    assert work.status == "completed"
+    assert candidate.status == "executed"
+    assert candidate.approval_id == "approval-action-candidate"
+    assert resumed["items"][0]["actual_outcome"]["action_executed"] is True
+
+
+def test_action_candidate_schema_rejects_credentials():
+    payload = json.loads(action_candidate_assessment())
+    payload["proposed_work"][0]["action_candidate"]["params"] = {
+        "api_key": "must-not-enter-action-state"
+    }
+
+    parsed = WorkPortfolioService._parse_role_result(json.dumps(payload))
+
+    assert parsed["proposed_work"] == []
+    assert parsed["rejected_proposals"][0]["reason"] == "action_candidate_invalid"
 
 
 @pytest.mark.asyncio

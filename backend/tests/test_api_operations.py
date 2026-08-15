@@ -69,6 +69,50 @@ def test_model_capability_routes_expose_summary_history_and_evaluation(monkeypat
     )
 
 
+def test_action_candidate_route_is_owner_authorized(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    app.state.work_portfolio_service = AsyncMock()
+    app.state.work_portfolio_service.list_action_candidates.return_value = [
+        {
+            "id": "action-candidate-1",
+            "status": "approval_required",
+            "tool_name": "send_email",
+        }
+    ]
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    authorization = AsyncMock(return_value=None)
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        authorization,
+    )
+
+    response = TestClient(app).get(
+        "/api/operations/action-candidates?status=approval_required&limit=25"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "count": 1,
+        "items": [
+            {
+                "id": "action-candidate-1",
+                "status": "approval_required",
+                "tool_name": "send_email",
+            }
+        ],
+    }
+    app.state.work_portfolio_service.list_action_candidates.assert_awaited_once_with(
+        status="approval_required",
+        limit=25,
+    )
+    authorization.assert_awaited_once()
+
+
 def test_readiness_compaction_preserves_summary_and_omits_embedded_backlogs():
     payload = {
         "status": "ready",

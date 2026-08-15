@@ -85,6 +85,7 @@ async def activity_services():
         audit_service=audit,
         company_intelligence_service=intelligence,
         tool_registry=registry,
+        action_policy_service=action_policy,
     )
     outcomes = OutcomeLearningService(
         action_policy_service=action_policy,
