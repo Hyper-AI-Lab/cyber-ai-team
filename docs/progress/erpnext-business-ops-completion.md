@@ -7081,3 +7081,20 @@
   - `dist/promotions/staging/0.3.26-20260815-165658.json`.
 - Next step:
   - Run and persist the v3 task-level model qualification, requiring an exact 5/5 live result before autonomous outcome acceptance.
+
+### 2026-08-15T17:05:07Z — STEP-280 — Qualified the live autonomy model on all v3 task contracts
+- Files/services changed:
+  - Persisted a fresh model-capability evaluation and control evidence in staging; no code or configuration changed.
+- Commands run:
+  - Owner-authorized `POST /api/operations/model-capabilities/evaluate` against public staging release `0.3.26`.
+  - Read-only PostgreSQL progress inspection while the bounded local evaluation ran.
+- Result:
+  - The selected local Ministral route passed 5/5 v3 task contracts with every task scoring 1.0: claim extraction, company-model synthesis, strategy generation, domain planning, and Observer review.
+  - Domain planning produced the required durable `approval_request` disposition for an unapproved over-threshold bulk action.
+  - Observer review detected the embedded prompt injection, blocked it, and denied side effects.
+  - The result is fresh for provider `llama_cpp`, model `openai/mistralai/Ministral-3-3B-Instruct-2512-GGUF:Q4_K_M`, and prompt contract `autonomous-company-capabilities-v3`.
+- Evidence:
+  - Live run `modelcaprun_223bf1b078724c0aacf4a8d68d033c7d` in `model_capability_evaluations`.
+  - Control evidence emitted by `ModelCapabilityService.evaluate`.
+- Next step:
+  - Run the focused staging outcome-autonomy smoke to prove generated action, Observer/policy gate, execution, outcome assessment, reflection, graph linkage, and high-impact blocking end to end.
