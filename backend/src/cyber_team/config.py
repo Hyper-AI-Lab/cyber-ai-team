@@ -124,7 +124,7 @@ class Settings(BaseSettings):
         "openai/mistralai/Ministral-3-3B-Instruct-2512-GGUF:Q4_K_M"
     )
     llm_local_api_key: str = ""
-    llm_local_timeout_seconds: float = 180.0
+    llm_local_timeout_seconds: float = 300.0
     llm_local_max_tokens: int = 1024
     model_capability_enforcement_enabled: bool = True
     model_capability_required_tasks: str = (

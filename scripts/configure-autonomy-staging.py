@@ -87,7 +87,7 @@ def main() -> int:
                 "LLM_LOCAL_MODEL_REPO": (
                     "mistralai/Ministral-3-3B-Instruct-2512-GGUF:Q4_K_M"
                 ),
-                "LLM_LOCAL_TIMEOUT_SECONDS": "180",
+                "LLM_LOCAL_TIMEOUT_SECONDS": "300",
                 "LLM_LOCAL_MAX_TOKENS": "1024",
                 "LOCAL_MODEL_CACHE_VOLUME": "cyber-team_local-model-cache",
             }

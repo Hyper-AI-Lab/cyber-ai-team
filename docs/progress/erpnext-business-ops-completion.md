@@ -6963,3 +6963,22 @@
   - Live `/api/operations/readiness` evidence captured on 2026-08-15.
 - Next step:
   - Complete the full release gate, backup-first staging promotion, focused live acceptance, bounded historical outcome drain, and strict 24-hour outcome soak.
+
+### 2026-08-15T15:37:48Z — STEP-274 — Aligned discovery inference timeout with qualified model evidence
+- Files/services changed:
+  - Increased the local inference timeout from 180 to 300 seconds in application, staging, production example, and idempotent configuration defaults.
+  - Kept the local model CPU/memory limits and zero-spend policy unchanged.
+- Commands run:
+  - Read-only inspection of active company-model revisions, autonomous objective revisions, and research-result signal dispositions.
+  - Correlation of local task benchmark latency with historical claim-extraction failure classes.
+- Result:
+  - The system already creates discovery objectives and public-research signals for unknown business facts; 169 research signals prove that lifecycle is active.
+  - Historical `TimeoutError` and malformed-response outcomes explain why business description, offerings, and customer segments remained explicit unknowns rather than becoming fabricated facts.
+  - The qualified model's observed 216.9-second worst-case extraction probe exceeded the old timeout under host contention; the new bounded timeout accommodates measured behavior without changing epistemic or safety gates.
+  - The in-progress release attempt was intentionally stopped before image build so no artifact could combine old and new timeout contracts.
+- Evidence:
+  - Live `company_model_revisions`, `company_objective_revisions`, and `company_signals` read-only queries on 2026-08-15.
+  - `dist/local-model-benchmarks/ministral-3-3b-task-contract-v2-policy-20260815.json`.
+  - `backend/src/cyber_team/config.py` and deployment environment examples.
+- Next step:
+  - Commit this coherent timeout contract, rerun the full release gate from the new commit, and reprocess discovery evidence through the qualified route.
