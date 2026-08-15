@@ -6982,3 +6982,23 @@
   - `backend/src/cyber_team/config.py` and deployment environment examples.
 - Next step:
   - Commit this coherent timeout contract, rerun the full release gate from the new commit, and reprocess discovery evidence through the qualified route.
+
+### 2026-08-15T16:15:56Z — STEP-275 — Verified release 0.3.25 and remote CI from the same commit
+- Files/services changed:
+  - Built exact `cyber-team-core:0.3.25` and `cyber-team-ui:0.3.25` artifacts for commit `1ada56368692c024f6913cc0711bcfc3b78b2972`.
+  - Removed only the rejected Qwen local-model cache artifacts after qualification; retained the selected Ministral artifact and did not change application state.
+- Commands run:
+  - `RELEASE_VERSION=0.3.25 RELEASE_ALLOW_DIRTY=1 SKIP_BACKEND_INSTALL=1 SKIP_BACKEND_AUDIT_INSTALL=1 SKIP_FRONTEND_INSTALL=1 RUN_QUALITY_GATE=1 RUN_MIGRATION_REHEARSAL=1 RUN_COMPOSE_SMOKE=1 BUILD_IMAGES=1 RUN_IMAGE_SCAN=1 ./scripts/release-check.sh`.
+  - `gh run view 31893278054 --repo Hyper-AI-Lab/cyber-ai-team` for the matching public-repository push run.
+- Result:
+  - Ruff, all 415 backend tests, compileall, Alembic offline SQL, dependency audit, frontend build/typecheck/all 31 tests, npm audit, Compose validation, secret scan, Google Cloud isolation, FOSS resource policy, and diff hygiene passed.
+  - Real PostgreSQL upgrades passed from legacy and representative seeded migrations through `0021_autonomous_action_candidates`.
+  - The isolated Compose smoke passed and cleaned up its temporary project.
+  - Trivy reported zero OS or language-package vulnerabilities in both release images.
+  - GitHub push CI completed successfully for the exact release commit.
+- Evidence:
+  - `dist/releases/0.3.25.json`.
+  - `cyber-team-core:0.3.25` and `cyber-team-ui:0.3.25` local image artifacts.
+  - https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/31893278054
+- Next step:
+  - Commit this append-only release evidence, then perform backup-first staging promotion and run the live evidence-to-outcome autonomy acceptance path.
