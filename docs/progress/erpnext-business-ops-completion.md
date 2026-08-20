@@ -7310,3 +7310,25 @@
   - `dist/promotions/staging/0.3.30-20260815-205216.json`.
 - Next step:
   - Run the unchanged live outcome-autonomy acceptance scenario and verify a mandate-authorized safe action executes and learns while a synthetic large-impact action remains approval-gated without mutation.
+
+### 2026-08-20T22:47:14Z — STEP-293 — Grounded autonomous actions in durable company evidence
+- Files/services changed:
+  - Replaced declared-ID trust in the work portfolio with same-namespace resolution against durable evidence artifacts, company signals, and business events.
+  - Added compact redacted evidence records to mandate reasoning while preserving external content as untrusted data rather than executable instructions.
+  - Excluded expired, quarantined, failed, injection-like, unresolved, and cross-namespace evidence before model invocation; immutable action options without verified evidence now fail closed without creating candidates or executing tools.
+  - Required agent-generated action candidates to cite the verified evidence set assembled for their parent work item.
+  - Reworked the live outcome-autonomy smoke to record an authenticated owner instruction in the operation graph, acquire it through the real company-intelligence source adapter, and cite its durable evidence artifact for both safe and approval-gated acceptance cases.
+  - Disabled the intentionally stopped local inference fallback in the ignored staging environment; no local model service was restarted.
+- Commands run:
+  - Ruff, Python compilation, `git diff --check`, and the complete 48-test work-portfolio suite.
+  - Public staging `/health`, `/ready`, and model-capability inspection.
+  - One hosted Mistral capability preflight for `observer_review` with the local fallback still stopped.
+- Result:
+  - All 48 work-portfolio tests passed, including unknown-evidence, cross-namespace, quarantined-signal, immutable selection, governed execution, and approval-resume cases.
+  - Staging application dependencies remain healthy and ready; no candidate, tool, ERPNext mutation, or external side effect occurred during diagnosis.
+  - Hosted Mistral currently returns HTTP 402, while the stopped local fallback's prior qualification expired on August 16. Autonomous cognition is therefore truthfully blocked until a usable hosted zero-spend inference route is available; deterministic services remain operational.
+- Evidence:
+  - `backend/tests/test_work_portfolio.py` focused suite: 48 passed.
+  - Failed pre-hardening smoke: `dist/outcome-autonomy/outcome-autonomy-smoke-20260815T205305Z.json`.
+- Next step:
+  - Commit and push the evidence-grounding hardening, run the full immutable release gate, promote backup-first without starting the local inference profile, and rerun the live outcome smoke once hosted inference capacity is available.

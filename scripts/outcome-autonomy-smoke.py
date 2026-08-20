@@ -195,6 +195,55 @@ def assess_work(api: Api, work_id: str) -> dict[str, Any]:
     return result
 
 
+def prepare_acceptance_evidence(
+    api: Api,
+    *,
+    run_key: str,
+) -> dict[str, Any]:
+    started_at = datetime.now(UTC)
+    instruction = (
+        f"Staging acceptance {run_key} only: evaluate one company_profile_read "
+        "internal-read candidate and one synthetic ERPNext task_create candidate. "
+        "The ERPNext candidate must remain behind the large-impact owner-approval "
+        "gate and be cancelled without mutation after the gate is proven."
+    )
+    status, governor_result = api.request(
+        "POST",
+        "/api/operations/governor/instruct",
+        {
+            "instruction": instruction,
+            "dry_run": True,
+            "observer_review": True,
+        },
+    )
+    if status != 200 or not isinstance(governor_result, dict):
+        raise RuntimeError(
+            f"Could not record acceptance instruction: HTTP {status} {governor_result}"
+        )
+    status, acquired = api.request("POST", "/api/company/sources/acquire")
+    if status != 200 or not isinstance(acquired, dict):
+        raise RuntimeError(
+            f"Could not acquire acceptance instruction evidence: HTTP {status} {acquired}"
+        )
+    status, payload = api.request("GET", "/api/company/evidence?limit=100")
+    items = payload if isinstance(payload, list) else []
+    candidates = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("artifact_type") != "owner_instruction":
+            continue
+        try:
+            created_at = datetime.fromisoformat(str(item.get("created_at") or ""))
+        except ValueError:
+            continue
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        if created_at >= started_at:
+            candidates.append(item)
+    if status != 200 or not candidates:
+        raise RuntimeError("No durable owner-instruction evidence was acquired.")
+    return max(candidates, key=lambda item: str(item.get("created_at") or ""))
+
+
 def main() -> int:
     env_path = Path(
         os.environ.get("CYBERTEAM_ENV_FILE", ROOT / "deploy/environments/staging.env")
@@ -281,7 +330,20 @@ def main() -> int:
             ),
         )
 
-        safe_evidence = f"acceptance:{run_key}:safe-internal-read"
+        acceptance_evidence = prepare_acceptance_evidence(api, run_key=run_key)
+        evidence_id = str(acceptance_evidence["id"])
+        require(
+            checks,
+            "durable_acceptance_evidence",
+            bool(evidence_id)
+            and acceptance_evidence.get("artifact_type") == "owner_instruction"
+            and acceptance_evidence.get("trust_class") == "authenticated",
+            {
+                "evidence_id": evidence_id,
+                "artifact_type": acceptance_evidence.get("artifact_type"),
+                "trust_class": acceptance_evidence.get("trust_class"),
+            },
+        )
         safe_work_id = create_candidate_work(
             api,
             run_key=run_key,
@@ -293,7 +355,7 @@ def main() -> int:
                 "params": {},
                 "action_class": "internal_read",
                 "expected_effect": "Read the canonical company profile for planning.",
-                "evidence_ids": [safe_evidence],
+                "evidence_ids": [evidence_id],
                 "confidence": 0.95,
                 "reversible": True,
                 "financial_exposure_usd": 0,
@@ -374,7 +436,6 @@ def main() -> int:
             {"node_id": node.get("id") if node else None, "edge_types": sorted(linked_edges)},
         )
 
-        gated_evidence = f"acceptance:{run_key}:large-impact-erpnext"
         gated_work_id = create_candidate_work(
             api,
             run_key=run_key,
@@ -390,7 +451,7 @@ def main() -> int:
                 },
                 "action_class": "erpnext",
                 "expected_effect": "Create one staging-only ERPNext task after approval.",
-                "evidence_ids": [gated_evidence],
+                "evidence_ids": [evidence_id],
                 "confidence": 0.95,
                 "reversible": True,
                 "financial_exposure_usd": 501,
@@ -447,6 +508,7 @@ def main() -> int:
         assess_work(api, gated_work_id)
         assess_work(api, gated_execution_work_id)
         evidence["artifacts"] = {
+            "acceptance_evidence_id": evidence_id,
             "safe_parent_work_id": safe_work_id,
             "safe_candidate_id": safe_candidate.get("id"),
             "safe_execution_work_id": safe_execution_work_id,
