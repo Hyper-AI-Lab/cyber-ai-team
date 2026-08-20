@@ -7347,3 +7347,23 @@
   - `dist/releases/0.3.31.json`.
 - Next step:
   - Promote `0.3.31` backup-first with `LLM_LOCAL_FALLBACK_ENABLED=false`, verify public health and exact images, then record the hosted Mistral 402 condition as the sole blocker to live cognitive acceptance.
+
+### 2026-08-20T23:22:46Z — STEP-295 — Promoted evidence-grounded autonomy with local inference retired
+- Files/services changed:
+  - Promoted immutable release `0.3.31` to staging core, worker, and UI after a fresh PostgreSQL backup.
+  - Applied the ignored staging setting `LLM_LOCAL_FALLBACK_ENABLED=false`; no llama.cpp container, image, or model-cache volume remains active on the host.
+- Commands run:
+  - Dry-run and live `scripts/promote-staging.sh` for release `0.3.31`.
+  - Public `/health` and `/ready`, exact-image and runtime-environment inspection, live Compose smoke, GitHub Actions history inspection, and focused outcome-autonomy smoke.
+- Result:
+  - Backup-first promotion and live Compose smoke passed. Public health/readiness report `0.3.31`, build `8e27dc4e200cee9594066b9d26f2415f8f12a1ec`, and PostgreSQL, Redis, Qdrant, Temporal, and OPA ready.
+  - Core/worker run `cyber-team-core:0.3.31`; UI runs `cyber-team-ui:0.3.31`; the running core reports `LLM_LOCAL_FALLBACK_ENABLED=false`.
+  - GitHub push runs for `8e27dc4` and `1a21a6a`, plus the latest scheduled run, are green.
+  - The focused outcome smoke passed release health and owner authentication, then failed closed before creating evidence, work, candidates, approvals, tools, or side effects because Mistral has 0/5 fresh task qualifications. A direct provider preflight returned HTTP 402.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.31-20260820-231936.dump`.
+  - `dist/promotions/staging/0.3.31-20260820-232214.json`.
+  - `dist/outcome-autonomy/outcome-autonomy-smoke-20260820T232246Z.json`.
+  - GitHub CI runs `32425872049` and `32428144969`.
+- Next step:
+  - Supply a usable zero-spend hosted inference route, run all five capability qualifications, then rerun evidence-to-action-to-outcome acceptance and begin the required uninterrupted 24-hour soak. Do not restore the retired local fallback unless the owner explicitly changes that decision.
