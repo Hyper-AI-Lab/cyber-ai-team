@@ -7332,3 +7332,18 @@
   - Failed pre-hardening smoke: `dist/outcome-autonomy/outcome-autonomy-smoke-20260815T205305Z.json`.
 - Next step:
   - Commit and push the evidence-grounding hardening, run the full immutable release gate, promote backup-first without starting the local inference profile, and rerun the live outcome smoke once hosted inference capacity is available.
+
+### 2026-08-20T23:18:39Z — STEP-294 — Verified immutable 0.3.31 evidence-grounding release
+- Files/services changed:
+  - Built immutable `cyber-team-core:0.3.31` and `cyber-team-ui:0.3.31` images from commit `8e27dc4`.
+  - Removed only the exited local llama.cpp container, its image, and its 2.1 GB model-cache volume after the owner retired that fallback; live Cyber-Team/ERPNext services, databases, backups, and `0.3.29`/`0.3.30` images were preserved.
+- Commands run:
+  - Full `scripts/release-check.sh` gate with quality checks, both PostgreSQL migration rehearsals, isolated Compose smoke, release image builds, and Trivy scans.
+- Result:
+  - All 423 backend tests and all 31 frontend tests passed.
+  - Ruff, compileall, Alembic offline SQL, Python/Node dependency audits, production frontend build/typecheck, secret scan, Google Cloud isolation, FOSS resource policy, Compose config, both PostgreSQL migration rehearsals, isolated Compose smoke, and diff hygiene passed.
+  - Both immutable release images reported zero vulnerabilities. The isolated smoke did not enable or start the local inference profile.
+- Evidence:
+  - `dist/releases/0.3.31.json`.
+- Next step:
+  - Promote `0.3.31` backup-first with `LLM_LOCAL_FALLBACK_ENABLED=false`, verify public health and exact images, then record the hosted Mistral 402 condition as the sole blocker to live cognitive acceptance.
