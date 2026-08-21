@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import uuid
 from datetime import datetime, timedelta
@@ -40,6 +41,8 @@ from cyber_team.db.models import (
     RoleGap,
     RoleManifest,
 )
+
+logger = logging.getLogger(__name__)
 
 DOMAIN_INPUTS = {
     "company_builder": ["company_model", "company_claim", "role_gap"],
@@ -905,7 +908,21 @@ class WorkPortfolioService:
             item = await self._lease_next(agent_id, lease_seconds=lease_seconds)
             if not item:
                 break
-            results.append(await self._execute_work(item))
+            try:
+                results.append(await self._execute_work(item))
+            except Exception as exc:  # noqa: BLE001 - preserve the durable work state.
+                logger.exception(
+                    "Domain work item execution failed",
+                    extra={"work_item_id": item.id, "agent_id": agent_id},
+                )
+                results.append(
+                    await self._finish_work(
+                        item.id,
+                        status="failed",
+                        outcome={"classification": "unhandled_work_execution_error"},
+                        error=type(exc).__name__,
+                    )
+                )
         return {
             "status": "completed",
             "agent_id": agent_id,
@@ -3400,6 +3417,9 @@ class WorkPortfolioService:
                 },
             )
             session.add(review)
+            # The candidate holds a foreign key to the new review, but no ORM
+            # relationship tells SQLAlchemy which INSERT must happen first.
+            await session.flush()
             candidate.observer_review_id = review.id
             candidate.reviewed_at = utc_now()
             envelope["observer_status"] = review_status

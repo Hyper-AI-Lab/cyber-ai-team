@@ -7367,3 +7367,69 @@
   - GitHub CI runs `32425872049` and `32428144969`.
 - Next step:
   - Supply a usable zero-spend hosted inference route, run all five capability qualifications, then rerun evidence-to-action-to-outcome acceptance and begin the required uninterrupted 24-hour soak. Do not restore the retired local fallback unless the owner explicitly changes that decision.
+
+### 2026-08-21T12:46:50Z — STEP-296 — Qualified the replacement hosted Mistral route
+- Files/services changed:
+  - Recreated staging core and worker with the owner-supplied ignored environment value; no credential value was printed, copied, or committed.
+  - Kept `LLM_LOCAL_FALLBACK_ENABLED=false`; no local model service was started.
+- Commands run:
+  - Public health/readiness checks and all five model-capability evaluations through the Cyber-Team LLM gateway.
+  - Focused outcome-autonomy smoke.
+- Result:
+  - Claim extraction, company-model synthesis, strategy generation, domain planning, and Observer review each scored `1.0` against the `0.8` threshold using hosted Mistral.
+  - The replacement key works. The first outcome smoke then failed closed because the action-selection response did not satisfy the exact four-field contract; no candidate or side effect was executed.
+- Evidence:
+  - Model capability run `modelcaprun_b9abb142daa2432780bf90a91abe56b9`.
+  - `dist/outcome-autonomy/outcome-autonomy-smoke-20260821T124650Z.json`.
+- Next step:
+  - Harden governed action selection and preserve fail-closed behavior for malformed model output.
+
+### 2026-08-21T13:35:40Z — STEP-297 — Released bounded action-schema repair as 0.3.32
+- Files/services changed:
+  - Added the exact governed action-selection contract and one bounded schema-repair attempt.
+  - Built and promoted immutable release `0.3.32` after backup.
+- Commands run:
+  - Complete release gate, Trivy image scans, staging promotion, public health/readiness checks, and live Compose smoke.
+- Result:
+  - All 424 backend tests and all 31 frontend tests passed with Ruff, compileall, migrations, audits, FOSS/secret/GCP checks, Compose smoke, and zero image vulnerabilities.
+  - Live retry proved the repair remains fail closed, but Mistral still returned a nonnumeric confidence value.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.32-20260821-133115.dump`.
+  - `dist/promotions/staging/0.3.32-20260821-133353.json`.
+  - `dist/outcome-autonomy/outcome-autonomy-smoke-20260821T133359Z.json`.
+- Next step:
+  - Enforce the JSON Schema through the hosted provider API rather than relying on prompt-only conformance.
+
+### 2026-08-21T14:16:13Z — STEP-298 — Enforced hosted structured output and promoted 0.3.33
+- Files/services changed:
+  - Configured hosted LLM calls to use strict `json_schema` response formatting while preserving the existing local `json_object` contract.
+  - Reclaimed superseded Docker images and build cache without removing current/rollback images, volumes, databases, ERPNext, or backups.
+  - Built and promoted immutable release `0.3.33` after backup.
+- Commands run:
+  - Direct LiteLLM/Mistral schema validation, focused gateway/portfolio tests, complete release gate, Trivy scans, staging promotion, public checks, and live Compose smoke.
+- Result:
+  - All 425 backend tests and all 31 frontend tests passed; all release checks and image scans passed.
+  - The live model returned the exact required disposition, action reference, numeric confidence, and reason code. A subsequent PostgreSQL foreign-key ordering defect caused an HTTP 500 after the valid response; the action candidate remained merely proposed and no tool or external side effect ran.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.33-20260821-141340.dump`.
+  - `dist/promotions/staging/0.3.33-20260821-141603.json`.
+  - `dist/outcome-autonomy/outcome-autonomy-smoke-20260821T141613Z.json`.
+- Next step:
+  - Correct Observer-review persistence ordering, add PostgreSQL-like foreign-key coverage, and ensure unexpected executor failures release durable leases.
+
+### 2026-08-21T14:40:56Z — STEP-299 — Hardened Observer persistence and domain-loop failure recovery
+- Files/services changed:
+  - Explicitly flushed each new Observer review before assigning its foreign key to an autonomous action candidate.
+  - Added a domain-loop exception boundary that logs the failure, records a terminal failed work item, and releases its lease instead of returning an untracked HTTP 500.
+  - Enabled SQLite foreign-key enforcement for the work-portfolio suite and corrected dependent test setup ordering.
+- Commands run:
+  - Reproduced the live PostgreSQL exception against the proposed staging candidate without executing its tool.
+  - Work-portfolio suite, full backend Pytest, Ruff, compileall, and focused durable-failure regression tests.
+- Result:
+  - Root cause confirmed as a PostgreSQL foreign-key ordering violation between `observer_reviews` and `autonomous_action_candidates`.
+  - The 49-test foreign-key-aware portfolio suite passed; the full 425-test backend suite passed before the additional durable-failure regression, and all three final focused regressions pass.
+  - No external side effect occurred; local inference remains disabled.
+- Evidence:
+  - Proposed staging candidate `actioncand_d841846ff64b48aa88be199dd1b664c9` and parent work item `work_c32bc8331a3b447095f4d8e305be1140`.
+- Next step:
+  - Commit and push the persistence hardening, build/promote `0.3.34`, rerun the unchanged outcome-autonomy acceptance, and begin the 24-hour staging soak only after acceptance passes.

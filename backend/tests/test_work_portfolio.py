@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -124,6 +125,13 @@ class FakeActionTools:
 @pytest.fixture
 async def portfolio_session_factory(monkeypatch):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+
+    @sqlalchemy_event.listens_for(engine.sync_engine, "connect")
+    def enforce_foreign_keys(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -337,7 +345,11 @@ async def test_historical_event_disposition_is_projected_to_source_signal(
     routed_event.disposition_reason = "Evidence was informational."
     routed_event.resolved_at = now
     async with portfolio_session_factory() as session:
-        session.add_all([source, signal, routed_event])
+        session.add(source)
+        await session.flush()
+        session.add(signal)
+        await session.flush()
+        session.add(routed_event)
         await session.commit()
 
     result = await WorkPortfolioService().reconcile_signal_dispositions()
@@ -366,6 +378,7 @@ async def test_historical_successful_audit_work_is_reconciled_but_failure_remain
     )
     async with portfolio_session_factory() as session:
         session.add(source)
+        await session.flush()
         for suffix, outcome in (("success", "success"), ("failed", "failed")):
             signal = CompanySignal(
                 id=f"signal-{suffix}",
@@ -416,7 +429,13 @@ async def test_historical_successful_audit_work_is_reconciled_but_failure_remain
                 work_item_id=work.id,
                 actor="business_event_router",
             )
-            session.add_all([signal, audit_event, work, delivery, disposition])
+            session.add(signal)
+            await session.flush()
+            session.add(audit_event)
+            await session.flush()
+            session.add(work)
+            await session.flush()
+            session.add_all([delivery, disposition])
         await session.commit()
 
     result = await WorkPortfolioService().reconcile_internal_audit_feedback()
@@ -574,6 +593,43 @@ async def test_role_loop_completes_advisory_work_without_side_effects(
     assert context["active_family_agent_count"] == 1
     assert context["unresolved_role_gaps"] == []
     assert result["items"][0]["actual_outcome"]["grounding"]["status"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_domain_loop_records_unhandled_execution_failure_and_releases_lease(
+    portfolio_session_factory,
+    monkeypatch,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    service = WorkPortfolioService()
+    await service.ensure_active_agent_mandates()
+    work = await service.create_work_item(
+        title="Exercise the durable failure boundary",
+        description="Verify unexpected executor errors release their durable lease.",
+        work_type="domain_assessment",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={},
+        acceptance_criteria=["failure_recorded"],
+        idempotency_key="unhandled-execution-failure",
+    )
+    monkeypatch.setattr(
+        service,
+        "_execute_work",
+        AsyncMock(side_effect=RuntimeError("synthetic executor failure")),
+    )
+
+    result = await service.run_domain_loop("knowledge-agent", prepare=False)
+
+    item = result["items"][0]
+    assert item["id"] == work["id"]
+    assert item["status"] == "failed"
+    assert item["lease_owner"] is None
+    assert item["lease_expires_at"] is None
+    assert item["actual_outcome"] == {
+        "classification": "unhandled_work_execution_error",
+        "error": "RuntimeError",
+    }
 
 
 @pytest.mark.asyncio
@@ -2061,15 +2117,15 @@ async def test_action_selection_rejects_quarantined_signal_evidence(
 ):
     await seed_agents_and_objective(portfolio_session_factory)
     async with portfolio_session_factory() as session:
-        session.add(
-            CompanySource(
-                id="source-quarantined",
-                company_namespace="company:test",
-                source_key="test:quarantined",
-                source_type="document",
-                name="Quarantined test source",
-            )
+        source = CompanySource(
+            id="source-quarantined",
+            company_namespace="company:test",
+            source_key="test:quarantined",
+            source_type="document",
+            name="Quarantined test source",
         )
+        session.add(source)
+        await session.flush()
         session.add(
             CompanySignal(
                 id="signal-quarantined",
