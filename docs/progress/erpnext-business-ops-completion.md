@@ -7433,3 +7433,24 @@
   - Proposed staging candidate `actioncand_d841846ff64b48aa88be199dd1b664c9` and parent work item `work_c32bc8331a3b447095f4d8e305be1140`.
 - Next step:
   - Commit and push the persistence hardening, build/promote `0.3.34`, rerun the unchanged outcome-autonomy acceptance, and begin the 24-hour staging soak only after acceptance passes.
+
+### 2026-08-21T15:30:57Z — STEP-300 — Promoted 0.3.34 and passed evidence-to-outcome acceptance
+- Files/services changed:
+  - Published persistence hardening commit `a23a00d` and built immutable core/UI release `0.3.34`.
+  - Promoted staging core, worker, and UI after a fresh PostgreSQL backup; local inference remained disabled.
+  - Made the outcome-autonomy harness accept either a policy-staged high-impact candidate or a prudent model refusal, while independently requiring the idempotent ERPNext OPA shadow case to prove the financial limit with zero side effects.
+- Commands run:
+  - Complete release gate, 426 backend tests, 31 frontend tests, Ruff, compileall, Alembic offline SQL, both PostgreSQL migration rehearsals, dependency/license/secret/GCP checks, isolated Compose smoke, immutable image builds, and Trivy scans.
+  - Dry-run/live staging promotion, public Compose smoke, and two live outcome-autonomy acceptance runs.
+- Result:
+  - Release and promotion passed; both images have zero detected vulnerabilities.
+  - The successful live scenario acquired authenticated durable evidence, selected a safe immutable action using hosted Mistral, persisted Observer review in PostgreSQL, passed OPA, executed `company_profile_read`, recorded outcome assessment/reflection, and linked `compiled_to`/`measured_by` operation-graph edges.
+  - The model refused the synthetic ERPNext action as outside mandate authority. The separate OPA shadow case validated `financial_action_limit_exceeded` at `$501` with `external_side_effect_executed=false`.
+  - No ERPNext mutation or external communication occurred. The prior diagnostic candidate was explicitly blocked as superseded.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.34-20260821-151120.dump`.
+  - `dist/promotions/staging/0.3.34-20260821-151348.json`.
+  - Successful acceptance: `dist/outcome-autonomy/outcome-autonomy-smoke-20260821T153002Z.json`.
+  - Safe candidate `actioncand_82e5a4a88f6e443b97e709dc433cd233`; outcome `outcome_561f91e8d0fe49f196b4f95a578657f9`; policy case `actcase_6878dcf43c474503abd758d300699b5a`.
+- Next step:
+  - Commit/push the deterministic acceptance harness, start the uninterrupted 24-hour `0.3.34` staging soak, and inspect its first sample before leaving it to run.
