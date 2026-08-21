@@ -1434,9 +1434,7 @@ async def test_cancel_generated_work_cancels_descendants_and_records_evidence(
             await session.get(BusinessWorkItem, item_id) for item_id in result["cancelled_ids"]
         ]
         independent = await session.get(BusinessWorkItem, unrelated["id"])
-        candidate = await session.get(
-            AutonomousActionCandidate, "action-candidate-cancelled"
-        )
+        candidate = await session.get(AutonomousActionCandidate, "action-candidate-cancelled")
     assert all(item.status == "cancelled" for item in cancelled)
     assert all(
         item.actual_outcome["classification"] == "owner_cancelled_invalid_generated_work"
@@ -1870,9 +1868,7 @@ async def test_domain_agent_selects_immutable_action_candidate_by_reference(
     await seed_agents_and_objective(portfolio_session_factory)
     await seed_verified_event(portfolio_session_factory)
     candidate_ref = "candidate-option:memory-read"
-    candidate = json.loads(action_candidate_assessment())["proposed_work"][0][
-        "action_candidate"
-    ]
+    candidate = json.loads(action_candidate_assessment())["proposed_work"][0]["action_candidate"]
     manager = AsyncMock()
     manager.invoke_agent.return_value = action_candidate_ref_assessment(candidate_ref)
     tools = FakeActionTools()
@@ -1891,9 +1887,7 @@ async def test_domain_agent_selects_immutable_action_candidate_by_reference(
         assigned_agent_id="knowledge-agent",
         payload={
             "evidence_ids": ["ev-1"],
-            "action_candidate_options": [
-                {"id": candidate_ref, "candidate": candidate}
-            ],
+            "action_candidate_options": [{"id": candidate_ref, "candidate": candidate}],
         },
         acceptance_criteria=["next_action_recorded"],
         idempotency_key="typed-action-ref-parent",
@@ -1912,15 +1906,71 @@ async def test_domain_agent_selects_immutable_action_candidate_by_reference(
     assert stored.status == "executed"
     selection_call = manager.invoke_agent.await_args_list[0]
     assert selection_call.kwargs["memory_limit"] == 1
-    assert selection_call.kwargs["max_tokens"] == 64
+    assert selection_call.kwargs["max_tokens"] == 128
     assert selection_call.kwargs["temperature"] == 0.0
-    assert selection_call.kwargs["json_schema"] == (
-        portfolio_module.ACTION_SELECTION_RESULT_SCHEMA
-    )
+    assert selection_call.kwargs["json_schema"] == (portfolio_module.ACTION_SELECTION_RESULT_SCHEMA)
     assert "candidate-option:memory-read" in selection_call.args[1]
     assert "memory_recall" in selection_call.args[1]
     assert "evidence.company_profile.current" in selection_call.args[1]
     assert len(selection_call.args[1]) < 1800
+
+
+@pytest.mark.asyncio
+async def test_domain_agent_repairs_action_selection_schema_once(
+    portfolio_session_factory,
+):
+    await seed_agents_and_objective(portfolio_session_factory)
+    await seed_verified_event(portfolio_session_factory)
+    candidate_ref = "candidate-option:memory-read-repair"
+    candidate = json.loads(action_candidate_assessment())["proposed_work"][0]["action_candidate"]
+    manager = AsyncMock()
+    manager.invoke_agent.side_effect = [
+        json.dumps(
+            {
+                "governed_action": {
+                    "ref": candidate_ref,
+                    "decision": "supported",
+                }
+            }
+        ),
+        action_candidate_ref_assessment(candidate_ref),
+    ]
+    service = WorkPortfolioService(
+        agent_manager=manager,
+        company_intelligence_service=FakeIntelligence(),
+        tool_registry=FakeActionTools(),
+        action_policy_service=AllowActionPolicy(),
+    )
+    await service.ensure_active_agent_mandates()
+    await service.create_work_item(
+        title="Repair a governed action selection",
+        description="Select the supplied candidate by reference.",
+        work_type="domain_assessment",
+        company_namespace="company:test",
+        assigned_agent_id="knowledge-agent",
+        payload={
+            "evidence_ids": ["ev-1"],
+            "action_candidate_options": [{"id": candidate_ref, "candidate": candidate}],
+        },
+        acceptance_criteria=["next_action_recorded"],
+        idempotency_key="typed-action-ref-schema-repair",
+    )
+
+    proposed = await service.run_domain_loop("knowledge-agent", prepare=False)
+
+    item = proposed["items"][0]
+    assert item["status"] == "completed"
+    assert item["actual_outcome"]["structured_output_repair"] == {
+        "attempted": True,
+        "status": "repaired",
+        "initial_error": "Agent action selection did not match its schema.",
+    }
+    assert item["actual_outcome"]["action_candidate_ids"]
+    assert manager.invoke_agent.await_count == 2
+    repair_call = manager.invoke_agent.await_args_list[1]
+    assert repair_call.kwargs["source_type"] == "agent_mandate_action_schema_repair"
+    assert repair_call.kwargs["max_tokens"] == 128
+    assert repair_call.kwargs["json_schema"] == (portfolio_module.ACTION_SELECTION_RESULT_SCHEMA)
 
 
 @pytest.mark.asyncio
@@ -1929,9 +1979,7 @@ async def test_action_selection_blocks_unknown_evidence_before_model_invocation(
 ):
     await seed_agents_and_objective(portfolio_session_factory)
     candidate_ref = "candidate-option:unknown-evidence"
-    candidate = json.loads(action_candidate_assessment())["proposed_work"][0][
-        "action_candidate"
-    ]
+    candidate = json.loads(action_candidate_assessment())["proposed_work"][0]["action_candidate"]
     manager = AsyncMock()
     service = WorkPortfolioService(
         agent_manager=manager,
@@ -1948,9 +1996,7 @@ async def test_action_selection_blocks_unknown_evidence_before_model_invocation(
         assigned_agent_id="knowledge-agent",
         payload={
             "evidence_ids": ["ev-1"],
-            "action_candidate_options": [
-                {"id": candidate_ref, "candidate": candidate}
-            ],
+            "action_candidate_options": [{"id": candidate_ref, "candidate": candidate}],
         },
         acceptance_criteria=["unsupported_action_blocked"],
         idempotency_key="typed-action-unverified-evidence",
@@ -1977,9 +2023,7 @@ async def test_action_selection_rejects_cross_namespace_evidence(
         namespace="company:other",
     )
     candidate_ref = "candidate-option:cross-namespace"
-    candidate = json.loads(action_candidate_assessment())["proposed_work"][0][
-        "action_candidate"
-    ]
+    candidate = json.loads(action_candidate_assessment())["proposed_work"][0]["action_candidate"]
     candidate["evidence_ids"] = ["ev-private"]
     manager = AsyncMock()
     service = WorkPortfolioService(
@@ -1997,9 +2041,7 @@ async def test_action_selection_rejects_cross_namespace_evidence(
         assigned_agent_id="knowledge-agent",
         payload={
             "evidence_ids": ["ev-private"],
-            "action_candidate_options": [
-                {"id": candidate_ref, "candidate": candidate}
-            ],
+            "action_candidate_options": [{"id": candidate_ref, "candidate": candidate}],
         },
         acceptance_criteria=["namespace_leakage_blocked"],
         idempotency_key="typed-action-cross-namespace-evidence",
@@ -2045,9 +2087,7 @@ async def test_action_selection_rejects_quarantined_signal_evidence(
         )
         await session.commit()
     candidate_ref = "candidate-option:quarantined"
-    candidate = json.loads(action_candidate_assessment())["proposed_work"][0][
-        "action_candidate"
-    ]
+    candidate = json.loads(action_candidate_assessment())["proposed_work"][0]["action_candidate"]
     candidate["evidence_ids"] = ["signal-quarantined"]
     manager = AsyncMock()
     service = WorkPortfolioService(
@@ -2065,9 +2105,7 @@ async def test_action_selection_rejects_quarantined_signal_evidence(
         assigned_agent_id="knowledge-agent",
         payload={
             "evidence_ids": ["signal-quarantined"],
-            "action_candidate_options": [
-                {"id": candidate_ref, "candidate": candidate}
-            ],
+            "action_candidate_options": [{"id": candidate_ref, "candidate": candidate}],
         },
         acceptance_criteria=["quarantined_evidence_blocked"],
         idempotency_key="typed-action-quarantined-evidence",
@@ -2077,9 +2115,7 @@ async def test_action_selection_rejects_quarantined_signal_evidence(
 
     item = result["items"][0]
     assert item["status"] == "blocked"
-    assert item["actual_outcome"]["blocked_evidence_ids"] == [
-        "signal-quarantined"
-    ]
+    assert item["actual_outcome"]["blocked_evidence_ids"] == ["signal-quarantined"]
     manager.invoke_agent.assert_not_awaited()
 
 
