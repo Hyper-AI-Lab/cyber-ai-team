@@ -448,6 +448,48 @@ async def test_local_invoke_uses_llama_cpp_schema_constrained_response_format(
 
 
 @pytest.mark.asyncio
+async def test_hosted_invoke_uses_strict_json_schema_response_format(monkeypatch):
+    monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)
+    seen = {}
+
+    async def fake_completion(**kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"claims": []}'))],
+            usage=SimpleNamespace(total_tokens=8),
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=fake_completion),
+    )
+    schema = {
+        "type": "object",
+        "properties": {"claims": {"type": "array"}},
+        "required": ["claims"],
+        "additionalProperties": False,
+    }
+
+    result = await LLMGateway().invoke_json(
+        "Extract claims.",
+        "Evidence.",
+        json_schema=schema,
+    )
+
+    assert result == {"claims": []}
+    assert seen["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "cyber_team_response",
+            "strict": True,
+            "schema": schema,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_capability_gate_routes_to_qualified_local_model(monkeypatch):
     monkeypatch.setattr(settings, "mistral_api_key", "test-key")
     monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)

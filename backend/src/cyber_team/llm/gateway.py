@@ -303,7 +303,14 @@ class LLMGateway:
     def _structured_response_format(*, route: dict, schema: dict) -> dict:
         if route.get("local"):
             return {"type": "json_object", "schema": schema}
-        return {"type": "json_object"}
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "cyber_team_response",
+                "strict": True,
+                "schema": schema,
+            },
+        }
 
     async def validate_provider(self, *, force: bool = False) -> dict:
         now = utc_now()
