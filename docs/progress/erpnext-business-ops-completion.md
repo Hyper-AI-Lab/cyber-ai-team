@@ -7454,3 +7454,20 @@
   - Safe candidate `actioncand_82e5a4a88f6e443b97e709dc433cd233`; outcome `outcome_561f91e8d0fe49f196b4f95a578657f9`; policy case `actcase_6878dcf43c474503abd758d300699b5a`.
 - Next step:
   - Commit/push the deterministic acceptance harness, start the uninterrupted 24-hour `0.3.34` staging soak, and inspect its first sample before leaving it to run.
+
+### 2026-08-21T15:35:19Z — STEP-301 — Started clean 24-hour autonomous-company soak
+- Files/services changed:
+  - Started the isolated `cyberteam-staging-soak` monitor from `cyber-team-core:0.3.34` with a 24-hour duration and five-minute sample interval.
+  - Stopped and discarded an initial failed attempt after its first sample correctly detected a transient Mistral rate-limit observation.
+- Commands run:
+  - Owner-authenticated one-task model capability evaluation and advisory-only Company Discovery Agent chat to record newer provider success.
+  - Forced operations-readiness refresh, soak restart, and first-sample evidence inspection.
+- Result:
+  - The provider recovery call succeeded and the refreshed readiness state is `ready` with zero blockers.
+  - Clean soak run `staging-soak-20260821T153502Z` is running against exact version `0.3.34` and build `a23a00d43aeef7b3effd56371aeb952ddce66871`.
+  - First sample passed health, owner login, readiness, finite signal disposition, bounded claim extraction, complete mandates, finite events, bounded work portfolio, current outcomes, task-qualified inference, current action candidates, and durable delivery.
+- Evidence:
+  - `dist/soak/staging-soak-20260821T153502Z.state.json`.
+  - `dist/soak/staging-soak-20260821T153502Z.jsonl`.
+- Next step:
+  - Allow the uninterrupted soak to run until approximately `2026-08-22T15:35:03Z`, then verify its terminal summary has zero failed samples before declaring the v3 rollout/closure milestone complete.
