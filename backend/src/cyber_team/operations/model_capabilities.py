@@ -151,7 +151,7 @@ class ModelCapabilityService:
         route_hint = "local" if provider == "llama_cpp" else None
         run_id = f"modelcaprun_{uuid.uuid4().hex}"
         records = []
-        for task_type in requested:
+        for index, task_type in enumerate(requested):
             records.append(
                 await self._evaluate_task(
                     run_id=run_id,
@@ -161,6 +161,13 @@ class ModelCapabilityService:
                     task_type=task_type,
                 )
             )
+            if index < len(requested) - 1:
+                interval = max(
+                    0.0,
+                    settings.model_capability_evaluation_interval_seconds,
+                )
+                if interval:
+                    await asyncio.sleep(interval)
         passed = sum(item["status"] == "passed" for item in records)
         result = {
             "run_id": run_id,
@@ -299,23 +306,26 @@ class ModelCapabilityService:
         summary = await self.summary()
         if not settings.model_capability_enforcement_enabled:
             return {**summary, "refreshed": False}
-        if not self._refresh_required(summary):
+        tasks = self._refresh_tasks(summary)
+        if not tasks:
             return {**summary, "refreshed": False}
 
         # Temporal signal and interval workflows share a worker process and can
         # overlap. Recheck under one lock so they do not duplicate provider calls.
         async with _refresh_lock:
             summary = await self.summary()
-            if not self._refresh_required(summary):
+            tasks = self._refresh_tasks(summary)
+            if not tasks:
                 return {**summary, "refreshed": False}
             result = await self.evaluate(
-                tasks=settings.model_capability_required_task_items,
+                tasks=tasks,
                 actor=actor,
             )
             refreshed = await self.summary()
             return {
                 **refreshed,
                 "refreshed": True,
+                "refreshed_tasks": tasks,
                 "evaluation_run_id": result["run_id"],
             }
 
@@ -379,26 +389,35 @@ class ModelCapabilityService:
         return {"count": len(records), "items": [self._to_dict(item) for item in records]}
 
     @staticmethod
-    def _refresh_required(summary: dict[str, Any]) -> bool:
+    def _refresh_tasks(summary: dict[str, Any]) -> list[str]:
         now = utc_now()
         refresh_at = now + timedelta(
             seconds=max(60, settings.model_capability_refresh_before_seconds)
         )
-        items = summary.get("items") or []
-        if len(items) != len(settings.model_capability_required_task_items):
-            return True
-        for item in items:
+        items = {
+            str(item.get("task_type")): item
+            for item in summary.get("items") or []
+            if item.get("task_type")
+        }
+        refresh = []
+        for task_type in settings.model_capability_required_task_items:
+            item = items.get(task_type)
+            if not item:
+                refresh.append(task_type)
+                continue
             if item.get("status") != "passed":
-                return True
+                refresh.append(task_type)
+                continue
             expires_at = item.get("expires_at")
             if not expires_at:
-                return True
+                refresh.append(task_type)
+                continue
             try:
                 if ModelCapabilityService._parse_timestamp(str(expires_at)) <= refresh_at:
-                    return True
+                    refresh.append(task_type)
             except ValueError:
-                return True
-        return False
+                refresh.append(task_type)
+        return refresh
 
     @staticmethod
     def _parse_timestamp(value: str):

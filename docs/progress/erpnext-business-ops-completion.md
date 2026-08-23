@@ -7492,3 +7492,24 @@
   - Staging worker exception: `company_model_revisions_observer_review_id_fkey`.
 - Next step:
   - Commit the durability fix, build/promote `0.3.35` after backup, refresh all five Mistral capability checks, drain pending events through successful autonomy cycles, and start a replacement acceptance soak only after readiness is continuously clean.
+
+### 2026-08-23T12:22:11Z — STEP-303 — Proved PostgreSQL recovery and bounded hosted-model qualification traffic
+- Files/services changed:
+  - Built and promoted immutable staging release `0.3.35` from commit `a10926a` after a fresh PostgreSQL backup.
+  - Added configurable pacing between multi-task model qualification calls.
+  - Changed pre-expiry renewal to evaluate only missing, failed, or near-expiry tasks while still requiring all five contracts for readiness.
+- Commands run:
+  - Complete `0.3.35` release gate, backup-first staging promotion, public Compose smoke, and one live owner-triggered autonomous-company cycle.
+  - Inspected live capability evidence, then ran 34 focused tests and the complete backend/Ruff suites after pacing hardening.
+- Result:
+  - `0.3.35` passed 429 backend tests, 31 frontend tests, migrations, dependency/secret/FOSS/GCP checks, Compose smoke, and zero-finding image scans.
+  - Live company cycle completed without the prior PostgreSQL foreign-key violation, persisted company-model revision 13, routed 200 pending events, and assessed 23 outcomes.
+  - Automatic capability refresh ran. Four Mistral task contracts scored `1.0`; the fifth, Observer review, failed closed with `RateLimitError`, confirming five back-to-back calls exceed the current hosted tier's request envelope.
+  - The pacing/selective-retry hardening passes 430 backend tests, Ruff, and diff hygiene. It does not enable local inference or paid usage.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.35-20260823-120922.dump`.
+  - `dist/promotions/staging/0.3.35-20260823-121119.json`.
+  - Capability run `modelcaprun_5c7db70c9aff496786dfeccf925a715a`.
+  - Live company-model revision `cmr_c72f8453845646beaac36269c1ac7b6a`.
+- Next step:
+  - Commit and release the pacing fix as `0.3.36`, retry only the failed Observer contract after the provider window clears, drain the remaining event backlog, verify readiness, and start a replacement soak.

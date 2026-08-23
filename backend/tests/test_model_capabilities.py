@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -54,6 +55,7 @@ async def capability_session_factory(monkeypatch):
     monkeypatch.setattr(settings, "model_capability_enforcement_enabled", True)
     monkeypatch.setattr(settings, "model_capability_min_score", 0.8)
     monkeypatch.setattr(settings, "model_capability_ttl_seconds", 3600)
+    monkeypatch.setattr(settings, "model_capability_evaluation_interval_seconds", 0)
     monkeypatch.setattr(
         settings,
         "model_capability_required_tasks",
@@ -188,7 +190,8 @@ async def test_ensure_fresh_rechecks_complete_suite_before_expiry(
     assert result["qualified"] == len(CAPABILITY_CASES)
     assert result["refreshed"] is True
     assert result["evaluation_run_id"].startswith("modelcaprun_")
-    assert len(gateway.calls) == len(CAPABILITY_CASES) + 1
+    assert set(result["refreshed_tasks"]) == set(CAPABILITY_CASES) - {"observer_review"}
+    assert len(gateway.calls) == len(CAPABILITY_CASES)
 
 
 @pytest.mark.asyncio
@@ -228,3 +231,20 @@ async def test_ensure_fresh_renews_full_suite_inside_refresh_window(
     assert result["status"] == "ready"
     assert result["refreshed"] is True
     assert len(gateway.calls) == len(CAPABILITY_CASES) * 2
+
+
+@pytest.mark.asyncio
+async def test_evaluation_paces_multiple_provider_calls(
+    capability_session_factory,
+    monkeypatch,
+):
+    gateway = FakeGateway()
+    service = ModelCapabilityService(llm_gateway=gateway)
+    sleep = AsyncMock()
+    monkeypatch.setattr(capability_module.asyncio, "sleep", sleep)
+    monkeypatch.setattr(settings, "model_capability_evaluation_interval_seconds", 20)
+
+    await service.evaluate()
+
+    assert sleep.await_count == len(CAPABILITY_CASES) - 1
+    assert all(call.args == (20,) for call in sleep.await_args_list)
