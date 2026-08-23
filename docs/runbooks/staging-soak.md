@@ -16,6 +16,11 @@ The launcher uses the exact image running in `cyberteam-staging-core`, host netw
 a read-only environment mount, and a writable `dist/soak` evidence mount. The detached
 container is named `cyberteam-staging-soak` and removes itself after completion.
 
+Fresh signals, events, claim-extraction retries, and outcome assessments that remain
+inside their configured processing windows are healthy processing. Stale pending
+signals, unexplained events, expired leases, stale extraction failures, stale
+unassessed outcomes, or expired model qualifications fail the sample.
+
 ## Inspect progress
 
 ```bash

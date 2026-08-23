@@ -61,6 +61,56 @@ def test_autonomy_gate_requires_complete_evidence_to_outcome_loop():
     assert all(detail["checks"].values())
 
 
+def test_autonomy_gate_allows_fresh_in_window_processing():
+    readiness = _readiness()
+    sections = readiness["autonomous_company"]["sections"]
+    sections["company_signals"].update(
+        {"status": "processing", "stale_pending": 0}
+    )
+    sections["business_events"].update(
+        {"status": "processing", "stale_unexplained": 0, "unexplained": 0}
+    )
+    sections["claim_extraction"].update(
+        {"status": "retrying", "expired_leases": 0, "stale_failed": 0}
+    )
+    sections["outcome_learning"].update(
+        {"status": "processing", "stale_unassessed_work": 0}
+    )
+
+    passed, detail = staging_soak.autonomy_gate(readiness)
+
+    assert passed is True
+    assert detail["checks"]["signals_finite"] is True
+    assert detail["checks"]["events_finite"] is True
+    assert detail["checks"]["extraction_bounded"] is True
+    assert detail["checks"]["outcomes_current"] is True
+
+
+def test_autonomy_gate_rejects_stale_processing_backlog():
+    readiness = _readiness()
+    sections = readiness["autonomous_company"]["sections"]
+    sections["company_signals"].update(
+        {"status": "processing", "stale_pending": 1}
+    )
+    sections["business_events"].update(
+        {"status": "processing", "stale_unexplained": 1, "unexplained": 1}
+    )
+    sections["claim_extraction"].update(
+        {"status": "retrying", "expired_leases": 1, "stale_failed": 1}
+    )
+    sections["outcome_learning"].update(
+        {"status": "processing", "stale_unassessed_work": 1}
+    )
+
+    passed, detail = staging_soak.autonomy_gate(readiness)
+
+    assert passed is False
+    assert detail["checks"]["signals_finite"] is False
+    assert detail["checks"]["events_finite"] is False
+    assert detail["checks"]["extraction_bounded"] is False
+    assert detail["checks"]["outcomes_current"] is False
+
+
 def test_autonomy_gate_fails_for_unassessed_outcomes_or_unqualified_model():
     readiness = _readiness()
     sections = readiness["autonomous_company"]["sections"]

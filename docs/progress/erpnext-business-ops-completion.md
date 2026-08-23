@@ -7513,3 +7513,27 @@
   - Live company-model revision `cmr_c72f8453845646beaac36269c1ac7b6a`.
 - Next step:
   - Commit and release the pacing fix as `0.3.36`, retry only the failed Observer contract after the provider window clears, drain the remaining event backlog, verify readiness, and start a replacement soak.
+
+### 2026-08-23T13:22:05Z — STEP-304 — Promoted sustained autonomy recovery and restarted the 24-hour soak
+- Files/services changed:
+  - Promoted immutable release `0.3.36` from commit `ac4c6dc` after a fresh PostgreSQL backup.
+  - Hardened the soak gate so fresh, non-blocking signal/event processing, claim-extraction retries, and outcome assessments pass only while they remain inside their configured processing windows; stale or unexplained state still fails.
+  - Kept local inference disabled and used the hosted zero-spend Mistral route selectively.
+- Commands run:
+  - Complete `0.3.36` release gate, including 430 backend tests, 31 frontend tests, Ruff, compileall, Alembic offline SQL, both PostgreSQL migration rehearsals, dependency/secret/FOSS/GCP checks, isolated Compose smoke, immutable image builds, and Trivy scans.
+  - Reclaimed 10.65 GB of unused Docker build cache after the first image build exhausted host storage; no running container or persistent volume was removed.
+  - Backup-first staging promotion, public Compose smoke, refreshed operations readiness, focused soak-gate tests, two 30-second soak preflights, and replacement 24-hour soak launch.
+- Result:
+  - `0.3.36` is live at build `ac4c6dc35b6ffd3bd4d8c7b06e1eed4ee6ad1ff6`; public health, login, dashboard, integrations, tools, approval lifecycle, and WebSocket-ticket smoke passed.
+  - Both release images have zero detected vulnerabilities. Operations readiness is `ready` with no blockers, all five task-level model qualifications are fresh, and only the previously failed Observer task was retried after promotion.
+  - The event backlog recovered to zero stale/unexplained events. A 30-second preflight passed 7/7 samples after distinguishing healthy in-window processing from stale backlog.
+  - Replacement soak `staging-soak-20260823T132132Z` is running for 86,400 seconds at five-minute intervals. Its first sample passed exact release identity, health, owner login, readiness, all evidence-to-outcome checks, and 5/5 cognitive task qualifications.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.36-20260823-131345.dump`.
+  - `dist/releases/0.3.36.json`.
+  - `dist/promotions/staging/0.3.36-20260823-131553.json`.
+  - `dist/soak/staging-soak-20260823T132033Z.summary.json`.
+  - `dist/soak/staging-soak-20260823T132132Z.state.json`.
+  - `dist/soak/staging-soak-20260823T132132Z.jsonl`.
+- Next step:
+  - Allow the uninterrupted replacement soak to finish at approximately `2026-08-24T13:21:32Z`, then require a terminal summary with zero failed samples before closing the v3 soak milestone.

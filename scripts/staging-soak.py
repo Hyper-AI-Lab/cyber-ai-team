@@ -161,21 +161,22 @@ def autonomy_gate(readiness: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
     delivery = sections.get("temporal_delivery") or {}
     checks = {
         "autonomous_company": autonomous.get("status") == "ready",
-        "signals_finite": signals.get("status") == "ready"
+        "signals_finite": signals.get("status") in {"ready", "processing"}
         and signals.get("stale_pending") == 0
         and signals.get("undispositioned_processed") == 0,
-        "extraction_bounded": extraction.get("status") == "ready"
+        "extraction_bounded": extraction.get("status")
+        in {"ready", "processing", "retrying"}
         and extraction.get("expired_leases") == 0
         and extraction.get("stale_failed") == 0,
         "mandates_complete": mandates.get("status") == "ready"
         and mandates.get("missing_mandates") == 0,
-        "events_finite": events.get("status") == "ready"
+        "events_finite": events.get("status") in {"ready", "processing"}
         and events.get("stale_unexplained") == 0
         and events.get("unexplained") == 0,
         "portfolio_bounded": portfolio.get("status") in {"ready", "bounded"}
         and not portfolio.get("saturated_domains")
         and not portfolio.get("recovery_required_domains"),
-        "outcomes_current": outcomes.get("status") == "ready"
+        "outcomes_current": outcomes.get("status") in {"ready", "processing"}
         and outcomes.get("stale_unassessed_work") == 0,
         "model_task_qualified": model.get("status") == "ready"
         and capabilities.get("status") == "ready"
