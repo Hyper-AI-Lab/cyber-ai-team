@@ -158,6 +158,7 @@ async def lifespan(app: FastAPI):
         work_portfolio_service=app.state.work_portfolio_service,
         outcome_learning_service=app.state.outcome_learning_service,
         action_policy_service=app.state.action_policy_service,
+        model_capability_service=app.state.model_capability_service,
         audit_service=app.state.audit_service,
     )
     app.state.temporal_autonomy_controller = TemporalAutonomyController()

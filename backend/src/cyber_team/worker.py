@@ -98,6 +98,7 @@ async def activity_services():
         work_portfolio_service=work_portfolio,
         outcome_learning_service=outcomes,
         action_policy_service=action_policy,
+        model_capability_service=model_capabilities,
         audit_service=audit,
     )
     memory_steward = MemoryStewardService(

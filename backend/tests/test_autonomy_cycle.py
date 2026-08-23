@@ -35,6 +35,8 @@ async def test_company_cycle_runs_evidence_to_outcome_sequence():
     }
     policy = AsyncMock()
     policy.ensure_default_policies.return_value = {"created": 0}
+    capabilities = AsyncMock()
+    capabilities.ensure_fresh.return_value = {"status": "ready", "refreshed": False}
     audit = AsyncMock()
     service = AutonomousCompanyCycleService(
         intelligence_service=intelligence,
@@ -42,6 +44,7 @@ async def test_company_cycle_runs_evidence_to_outcome_sequence():
         work_portfolio_service=work,
         outcome_learning_service=outcomes,
         action_policy_service=policy,
+        model_capability_service=capabilities,
         audit_service=audit,
     )
 
@@ -51,6 +54,10 @@ async def test_company_cycle_runs_evidence_to_outcome_sequence():
     assert result["event_ids"] == ["event-1"]
     assert result["domain_work"] == {"agents": 3, "processed": 2}
     assert result["outcomes"]["assessed"] == 2
+    assert result["model_capability_qualification"]["status"] == "ready"
+    capabilities.ensure_fresh.assert_awaited_once_with(
+        actor="chief_operating_agent_scheduler"
+    )
     intelligence.discover_company_model.assert_awaited_once_with(
         acquire=False,
         activate_if_ready=True,

@@ -35,6 +35,7 @@ class AutonomousCompanyCycleService:
         work_portfolio_service,
         outcome_learning_service,
         action_policy_service,
+        model_capability_service=None,
         audit_service=None,
     ) -> None:
         self._intelligence = intelligence_service
@@ -42,6 +43,7 @@ class AutonomousCompanyCycleService:
         self._work = work_portfolio_service
         self._outcomes = outcome_learning_service
         self._policy = action_policy_service
+        self._model_capabilities = model_capability_service
         self._audit = audit_service
 
     async def run(
@@ -51,6 +53,13 @@ class AutonomousCompanyCycleService:
         event_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         started_at = utc_now()
+        capability_qualification = (
+            await self._model_capabilities.ensure_fresh(
+                actor="chief_operating_agent_scheduler"
+            )
+            if self._model_capabilities
+            else {"status": "not_configured", "refreshed": False}
+        )
         acquisition = await self._intelligence.acquire_available_evidence()
         discovery = await self._intelligence.discover_company_model(
             acquire=False,
@@ -77,6 +86,7 @@ class AutonomousCompanyCycleService:
             "event_ids": list(dict.fromkeys(event_ids or []))[:200],
             "started_at": started_at.isoformat(),
             "completed_at": utc_now().isoformat(),
+            "model_capability_qualification": capability_qualification,
             "acquisition": acquisition,
             "discovery": discovery,
             "public_research": research,

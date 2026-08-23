@@ -1019,6 +1019,9 @@ class CompanyIntelligenceService:
                 },
             )
             session.add(observer_review)
+            # CompanyModelRevision references this review, but there is no ORM
+            # relationship that lets SQLAlchemy infer the INSERT order.
+            await session.flush()
             revision = CompanyModelRevision(
                 id=f"cmr_{uuid.uuid4().hex}",
                 company_namespace=namespace,

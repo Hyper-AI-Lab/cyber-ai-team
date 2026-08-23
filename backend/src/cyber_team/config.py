@@ -133,6 +133,7 @@ class Settings(BaseSettings):
     )
     model_capability_min_score: float = 0.8
     model_capability_ttl_seconds: int = 86400
+    model_capability_refresh_before_seconds: int = 7200
     searxng_enabled: bool = False
     searxng_url: str = "http://searxng:8080"
     company_research_queries_per_cycle: int = 3

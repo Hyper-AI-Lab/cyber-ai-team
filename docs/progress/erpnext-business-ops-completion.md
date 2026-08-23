@@ -7471,3 +7471,24 @@
   - `dist/soak/staging-soak-20260821T153502Z.jsonl`.
 - Next step:
   - Allow the uninterrupted soak to run until approximately `2026-08-22T15:35:03Z`, then verify its terminal summary has zero failed samples before declaring the v3 rollout/closure milestone complete.
+
+### 2026-08-23T11:43:53Z — STEP-302 — Diagnosed failed 24-hour soak and hardened autonomous-cycle durability
+- Files/services changed:
+  - Persist the Company Discovery Observer review before assigning its foreign key to a company-model revision.
+  - Enable SQLite foreign-key enforcement in the company-intelligence regression suite.
+  - Add automatic full-suite model-capability refresh two hours before the 24-hour evidence TTL and run it before every API/Temporal autonomy cycle.
+  - Add refresh configuration examples and complete/partial/fresh-suite regression coverage.
+- Commands run:
+  - Inspected the terminal soak state, all 289 samples, failure transitions, current readiness, staging PostgreSQL state, and 48 hours of Temporal worker logs.
+  - Ran focused Ruff and 33 foreign-key/capability/cycle tests, followed by the complete backend test and Ruff suites.
+- Result:
+  - Soak `staging-soak-20260821T153502Z` correctly failed with 104 passing and 185 failing samples; health and login remained available, but autonomous-company readiness did not remain continuously ready.
+  - Confirmed PostgreSQL rejected company-model revision inserts because SQLAlchemy had no relationship from which to infer Observer-review INSERT ordering. Temporal retries then prevented event routing and left evidence events pending.
+  - Confirmed the five successful cognitive qualifications expired exactly at their configured 24-hour TTL; no scheduler renewed them before expiration.
+  - The corrected focused suite passes 33 tests, and the complete backend suite passes 429 tests with repository-wide Ruff clean. Local inference remains disabled.
+- Evidence:
+  - `dist/soak/staging-soak-20260821T153502Z.summary.json`.
+  - `dist/soak/staging-soak-20260821T153502Z.jsonl`.
+  - Staging worker exception: `company_model_revisions_observer_review_id_fkey`.
+- Next step:
+  - Commit the durability fix, build/promote `0.3.35` after backup, refresh all five Mistral capability checks, drain pending events through successful autonomy cycles, and start a replacement acceptance soak only after readiness is continuously clean.

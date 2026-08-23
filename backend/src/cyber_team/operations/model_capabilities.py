@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import desc, select
@@ -12,6 +13,8 @@ from cyber_team.clock import utc_now
 from cyber_team.config import settings
 from cyber_team.db import async_session
 from cyber_team.db.models import ModelCapabilityEvaluation
+
+_refresh_lock = asyncio.Lock()
 
 
 class ModelCapabilityNotQualifiedError(RuntimeError):
@@ -291,6 +294,31 @@ class ModelCapabilityService:
                 f"Model capability {task_type} is {state} for {provider}/{model}."
             )
 
+    async def ensure_fresh(self, *, actor: str = "model_capability_scheduler") -> dict[str, Any]:
+        """Refresh the complete task suite before any capability evidence expires."""
+        summary = await self.summary()
+        if not settings.model_capability_enforcement_enabled:
+            return {**summary, "refreshed": False}
+        if not self._refresh_required(summary):
+            return {**summary, "refreshed": False}
+
+        # Temporal signal and interval workflows share a worker process and can
+        # overlap. Recheck under one lock so they do not duplicate provider calls.
+        async with _refresh_lock:
+            summary = await self.summary()
+            if not self._refresh_required(summary):
+                return {**summary, "refreshed": False}
+            result = await self.evaluate(
+                tasks=settings.model_capability_required_task_items,
+                actor=actor,
+            )
+            refreshed = await self.summary()
+            return {
+                **refreshed,
+                "refreshed": True,
+                "evaluation_run_id": result["run_id"],
+            }
+
     async def summary(self) -> dict[str, Any]:
         route = self._llm.effective_route_identity()
         provider = str(route["provider"])
@@ -349,6 +377,32 @@ class ModelCapabilityService:
                 )
             ).scalars().all()
         return {"count": len(records), "items": [self._to_dict(item) for item in records]}
+
+    @staticmethod
+    def _refresh_required(summary: dict[str, Any]) -> bool:
+        now = utc_now()
+        refresh_at = now + timedelta(
+            seconds=max(60, settings.model_capability_refresh_before_seconds)
+        )
+        items = summary.get("items") or []
+        if len(items) != len(settings.model_capability_required_task_items):
+            return True
+        for item in items:
+            if item.get("status") != "passed":
+                return True
+            expires_at = item.get("expires_at")
+            if not expires_at:
+                return True
+            try:
+                if ModelCapabilityService._parse_timestamp(str(expires_at)) <= refresh_at:
+                    return True
+            except ValueError:
+                return True
+        return False
+
+    @staticmethod
+    def _parse_timestamp(value: str):
+        return datetime.fromisoformat(value)
 
     @staticmethod
     def _matches(actual: Any, expected: Any) -> bool:

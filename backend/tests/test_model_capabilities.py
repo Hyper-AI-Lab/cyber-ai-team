@@ -170,3 +170,61 @@ async def test_expired_capability_evidence_fails_closed(
             provider="llama_cpp",
             model="local/test-model",
         )
+
+
+@pytest.mark.asyncio
+async def test_ensure_fresh_rechecks_complete_suite_before_expiry(
+    capability_session_factory,
+    monkeypatch,
+):
+    gateway = FakeGateway()
+    service = ModelCapabilityService(llm_gateway=gateway)
+    await service.evaluate(tasks=["observer_review"])
+    monkeypatch.setattr(settings, "model_capability_refresh_before_seconds", 300)
+
+    result = await service.ensure_fresh()
+
+    assert result["status"] == "ready"
+    assert result["qualified"] == len(CAPABILITY_CASES)
+    assert result["refreshed"] is True
+    assert result["evaluation_run_id"].startswith("modelcaprun_")
+    assert len(gateway.calls) == len(CAPABILITY_CASES) + 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_fresh_does_not_repeat_provider_calls_for_fresh_suite(
+    capability_session_factory,
+    monkeypatch,
+):
+    gateway = FakeGateway()
+    service = ModelCapabilityService(llm_gateway=gateway)
+    monkeypatch.setattr(settings, "model_capability_refresh_before_seconds", 300)
+    await service.evaluate()
+
+    result = await service.ensure_fresh()
+
+    assert result["status"] == "ready"
+    assert result["refreshed"] is False
+    assert len(gateway.calls) == len(CAPABILITY_CASES)
+
+
+@pytest.mark.asyncio
+async def test_ensure_fresh_renews_full_suite_inside_refresh_window(
+    capability_session_factory,
+    monkeypatch,
+):
+    gateway = FakeGateway()
+    service = ModelCapabilityService(llm_gateway=gateway)
+    monkeypatch.setattr(settings, "model_capability_refresh_before_seconds", 300)
+    await service.evaluate()
+    async with capability_session_factory() as session:
+        records = (await session.execute(select(ModelCapabilityEvaluation))).scalars().all()
+        for record in records:
+            record.expires_at = utc_now() + timedelta(seconds=120)
+        await session.commit()
+
+    result = await service.ensure_fresh()
+
+    assert result["status"] == "ready"
+    assert result["refreshed"] is True
+    assert len(gateway.calls) == len(CAPABILITY_CASES) * 2
