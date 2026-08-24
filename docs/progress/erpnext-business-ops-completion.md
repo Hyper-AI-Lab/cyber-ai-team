@@ -7576,3 +7576,29 @@
   - Quality gate completed at `2026-08-24T17:02Z` with `Quality gate passed.`
 - Next step:
   - Commit and push the hardening, build/promote immutable staging release `0.3.37` after backup, verify live pacing/recovery status and Mistral capability evidence, then start a new strict uninterrupted 24-hour soak.
+
+### 2026-08-24T17:51:15Z — STEP-307 — Promoted hosted-capacity hardening and started the replacement soak
+- Files/services changed:
+  - Committed and pushed the distributed hosted-inference pacing and bounded recovery implementation as `2aabcf361686044023e7c1aa4a31180a5830676f`.
+  - Built, scanned, and promoted immutable staging release `0.3.37` after a fresh PostgreSQL backup; recreated only the Cyber-Team core, worker, and UI release services while preserving ERPNext and persistent data.
+  - Kept local inference disabled and retained the zero-spend hosted Mistral route.
+- Commands run:
+  - Full release gate with `443` backend tests, `31` frontend tests, Ruff, compileall, Alembic offline SQL, legacy and representative PostgreSQL migration rehearsals, dependency/secret/FOSS/GCP-isolation checks, isolated Compose smoke, immutable image builds, and Trivy scans.
+  - GitHub push CI run `32754621827`, promotion-policy dry run, backup-first live promotion, public Compose smoke, authenticated readiness inspection, and a sequential five-task Mistral capability evaluation.
+  - Strict one-minute soak preflights followed by the replacement 24-hour soak launch.
+- Result:
+  - GitHub CI and the complete release gate passed. Both `0.3.37` images report zero detected vulnerabilities.
+  - Staging health reports exact version `0.3.37` and build `2aabcf361686044023e7c1aa4a31180a5830676f`; operations readiness is `ready` with zero blockers.
+  - Hosted Mistral is live. Redis pacing is enabled at a 20-second provider-wide interval, recovery is `not_needed`, and sequential capability run `modelcaprun_27e0626f66114ed3aaa7c58b2f6df4b7` passed all five task contracts at score `1.0` without a rate-limit failure.
+  - An intentionally over-frequent five-second preflight proved the ten-login-per-minute security limiter by receiving two HTTP 429 responses. The corrected ten-second preflight passed all `7/7` samples with zero failures.
+  - Replacement soak `staging-soak-20260824T175041Z` is running for 86,400 seconds at five-minute intervals. Its first sample passed exact release identity, health, owner login, readiness, all ten evidence-to-outcome autonomy checks, and `5/5` model qualifications.
+- Evidence:
+  - `dist/releases/0.3.37.json`.
+  - `backups/staging/cyberteam-staging-0.3.37-20260824-174009.dump`.
+  - `dist/promotions/staging/0.3.37-20260824-174240.json`.
+  - `dist/soak/staging-soak-20260824T174926Z.summary.json`.
+  - `dist/soak/staging-soak-20260824T175041Z.state.json`.
+  - `dist/soak/staging-soak-20260824T175041Z.jsonl`.
+  - GitHub Actions: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/32754621827`.
+- Next step:
+  - Allow the uninterrupted soak to finish at approximately `2026-08-25T17:50:42Z`, then require a terminal summary with zero failed samples before closing the hosted-capacity and v3 soak milestone.
