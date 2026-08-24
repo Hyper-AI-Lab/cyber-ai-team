@@ -60,6 +60,7 @@ from cyber_team.operations.capability_expansion import CapabilityExpansionServic
 from cyber_team.operations.executive import ExecutiveCompanyOSService
 from cyber_team.operations.executive_briefing import ExecutiveBriefEmailService
 from cyber_team.operations.governor import OrchestrationGovernorService
+from cyber_team.operations.llm_recovery import LLMProviderRecoveryService
 from cyber_team.operations.memory_conflicts import MemoryCanonicalConflictService
 from cyber_team.operations.memory_steward import MemoryStewardService
 from cyber_team.operations.model_capabilities import ModelCapabilityService
@@ -199,6 +200,12 @@ async def lifespan(app: FastAPI):
         memory_service=app.state.memory_service,
         agent_manager=app.state.agent_manager,
     )
+    app.state.llm_recovery_service = LLMProviderRecoveryService(
+        llm_gateway=app.state.llm_gateway,
+        memory_service=app.state.memory_service,
+        memory_steward_service=app.state.memory_steward_service,
+        audit_service=app.state.audit_service,
+    )
     app.state.memory_conflict_service = MemoryCanonicalConflictService(
         audit_service=app.state.audit_service,
     )
@@ -323,6 +330,7 @@ async def lifespan(app: FastAPI):
     app.state.orchestration_governor_task = None
     app.state.executive_brief_email_task = None
     app.state.domain_operations_task = None
+    app.state.llm_recovery_probe_task = None
     app.state.operating_cadence_scheduler_status = _initial_operating_cadence_scheduler_status()
     app.state.owner_attention_notification_status = (
         _initial_owner_attention_notification_status()
@@ -331,6 +339,14 @@ async def lifespan(app: FastAPI):
         _initial_orchestration_governor_scheduler_status()
     )
     app.state.executive_brief_email_status = _initial_executive_brief_email_status()
+    app.state.llm_recovery_probe_status = {
+        "status": "not_started",
+        "attempted": False,
+    }
+    if settings.llm_recovery_probe_enabled and not settings.llm_provider_is_local:
+        app.state.llm_recovery_probe_task = asyncio.create_task(
+            _llm_recovery_probe_loop(app)
+        )
     if settings.inbound_email_enabled:
         app.state.inbound_email_task = asyncio.create_task(_inbound_email_loop(app))
     if settings.erpnext_drift_detection_enabled and settings.erpnext_configured:
@@ -393,6 +409,7 @@ async def lifespan(app: FastAPI):
             "orchestration_governor_task",
             "executive_brief_email_task",
             "domain_operations_task",
+            "llm_recovery_probe_task",
         ):
             task = getattr(app.state, task_name, None)
             if task:
@@ -402,6 +419,8 @@ async def lifespan(app: FastAPI):
                 except asyncio.CancelledError:
                     pass
     # Shutdown
+    await app.state.llm_recovery_service.close()
+    await app.state.llm_gateway.close()
     await app.state.authorization_service.close()
     await app.state.memory_service.shutdown()
     await app.state.erpnext.close()
@@ -486,6 +505,29 @@ async def _memory_steward_loop(app: FastAPI) -> None:
             raise
         except Exception:
             logger.exception("Memory steward loop failed")
+        await asyncio.sleep(interval)
+
+
+async def _llm_recovery_probe_loop(app: FastAPI) -> None:
+    initial_delay = max(0, settings.llm_recovery_probe_initial_delay_seconds)
+    interval = max(15, settings.llm_recovery_probe_poll_seconds)
+    if initial_delay:
+        await asyncio.sleep(initial_delay)
+    while True:
+        try:
+            app.state.llm_recovery_probe_status = (
+                await app.state.llm_recovery_service.run_once()
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - scheduler must remain recoverable.
+            logger.exception("LLM provider recovery probe failed")
+            app.state.llm_recovery_probe_status = {
+                "status": "failed",
+                "attempted": False,
+                "error": type(exc).__name__,
+                "checked_at": utc_now().isoformat(),
+            }
         await asyncio.sleep(interval)
 
 

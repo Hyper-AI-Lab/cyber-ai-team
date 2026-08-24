@@ -11,6 +11,7 @@ import httpx
 
 from cyber_team.clock import utc_now
 from cyber_team.config import settings
+from cyber_team.llm.pacing import HostedInferencePacer
 from cyber_team.llm.resilience import (
     classify_llm_exception,
     llm_error_allows_local_fallback,
@@ -25,7 +26,7 @@ class LLMCircuitOpenError(RuntimeError):
 
 
 class LLMGateway:
-    def __init__(self):
+    def __init__(self, *, hosted_pacer: HostedInferencePacer | None = None):
         self._provider = settings.llm_provider.strip() or "mistral"
         self._default_model = settings.llm_default_model.strip() or (
             "mistral/mistral-large-latest"
@@ -39,6 +40,7 @@ class LLMGateway:
         self._circuit_open_until = 0.0
         self._last_invocation_result: dict | None = None
         self._capability_checker = None
+        self._hosted_pacer = hosted_pacer or HostedInferencePacer()
 
         # Integrate Langfuse tracing if API keys are configured
         if settings.langfuse_public_key and settings.langfuse_secret_key:
@@ -135,6 +137,11 @@ class LLMGateway:
         last_error: Exception | None = None
         for attempt in range(attempts):
             try:
+                if not route["local"]:
+                    await self._hosted_pacer.acquire(
+                        provider=route["provider"],
+                        model=model,
+                    )
                 request = {
                     "model": model,
                     "messages": messages,
@@ -487,8 +494,13 @@ class LLMGateway:
                 round(self._circuit_open_until - time.monotonic()),
             ),
             "last_invocation": last or None,
+            "hosted_pacing": self._hosted_pacer.status(),
             "checked_at": now.isoformat(),
         }
+
+    async def close(self) -> None:
+        """Release process-local provider coordination resources."""
+        await self._hosted_pacer.close()
 
     def _ensure_provider_available(self) -> None:
         if self._circuit_open_until > time.monotonic():

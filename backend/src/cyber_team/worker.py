@@ -1045,7 +1045,10 @@ async def run_worker():
         ],
     )
     logger.info("Starting Temporal worker...")
-    await worker.run()
+    try:
+        await worker.run()
+    finally:
+        await worker_llm_gateway.close()
 
 
 if __name__ == "__main__":

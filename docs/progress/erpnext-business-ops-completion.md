@@ -7555,3 +7555,24 @@
   - Persisted rate-limit traces at `2026-08-23T16:45:46Z` and `2026-08-24T03:00:42Z` in staging PostgreSQL `memory_traces`.
 - Next step:
   - Add shared hosted-inference request pacing and bounded recovery probing across API and worker processes, preserve fail-closed behavior for real provider outages, then run a new uninterrupted 24-hour soak. Do not close the v3 soak milestone until its terminal summary reports zero failed samples.
+
+### 2026-08-24T17:02:48Z — STEP-306 — Added distributed hosted-inference pacing and bounded recovery
+- Files/services changed:
+  - Added Redis-coordinated hosted-LLM slot reservation shared by API and Temporal worker processes, with a bounded queue and fail-closed behavior when coordination is unavailable.
+  - Added a cooldown-controlled, read-only provider recovery probe that records real success/failure memory-trace evidence without memory recall, tools, ERPNext access, communications, or other business side effects.
+  - Extended LLM readiness with pacing and recovery state, added Owner Console visibility, production configuration enforcement, environment examples, and a hosted-capacity runbook.
+  - Kept local inference disabled; no paid route, local model, or external side-effect capability was enabled.
+- Commands run:
+  - Focused pacing, gateway, recovery, memory-steward, readiness-route, and production-config tests.
+  - Complete quality gate: backend Ruff/Pytest/compileall/Alembic offline SQL/dependency audit; frontend build/typecheck/Vitest/audit; Compose config; script/dashboard syntax; secret, Google Cloud isolation, and FOSS resource scans; diff hygiene.
+- Result:
+  - All `442` backend tests and all `31` frontend tests pass.
+  - Python and frontend production builds pass; dependency audits report zero known/runtime vulnerabilities; secret, GCP-isolation, and FOSS policy scans pass.
+  - Hosted retries now pass through the same global reservation mechanism as first attempts. A terminal retryable trace can be superseded by one deduplicated real provider proof rather than remaining unresolved for the full 60-minute health window.
+- Evidence:
+  - `backend/src/cyber_team/llm/pacing.py`.
+  - `backend/src/cyber_team/operations/llm_recovery.py`.
+  - `docs/runbooks/hosted-llm-capacity.md`.
+  - Quality gate completed at `2026-08-24T17:02Z` with `Quality gate passed.`
+- Next step:
+  - Commit and push the hardening, build/promote immutable staging release `0.3.37` after backup, verify live pacing/recovery status and Mistral capability evidence, then start a new strict uninterrupted 24-hour soak.

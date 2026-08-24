@@ -178,6 +178,13 @@ class Settings(BaseSettings):
     llm_retry_attempts: int = 3
     llm_retry_backoff_seconds: float = 1.0
     llm_provider_timeout_seconds: float = 60.0
+    llm_hosted_pacing_enabled: bool = True
+    llm_hosted_min_interval_seconds: float = 20.0
+    llm_hosted_max_queue_wait_seconds: float = 300.0
+    llm_recovery_probe_enabled: bool = True
+    llm_recovery_probe_initial_delay_seconds: int = 60
+    llm_recovery_probe_poll_seconds: int = 30
+    llm_recovery_probe_cooldown_seconds: int = 120
     llm_circuit_breaker_failure_threshold: int = 3
     llm_circuit_breaker_cooldown_seconds: int = 120
     llm_provider_health_lookback_minutes: int = 60
@@ -403,6 +410,8 @@ class Settings(BaseSettings):
             "OBSERVER_ENABLED": not self.observer_enabled,
             "OBSERVER_REVIEW_REQUIRED": not self.observer_review_required,
             "REQUIRE_LIVE_TOOL_EXECUTORS": not self.require_live_tool_executors,
+            "LLM_HOSTED_PACING_ENABLED": not self.llm_hosted_pacing_enabled,
+            "LLM_RECOVERY_PROBE_ENABLED": not self.llm_recovery_probe_enabled,
         }
         invalid = [name for name, is_invalid in insecure_values.items() if is_invalid]
         if invalid:
@@ -411,6 +420,10 @@ class Settings(BaseSettings):
             )
         if self.cors_allows_wildcard:
             raise RuntimeError("Refusing production startup with wildcard CORS_ALLOWED_ORIGINS")
+        if self.llm_hosted_min_interval_seconds <= 0:
+            raise RuntimeError(
+                "Refusing production startup without a positive hosted LLM pacing interval"
+            )
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

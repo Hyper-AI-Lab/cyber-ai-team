@@ -1,6 +1,6 @@
 import sys
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -158,12 +158,17 @@ async def test_invoke_retries_rate_limit_then_records_recovery(monkeypatch):
         "litellm",
         SimpleNamespace(api_key=None, acompletion=fake_completion),
     )
-    gateway = LLMGateway()
+    pacer = MagicMock()
+    pacer.acquire = AsyncMock()
+    pacer.close = AsyncMock()
+    pacer.status.return_value = {"enabled": True}
+    gateway = LLMGateway(hosted_pacer=pacer)
 
     result = await gateway.invoke("System", "Task", agent_id="ops")
 
     assert result == "Recovered."
     assert calls == 2
+    assert pacer.acquire.await_count == 2
     assert gateway.runtime_status()["status"] == "ready"
     assert gateway.runtime_status()["last_invocation"]["outcome"] == "success"
 

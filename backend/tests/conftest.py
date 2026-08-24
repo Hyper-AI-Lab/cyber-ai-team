@@ -14,6 +14,8 @@ def configure_test_environment(tmp_path, monkeypatch):
     test_data_dir = tmp_path / "app" / "data"
     test_data_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(settings, "data_dir", str(test_data_dir))
+    monkeypatch.setattr(settings, "llm_hosted_pacing_enabled", False)
+    monkeypatch.setattr(settings, "llm_recovery_probe_enabled", False)
 
     # Mock databases and APIs to keep unit tests isolated and extremely fast
     monkeypatch.setattr(settings, "opa_api_url", "http://mock-opa:8181")

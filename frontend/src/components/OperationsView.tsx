@@ -203,6 +203,18 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
   const latestCycle = useMemo(() => localCycles[0], [localCycles])
   const latestCounts = cycleCounts(latestCycle)
   const latestMetadata = cycleMetadata(latestCycle)
+  const llmReadinessDetail = useMemo(() => {
+    const llm = readiness?.integrations?.llm
+    const pacing = llm?.runtime_health?.hosted_pacing
+    const recovery = llm?.recovery_probe
+    return [
+      llm?.detail || 'agent LLM provider status not reported',
+      pacing?.enabled
+        ? `shared pacing ${pacing.min_interval_seconds}s`
+        : 'shared pacing disabled',
+      recovery?.status ? `recovery ${recovery.status}` : null,
+    ].filter(Boolean).join(' | ')
+  }, [readiness])
 
   const loadPlans = async () => {
     setPlansLoading(true)
@@ -881,10 +893,7 @@ export default function OperationsView({ cycles, onRefresh, onNavigate }: Operat
               <ReadinessPanel
                 title="LLM Provider"
                 value={readiness.integrations?.llm?.mode || 'unavailable'}
-                detail={
-                  readiness.integrations?.llm?.detail
-                  || 'agent LLM provider status not reported'
-                }
+                detail={llmReadinessDetail}
               />
               <ReadinessPanel
                 title="Optional Disabled"

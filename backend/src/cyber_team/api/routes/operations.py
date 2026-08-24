@@ -2756,6 +2756,14 @@ async def operations_readiness(
         if isinstance(observed_health, dict):
             llm_execution_health = observed_health
     llm_status["execution_health"] = llm_execution_health
+    llm_status["recovery_probe"] = getattr(
+        request.app.state,
+        "llm_recovery_probe_status",
+        {
+            "status": "unavailable",
+            "attempted": False,
+        },
+    )
     if llm_status.get("mode") == "live" and llm_execution_health.get("blocking"):
         failure_category = llm_execution_health.get("status") or "provider_error"
         llm_status.update(

@@ -55,6 +55,20 @@ def test_production_runtime_config_requires_live_tool_executors():
         settings.validate_runtime_config()
 
 
+def test_production_runtime_config_requires_hosted_llm_pacing():
+    settings = production_settings(llm_hosted_pacing_enabled=False)
+
+    with pytest.raises(RuntimeError, match="LLM_HOSTED_PACING_ENABLED"):
+        settings.validate_runtime_config()
+
+
+def test_production_runtime_config_requires_llm_recovery_probe():
+    settings = production_settings(llm_recovery_probe_enabled=False)
+
+    with pytest.raises(RuntimeError, match="LLM_RECOVERY_PROBE_ENABLED"):
+        settings.validate_runtime_config()
+
+
 def test_production_runtime_config_accepts_hardened_values():
     settings = production_settings()
 
