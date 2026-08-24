@@ -7537,3 +7537,21 @@
   - `dist/soak/staging-soak-20260823T132132Z.jsonl`.
 - Next step:
   - Allow the uninterrupted replacement soak to finish at approximately `2026-08-24T13:21:32Z`, then require a terminal summary with zero failed samples before closing the v3 soak milestone.
+
+### 2026-08-24T13:56:13Z — STEP-305 — Verified replacement soak completion and isolated hosted-capacity failures
+- Files/services changed:
+  - No runtime or configuration change was made.
+  - Appended the terminal soak result and diagnosis to this progress record.
+- Commands run:
+  - Inspected the terminal state, summary, all 289 JSONL observations, failed-sample timelines, persisted LLM memory traces, and current public/live readiness.
+- Result:
+  - Replacement soak `staging-soak-20260823T132132Z` completed the full 86,400-second window but failed the zero-failure acceptance criterion: 274 samples passed and 15 failed.
+  - Health, owner authentication, exact release identity, and every evidence-to-outcome autonomy check passed in all 289 samples. The 15 failures came only from global readiness correctly reporting two unresolved hosted-Mistral `rate_limited` observations.
+  - The first incident followed a failed Knowledge/Research mandate call and affected three five-minute samples until a newer successful completion at `2026-08-23T17:01:10Z`. The second followed an Observer mandate call at `2026-08-24T03:00:42Z` and affected twelve samples until the 60-minute provider-health lookback expired; no side effect or control-loop corruption occurred.
+  - The final observation passed. A fresh live check reports release `0.3.36`, build `ac4c6dc35b6ffd3bd4d8c7b06e1eed4ee6ad1ff6`, Mistral live, execution health ready, autonomous-company ready, and zero blockers.
+- Evidence:
+  - `dist/soak/staging-soak-20260823T132132Z.summary.json`.
+  - `dist/soak/staging-soak-20260823T132132Z.jsonl`.
+  - Persisted rate-limit traces at `2026-08-23T16:45:46Z` and `2026-08-24T03:00:42Z` in staging PostgreSQL `memory_traces`.
+- Next step:
+  - Add shared hosted-inference request pacing and bounded recovery probing across API and worker processes, preserve fail-closed behavior for real provider outages, then run a new uninterrupted 24-hour soak. Do not close the v3 soak milestone until its terminal summary reports zero failed samples.
