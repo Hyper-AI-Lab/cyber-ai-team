@@ -7602,3 +7602,25 @@
   - GitHub Actions: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/32754621827`.
 - Next step:
   - Allow the uninterrupted soak to finish at approximately `2026-08-25T17:50:42Z`, then require a terminal summary with zero failed samples before closing the hosted-capacity and v3 soak milestone.
+
+### 2026-08-26T12:51:00Z — STEP-308 — Rejected the 0.3.37 soak and isolated evidence-processing defects
+- Files/services changed:
+  - No runtime configuration or application code was changed.
+  - Appended the terminal acceptance result and repository/live-state diagnosis to this progress record.
+- Commands run:
+  - Inspected the terminal state, summary, all 289 soak observations, live health/readiness, staging PostgreSQL signal lifecycles, claim-extraction audit evidence, ERPNext context-sync runs, container networks, internal/public DNS, and worker logs.
+- Result:
+  - Soak `staging-soak-20260824T175041Z` completed the full 86,400-second window but failed the zero-failure criterion: `283` samples passed and `6` failed.
+  - Release identity, health, owner login, model qualification, mandates, event delivery, work portfolio, outcomes, action candidates, and durable delivery remained healthy. All six failures were caused by company signals exceeding the 1,800-second processing window; one sample also observed an exhausted extraction retry at the boundary.
+  - During the soak, `29` of `30` LLM-extractable email/research signals exhausted all three attempts with `llm_claim_extraction_malformed_response`; responses were valid-looking JSON truncated by the 128-token extraction output budget. The safe failure path blocked/deferred the signals and did not create unsupported claims, but processing took approximately 30–33 minutes.
+  - The gateway currently logs the first 200 characters of malformed model output, which can reproduce source-derived content in service logs and must be replaced with redacted structural diagnostics.
+  - All five synthetic model-capability cases continued to pass, proving the current claim-extraction qualification case is too small to detect realistic output-budget truncation.
+  - ERPNext context synchronization failed all `24` hourly attempts during the soak. `cyberteam-staging-core` is attached only to `cyberteam-staging-network`, while `erpnext-frontend` is attached only to `cyberteam-network`; the configured internal API host therefore cannot resolve. Public ERPNext remained reachable.
+  - Operations readiness currently reports ERPNext as live from credential presence without requiring a fresh live validation result, so the network failure is masked until source freshness expires. Current global readiness has returned to `ready` because all signal retries reached finite dispositions, but this does not satisfy the failed soak acceptance gate.
+- Evidence:
+  - `dist/soak/staging-soak-20260824T175041Z.summary.json`.
+  - `dist/soak/staging-soak-20260824T175041Z.jsonl`.
+  - Staging PostgreSQL `company_signals`, `company_context_sync_runs`, and `audit_events` records from `2026-08-24T17:50Z` through `2026-08-25T17:51Z`.
+  - Container-network inspection for `cyberteam-staging-core` and `cyberteam-erpnext-frontend`.
+- Next step:
+  - Increase and validate structured extraction output capacity, fail explicitly on provider truncation, redact malformed-response logs, strengthen the production-like capability case, connect Cyber-Team to the ERPNext service network, and make required ERPNext readiness depend on fresh validation. Release the fixes after full tests, then restart a strict uninterrupted 24-hour soak.
