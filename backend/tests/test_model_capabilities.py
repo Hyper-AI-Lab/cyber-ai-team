@@ -86,6 +86,13 @@ async def test_all_task_contracts_require_durable_fresh_passing_evidence(
     assert after["qualified"] == len(CAPABILITY_CASES)
     assert all(call["route_hint"] == "local" for call in gateway.calls)
     assert all(call["temperature"] == 0.0 for call in gateway.calls)
+    claim_call = next(
+        call
+        for call in gateway.calls
+        if "Task contract: claim_extraction." in call["user_message"]
+    )
+    assert claim_call["max_tokens"] == 512
+    assert len(CAPABILITY_CASES["claim_extraction"]["expected"]["bounded_summary"]) > 300
     assert all(call["json_schema"]["additionalProperties"] is False for call in gateway.calls)
     assert all("allowed values" in call["user_message"] for call in gateway.calls)
     assert all(

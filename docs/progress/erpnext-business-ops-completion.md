@@ -7624,3 +7624,27 @@
   - Container-network inspection for `cyberteam-staging-core` and `cyberteam-erpnext-frontend`.
 - Next step:
   - Increase and validate structured extraction output capacity, fail explicitly on provider truncation, redact malformed-response logs, strengthen the production-like capability case, connect Cyber-Team to the ERPNext service network, and make required ERPNext readiness depend on fresh validation. Release the fixes after full tests, then restart a strict uninterrupted 24-hour soak.
+
+### 2026-08-26T18:01:46Z — STEP-309 — Hardened evidence extraction and restored ERPNext internal connectivity
+- Files/services changed:
+  - Raised the bounded company-claim extraction budget from 128 to 512 tokens and constrained generated claim values to one concise, schema-bounded summary.
+  - Replaced malformed structured-output fallback dictionaries and raw response fragments with typed fail-closed errors and content-free length, digest, and parse-position diagnostics.
+  - Strengthened the claim-extraction model qualification with a production-sized bounded response and advanced the prompt contract to `autonomous-company-capabilities-v4`, invalidating weaker historical evidence.
+  - Added cached live ERPNext validation, required-provider blocking for missing or failed validation, a shared Compose network for Core/Worker access to ERPNext, and environment controls for validation TTL and the network name.
+- Commands run:
+  - Focused Ruff and Pytest in a read-only disposable container; full repository backend Ruff, compileall, and Pytest in a read-only disposable container.
+  - Staging/default Compose configuration validation and rendered-network inspection.
+  - Attached the live Core and Worker to the existing ERPNext network, then ran internal DNS, HTTP ping, REST token validation, and a real company-context sync.
+- Result:
+  - Focused regression gate passed `59` tests. The complete backend gate passed all `447` tests with Ruff and compileall clean.
+  - Rendered staging Compose places Core and Worker on `cyberteam-staging-network` and `cyberteam-network`; both containers resolve `erpnext-frontend` at its private address.
+  - ERPNext internal ping and token validation report `ready`. Company-context run `ctxsync_34d6d4d46efc` completed as an idempotent `noop`, proving the hourly path can reach the canonical system again without duplicating state.
+  - No local LLM or paid inference route was enabled. No external business mutation occurred.
+- Evidence:
+  - `backend/src/cyber_team/llm/gateway.py` typed structured-output failures and safe diagnostics.
+  - `backend/src/cyber_team/company/intelligence.py` bounded extraction contract.
+  - `backend/src/cyber_team/integrations/erpnext.py` validation-backed readiness.
+  - Focused test result: `59 passed`; complete test result: `447 passed` at `2026-08-26T18:01Z`.
+  - Live ERPNext validation: `ready`; context sync run `ctxsync_34d6d4d46efc`.
+- Next step:
+  - Commit and push the remediation, run the complete `0.3.38` release gate, promote staging backup-first, verify realistic live extraction and ERPNext readiness, then start a new strict uninterrupted 24-hour soak.

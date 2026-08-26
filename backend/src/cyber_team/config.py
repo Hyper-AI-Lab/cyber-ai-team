@@ -149,6 +149,7 @@ class Settings(BaseSettings):
     company_model_min_provenance_coverage: float = 0.6
     company_model_min_confidence: float = 0.72
     company_claim_extraction_max_attempts: int = 3
+    company_claim_extraction_max_tokens: int = 512
     company_claim_extraction_batch_size: int = 10
     company_claim_extraction_input_max_chars: int = 6000
     company_claim_extraction_lease_seconds: int = 300
@@ -228,6 +229,7 @@ class Settings(BaseSettings):
 
     # ERPNext
     erpnext_url: str = "http://localhost:8100"
+    erpnext_validation_ttl_seconds: int = 300
     erpnext_site_name: str = "erpnext.hyperailab.com"
     erpnext_edge_domain: str = "erpnext.hyperailab.com"
     erpnext_published_port: int = 18100

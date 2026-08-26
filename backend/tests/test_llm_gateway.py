@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from cyber_team.config import settings
-from cyber_team.llm.gateway import LLMCircuitOpenError, LLMGateway
+from cyber_team.llm.gateway import (
+    LLMCircuitOpenError,
+    LLMGateway,
+    LLMStructuredOutputError,
+    LLMStructuredOutputTruncatedError,
+)
 
 
 def test_llm_history_is_bounded(monkeypatch):
@@ -416,6 +421,30 @@ async def test_invoke_json_forwards_structured_output_token_budget():
     assert result == {"claims": []}
     assert gateway.invoke.await_args.kwargs["max_tokens"] == 128
     assert gateway.invoke.await_args.kwargs["json_schema"]["required"] == ["claims"]
+
+
+@pytest.mark.asyncio
+async def test_invoke_json_rejects_truncated_output_without_logging_content(caplog):
+    gateway = LLMGateway()
+    sensitive_fragment = "private-email-body-marker"
+    gateway.invoke = AsyncMock(
+        return_value='{"claims":[{"value":"' + sensitive_fragment
+    )
+
+    with pytest.raises(LLMStructuredOutputTruncatedError):
+        await gateway.invoke_json("Extract claims.", "Evidence payload.")
+
+    assert sensitive_fragment not in caplog.text
+    assert "LLMStructuredOutputTruncatedError" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_invoke_json_rejects_malformed_complete_output():
+    gateway = LLMGateway()
+    gateway.invoke = AsyncMock(return_value="not-json")
+
+    with pytest.raises(LLMStructuredOutputError):
+        await gateway.invoke_json("Return JSON.", "Evidence payload.")
 
 
 @pytest.mark.asyncio

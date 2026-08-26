@@ -77,6 +77,9 @@ async def integration_status(
     )
     erpnext_status = None
     if erpnext:
+        if hasattr(erpnext, "validate"):
+            erpnext_last_validation = await erpnext.validate()
+            request.app.state.erpnext_last_validation_result = erpnext_last_validation
         erpnext_status = _annotate_provider_status(
             erpnext.integration_status(erpnext_last_validation)
         )
@@ -190,7 +193,7 @@ async def validate_integration(
                 ],
             }
         else:
-            validation = await erpnext.validate()
+            validation = await erpnext.validate(force=True)
             checked_at = utc_now().isoformat() + "+00:00"
             result_item = dict(validation)
             result_item.pop("results", None)

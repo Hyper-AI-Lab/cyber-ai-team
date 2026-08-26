@@ -2,12 +2,13 @@
 
 import json
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 from urllib.parse import quote
 
 import httpx
 
+from cyber_team.clock import utc_now
 from cyber_team.config import settings
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,8 @@ class ERPNextClient:
         self._api_key = settings.erpnext_api_key
         self._api_secret = settings.erpnext_api_secret
         self._client: httpx.AsyncClient | None = None
+        self._last_validation_result: dict[str, Any] | None = None
+        self._last_validation_at: datetime | None = None
 
     @property
     def configured(self) -> bool:
@@ -52,26 +55,62 @@ class ERPNextClient:
         last_validation_result: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         configured = self.configured
+        required = "erpnext" in settings.required_provider_names
+        validation = self._validation_item(
+            last_validation_result or self._last_validation_result
+        )
+        validation_status = str((validation or {}).get("status") or "")
+        if not configured:
+            mode = "configuration_required"
+            detail = "ERPNEXT_API_KEY and ERPNEXT_API_SECRET are required."
+        elif validation_status == "ready":
+            mode = "live"
+            detail = str(validation.get("detail") or "ERPNext validation passed.")
+        elif validation_status:
+            mode = "validation_failed"
+            detail = str(validation.get("detail") or "ERPNext validation failed.")
+        else:
+            mode = "validation_required"
+            detail = "ERPNext credentials are configured but live validation is required."
         return {
             "provider": "erpnext",
             "configured": configured,
-            "mode": "live" if configured else "configuration_required",
+            "mode": mode,
             "site_url": f"https://{settings.erpnext_edge_domain}",
             "api_url": self._base_url,
             "site_name": settings.erpnext_site_name,
-            "required": "erpnext" in settings.required_provider_names,
-            "blocking": (
-                "erpnext" in settings.required_provider_names and not configured
-            ),
-            "last_validation_result": last_validation_result,
-            "detail": (
-                "ERPNext API credentials are configured."
-                if configured
-                else "ERPNEXT_API_KEY and ERPNEXT_API_SECRET are required."
-            ),
+            "required": required,
+            "blocking": required and mode != "live",
+            "last_validation_result": validation,
+            "detail": detail,
         }
 
-    async def validate(self) -> dict[str, Any]:
+    @staticmethod
+    def _validation_item(result: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not result:
+            return None
+        items = result.get("results")
+        if isinstance(items, list) and items and isinstance(items[0], dict):
+            return items[0]
+        return result
+
+    def _remember_validation(self, result: dict[str, Any]) -> dict[str, Any]:
+        checked_at = utc_now()
+        stored = {**result, "checked_at": checked_at.isoformat()}
+        self._last_validation_result = stored
+        self._last_validation_at = checked_at
+        return dict(stored)
+
+    async def validate(self, *, force: bool = False) -> dict[str, Any]:
+        now = utc_now()
+        if (
+            not force
+            and self._last_validation_result
+            and self._last_validation_at
+            and (now - self._last_validation_at).total_seconds()
+            < max(1, settings.erpnext_validation_ttl_seconds)
+        ):
+            return dict(self._last_validation_result)
         missing = []
         if not self._base_url:
             missing.append("ERPNEXT_URL")
@@ -80,7 +119,7 @@ class ERPNextClient:
         if not self._api_secret:
             missing.append("ERPNEXT_API_SECRET")
         if missing:
-            return {
+            return self._remember_validation({
                 "status": "configuration_required",
                 "provider": "erpnext",
                 "mode": "configuration_required",
@@ -89,7 +128,7 @@ class ERPNextClient:
                 "site_url": f"https://{settings.erpnext_edge_domain}",
                 "api_url": self._base_url,
                 "detail": "ERPNext validation requires live API credentials.",
-            }
+            })
 
         try:
             client = await self._get_client()
@@ -101,27 +140,27 @@ class ERPNextClient:
             )
             user_check.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            return {
+            return self._remember_validation({
                 "status": "failed",
                 "provider": "erpnext",
-                "mode": "live",
+                "mode": "validation_failed",
                 "configured": True,
                 "site_url": f"https://{settings.erpnext_edge_domain}",
                 "api_url": self._base_url,
                 "detail": f"ERPNext returned HTTP {exc.response.status_code}.",
-            }
+            })
         except httpx.HTTPError as exc:
-            return {
+            return self._remember_validation({
                 "status": "failed",
                 "provider": "erpnext",
-                "mode": "live",
+                "mode": "validation_failed",
                 "configured": True,
                 "site_url": f"https://{settings.erpnext_edge_domain}",
                 "api_url": self._base_url,
                 "detail": f"ERPNext network validation failed: {exc}",
-            }
+            })
 
-        return {
+        return self._remember_validation({
             "status": "ready",
             "provider": "erpnext",
             "mode": "live",
@@ -129,7 +168,7 @@ class ERPNextClient:
             "site_url": f"https://{settings.erpnext_edge_domain}",
             "api_url": self._base_url,
             "detail": "ERPNext REST API token validation passed.",
-        }
+        })
 
     @staticmethod
     def _resource_path(doctype: str, name: str | None = None) -> str:

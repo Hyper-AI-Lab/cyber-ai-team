@@ -2704,10 +2704,16 @@ async def operations_readiness(
     erpnext = getattr(request.app.state, "erpnext", None)
     erpnext_status = None
     if erpnext:
+        erpnext_last_validation = getattr(
+            request.app.state,
+            "erpnext_last_validation_result",
+            None,
+        )
+        if hasattr(erpnext, "validate"):
+            erpnext_last_validation = await erpnext.validate()
+            request.app.state.erpnext_last_validation_result = erpnext_last_validation
         erpnext_status = _annotate_provider_status(
-            erpnext.integration_status(
-                getattr(request.app.state, "erpnext_last_validation_result", None)
-            )
+            erpnext.integration_status(erpnext_last_validation)
         )
     elif "erpnext" in settings.required_provider_names:
         erpnext_status = _annotate_provider_status(

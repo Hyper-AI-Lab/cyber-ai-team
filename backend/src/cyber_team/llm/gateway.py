@@ -1,6 +1,7 @@
 """Provider-neutral LiteLLM gateway with zero-spend and local fallback policy."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -23,6 +24,14 @@ logger = logging.getLogger(__name__)
 
 class LLMCircuitOpenError(RuntimeError):
     """Raised while provider calls are cooling down after repeated failures."""
+
+
+class LLMStructuredOutputError(ValueError):
+    """Raised when a provider response violates a structured-output contract."""
+
+
+class LLMStructuredOutputTruncatedError(LLMStructuredOutputError):
+    """Raised when structured output appears to have exhausted its token budget."""
 
 
 class LLMGateway:
@@ -657,9 +666,30 @@ class LLMGateway:
                     text = text[:-3]
                 text = text.strip()
             return json.loads(text)
-        except json.JSONDecodeError:
-            logger.warning(f"Failed to parse JSON response: {response[:200]}")
-            return {"raw_response": response}
+        except json.JSONDecodeError as exc:
+            digest = hashlib.sha256(response.encode("utf-8")).hexdigest()[:16]
+            text = response.strip()
+            appears_truncated = bool(text) and (
+                (text.startswith("{") and not text.endswith("}"))
+                or (text.startswith("[") and not text.endswith("]"))
+                or exc.pos >= max(0, len(text) - 2)
+            )
+            error_type = (
+                LLMStructuredOutputTruncatedError
+                if appears_truncated
+                else LLMStructuredOutputError
+            )
+            logger.warning(
+                "Structured LLM response rejected: error=%s length=%d "
+                "digest=%s position=%d",
+                error_type.__name__,
+                len(response),
+                digest,
+                exc.pos,
+            )
+            raise error_type(
+                "LLM response did not satisfy the JSON output contract."
+            ) from exc
 
     def _append_history(self, conversation_id: str, user_message: str, result: str) -> None:
         if conversation_id not in self._conversation_history:

@@ -182,7 +182,8 @@ def test_validate_erpnext_integration_uses_erpnext_client(monkeypatch):
     app.include_router(integrations_router, prefix="/api/integrations")
 
     class FakeERPNext:
-        async def validate(self):
+        async def validate(self, *, force=False):
+            assert force is True
             return {
                 "status": "ready",
                 "provider": "erpnext",

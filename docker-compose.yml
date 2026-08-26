@@ -40,6 +40,9 @@ services:
       - ./README.md:/company-documents/README.md:ro
       - ./request:/company-documents/request:ro
       - ./docs:/company-documents/docs:ro
+    networks:
+      - default
+      - erpnext
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -82,6 +85,9 @@ services:
     volumes:
       - core-data:/app/data
       - ${READINESS_EVIDENCE_HOST_DIR:-./dist}:/app/evidence/dist:ro
+    networks:
+      - default
+      - erpnext
     healthcheck:
       disable: true
     restart: unless-stopped
@@ -646,3 +652,5 @@ volumes:
 networks:
   default:
     name: ${CYBERTEAM_NETWORK_NAME:-cyberteam-network}
+  erpnext:
+    name: ${ERPNEXT_NETWORK_NAME:-cyberteam-erpnext-network}
