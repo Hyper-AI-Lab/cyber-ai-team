@@ -7668,3 +7668,23 @@
   - GitHub Actions: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/32997495932`.
 - Next step:
   - Commit and push the UI security refresh, rerun the formal gate against the final commit, promote `0.3.38` backup-first, and begin the replacement 24-hour soak.
+
+### 2026-08-26T19:14:47Z — STEP-311 — Corrected shared-network ownership before staging promotion
+- Files/services changed:
+  - Declared the ERPNext cross-stack network externally owned when configured for staging/production, while retaining a Compose-managed default for isolated local and CI runs.
+  - Added `ERPNEXT_NETWORK_EXTERNAL` to environment examples and enabled it only in the ignored live staging environment.
+- Commands run:
+  - Repeated final-commit `0.3.38` release gate and GitHub CI.
+  - Promotion-policy dry run followed by backup-first staging promotion attempt.
+  - Default and staging Compose schema/render validation after correcting network ownership.
+- Result:
+  - The final release gate passed all configured quality, migration, isolated Compose-smoke, image-build, and image-scan checks for commit `122e870`; release manifest `dist/releases/0.3.38.json` was created, and GitHub CI run `33001784861` passed.
+  - A fresh 187 MB PostgreSQL backup was created before any service change.
+  - Compose refused the first service update safely because existing `cyberteam-network` carries its original `default` ownership label while the added alias expected `erpnext`. No release service was recreated, and live `0.3.37` remained healthy.
+  - The corrected staging render now treats `cyberteam-network` as external and attaches Core/Worker to both `default` and `erpnext`; default local/CI config remains Compose-managed.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.3.38-20260826-191259.dump`.
+  - `dist/releases/0.3.38.json` from the pre-topology-fix commit; it must be regenerated after committing this correction.
+  - Rendered staging network: `{name: cyberteam-network, external: true}`.
+- Next step:
+  - Commit/push the topology correction, regenerate the final release manifest against that commit, then resume backup-first promotion and live verification.

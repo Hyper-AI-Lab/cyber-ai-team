@@ -654,3 +654,4 @@ networks:
     name: ${CYBERTEAM_NETWORK_NAME:-cyberteam-network}
   erpnext:
     name: ${ERPNEXT_NETWORK_NAME:-cyberteam-erpnext-network}
+    external: ${ERPNEXT_NETWORK_EXTERNAL:-false}
