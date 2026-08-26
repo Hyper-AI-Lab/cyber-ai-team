@@ -7648,3 +7648,23 @@
   - Live ERPNext validation: `ready`; context sync run `ctxsync_34d6d4d46efc`.
 - Next step:
   - Commit and push the remediation, run the complete `0.3.38` release gate, promote staging backup-first, verify realistic live extraction and ERPNext readiness, then start a new strict uninterrupted 24-hour soak.
+
+### 2026-08-26T18:48:28Z — STEP-310 — Closed the refreshed UI image security finding
+- Files/services changed:
+  - Added an explicit `ALPINE_SECURITY_REFRESH` cache key to the UI runner image so its existing targeted `apk upgrade` cannot reuse stale OpenSSL packages after Alpine publishes a security fix.
+  - Removed unused Cyber-Team release image tags `0.3.31` through `0.3.36`; the live `0.3.37` images, running services, persistent volumes, ERPNext data, and rollback artifacts were preserved.
+- Commands run:
+  - Formal `0.3.38` quality, migration, Compose-smoke, build, and scan gate.
+  - Targeted rebuild of the patched UI image and repeated Trivy image scan.
+  - Unused BuildKit-cache and historical release-tag reclamation after the host reached its release-build capacity threshold.
+- Result:
+  - Backend/frontend quality, migration rehearsals, isolated Compose smoke, and immutable image builds passed.
+  - The first refreshed Trivy scan correctly blocked the UI image on `CVE-2026-14456`: Alpine `libcrypto3` and `libssl3` `3.5.7-r0`, fixed in `3.5.8-r0`.
+  - The cache-rotated rebuild installed `libcrypto3` and `libssl3` `3.5.8-r0`; the repeated UI scan completed with zero findings. The Core image scan remained clean.
+  - GitHub CI run `32997495932` for remediation commit `b6cf02d` completed successfully.
+- Evidence:
+  - `frontend/Dockerfile` security-refresh build layer.
+  - Patched preflight image `cyber-team-ui:0.3.38-security`, Trivy exit `0` with zero findings.
+  - GitHub Actions: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/32997495932`.
+- Next step:
+  - Commit and push the UI security refresh, rerun the formal gate against the final commit, promote `0.3.38` backup-first, and begin the replacement 24-hour soak.
