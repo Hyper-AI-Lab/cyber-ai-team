@@ -7712,3 +7712,31 @@
   - `backend/src/cyber_team/operations/model_capabilities.py` and `backend/tests/test_model_capabilities.py`.
 - Next step:
   - Commit and release the qualification hardening as `0.3.39`, verify that the pending research signal completes without a redundant provider recheck, then run readiness preflight and start a new strict uninterrupted 24-hour soak.
+
+### 2026-08-27T01:49:00Z — STEP-313 — Released qualification hardening and started the strict closure soak
+- Files/services changed:
+  - Released transient model-qualification hardening from commit `db56012e0aa884ae6c0bda664adab14bc913bb5b` as immutable staging version `0.3.39`.
+  - Recreated only Cyber-Team Core, Worker, and UI after a fresh PostgreSQL backup; preserved ERPNext and all persistent services.
+  - Appended this operational evidence record; no local inference service or paid route was enabled.
+- Commands run:
+  - Complete clean `0.3.39` release gate: backend Ruff, `449` backend tests, compileall, Alembic offline SQL, dependency audit, `31` frontend tests, typecheck/build, npm audit, Compose validation, secret/FOSS/GCP-isolation checks, legacy and representative PostgreSQL migration rehearsals, isolated Compose smoke, immutable image builds, and Trivy scans.
+  - Public GitHub push CI, promotion-policy dry run, backup-first staging promotion, public Compose smoke, exact health/build validation, model-capability inspection, one owner-triggered company reconciliation cycle, ERPNext company-context sync, complete operations-readiness inspection, and the approval-gated ERPNext tool smoke.
+  - One-minute strict soak preflight followed by a detached 86,400-second soak at five-minute intervals.
+- Result:
+  - Release manifest reports all five gates passing; GitHub CI run `33028474989` passed. Public health reports version `0.3.39` and the exact release commit.
+  - Required model qualification remains `ready` at `5/5`: the prior semantic scores remain `1.0`, while all five later transient timeout/circuit-open attempts are retained as non-blocking availability warnings. Mistral runtime health recovered with zero consecutive failures and a closed circuit.
+  - Research signal `sig_baddcb5204584692989618051c23dc95` completed real structured extraction on its first processing attempt, reached `processed`, and received finite disposition `accepted_work_item`; no malformed-output or qualification loop appeared in Core/Worker logs.
+  - ERPNext token validation passed, company-context run `ctxsync_165c9329a68e` synchronized snapshot `ctx_b06fb83cfff9` without errors, and global operations readiness is `ready` with zero blockers.
+  - ERPNext tool smoke passed live Lead, Task, Issue, and Material Request execution, target-mismatch rejection, consumed-approval replay rejection, and fixture archival.
+  - Strict preflight `staging-soak-preflight-0.3.39-20260827T0147Z` passed `7/7` samples with zero failures; every evidence-to-outcome autonomy assertion passed and maximum observed latency was `484.65 ms`.
+  - Soak `staging-soak-20260827T014822Z` is running against exact version/build `0.3.39`/`db56012e0aa884ae6c0bda664adab14bc913bb5b`; its first sample passed with zero failures.
+- Evidence:
+  - `dist/releases/0.3.39.json`.
+  - `backups/staging/cyberteam-staging-0.3.39-20260827-013101.dump`.
+  - `dist/promotions/staging/0.3.39-20260827-013352.json`.
+  - `dist/erpnext/smoke/cyberteam-erpnext-tool-smoke-20260827T014607Z.json`.
+  - `dist/soak/staging-soak-preflight-0.3.39-20260827T0147Z.summary.json`.
+  - `dist/soak/staging-soak-20260827T014822Z.state.json` and `dist/soak/staging-soak-20260827T014822Z.jsonl`.
+  - GitHub Actions: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/33028474989`.
+- Next step:
+  - Allow the uninterrupted soak to finish at approximately `2026-08-28T01:48:22Z`, then require its terminal summary to report zero failed samples before closing the `0.3.39` evidence-processing milestone.
