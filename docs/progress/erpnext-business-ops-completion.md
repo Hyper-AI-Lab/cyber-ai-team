@@ -7688,3 +7688,27 @@
   - Rendered staging network: `{name: cyberteam-network, external: true}`.
 - Next step:
   - Commit/push the topology correction, regenerate the final release manifest against that commit, then resume backup-first promotion and live verification.
+
+### 2026-08-27T00:55:22Z — STEP-312 — Promoted 0.3.38 and hardened transient model requalification
+- Files/services changed:
+  - Promoted immutable staging release `0.3.38` from commit `46b267bbd775f52dce786e9c52cecb189aafd502` after a fresh PostgreSQL backup; Core and Worker now retain both the Cyber-Team and ERPNext networks across recreation.
+  - Updated model-capability qualification resolution so a transient timeout, rate limit, provider outage, capacity exhaustion, or open circuit remains visible as an availability warning without erasing a prior unexpired semantic pass.
+  - Kept semantic, structured-output, policy, and expired-evidence failures fail-closed; no local model or paid inference route was enabled.
+- Commands run:
+  - Repeated the complete final-commit `0.3.38` release gate, backup-first promotion, public Compose smoke, exact build-health check, internal ERPNext DNS/token validation, and live company-context synchronization.
+  - Ran a five-task `autonomous-company-capabilities-v4` Mistral qualification, ERPNext forced validation, and a staging-only public-research signal canary.
+  - Reproduced the post-qualification timeout race, inspected Temporal/Core/Worker state, added focused transient-versus-semantic qualification tests, and ran the complete backend suite plus Ruff.
+- Result:
+  - `0.3.38` is live with build `46b267bbd775f52dce786e9c52cecb189aafd502`; public health/login/dashboard/integrations/tools/WebSocket/approval smoke passed and both release images scan clean.
+  - ERPNext live validation passed and company-context sync run `ctxsync_f56c9738b69c` completed with no errors.
+  - All five v4 cognitive contracts initially passed at score `1.0`. A redundant explicit requalification later timed out while valid evidence remained; the latest-failure-wins behavior caused the Temporal signal loop to retry qualification and blocked signal `sig_baddcb5204584692989618051c23dc95`.
+  - The regression fix preserves the valid pass only for classified transient availability failures and records the failed attempt alongside it. A completed low-score or malformed contract still supersedes the pass and blocks execution.
+  - Focused model-capability tests pass `9/9`; the complete backend suite passes `449` tests and Ruff is clean.
+- Evidence:
+  - `dist/releases/0.3.38.json`.
+  - `backups/staging/cyberteam-staging-0.3.38-20260826-195152.dump`.
+  - `dist/promotions/staging/0.3.38-20260826-195353.json`.
+  - Capability run `modelcaprun_689644220763475186ef5ce055de2096`.
+  - `backend/src/cyber_team/operations/model_capabilities.py` and `backend/tests/test_model_capabilities.py`.
+- Next step:
+  - Commit and release the qualification hardening as `0.3.39`, verify that the pending research signal completes without a redundant provider recheck, then run readiness preflight and start a new strict uninterrupted 24-hour soak.

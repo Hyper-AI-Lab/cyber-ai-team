@@ -18,8 +18,16 @@ from cyber_team.operations.model_capabilities import (
 
 
 class FakeGateway:
-    def __init__(self, *, fail_task: str | None = None):
+    def __init__(
+        self,
+        *,
+        fail_task: str | None = None,
+        error_task: str | None = None,
+        error: Exception | None = None,
+    ):
         self.fail_task = fail_task
+        self.error_task = error_task
+        self.error = error or TimeoutError("provider timed out")
         self.calls = []
 
     async def validate_provider(self, *, force=False):
@@ -40,6 +48,8 @@ class FakeGateway:
     async def invoke_json(self, **kwargs):
         self.calls.append(kwargs)
         task = kwargs["user_message"].split("Task contract: ", 1)[1].split(".", 1)[0]
+        if task == self.error_task:
+            raise self.error
         if task == self.fail_task:
             return {key: None for key in CAPABILITY_CASES[task]["expected"]}
         return dict(CAPABILITY_CASES[task]["expected"])
@@ -176,6 +186,65 @@ async def test_expired_capability_evidence_fails_closed(
     with pytest.raises(ModelCapabilityNotQualifiedError):
         await service.assert_qualified(
             task_type="observer_review",
+            provider="llama_cpp",
+            model="local/test-model",
+        )
+
+
+@pytest.mark.asyncio
+async def test_transient_recheck_failure_preserves_fresh_semantic_qualification(
+    capability_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "model_capability_refresh_before_seconds", 300)
+    gateway = FakeGateway()
+    service = ModelCapabilityService(llm_gateway=gateway)
+    await service.evaluate()
+    gateway.error_task = "claim_extraction"
+
+    recheck = await service.evaluate(tasks=["claim_extraction"])
+    summary = await service.summary()
+    claim = next(
+        item for item in summary["items"] if item["task_type"] == "claim_extraction"
+    )
+
+    assert recheck["status"] == "failed"
+    assert claim["status"] == "passed"
+    assert claim["qualification_fallback"] == "fresh_prior_pass"
+    assert claim["latest_attempt"]["status"] == "failed"
+    assert claim["latest_attempt"]["error_category"] == "timeout"
+    assert summary["status"] == "ready"
+    assert summary["blocking"] is False
+    assert summary["availability_warning_count"] == 1
+    assert ModelCapabilityService._refresh_tasks(summary) == []
+    await service.assert_qualified(
+        task_type="claim_extraction",
+        provider="llama_cpp",
+        model="local/test-model",
+    )
+
+
+@pytest.mark.asyncio
+async def test_semantic_recheck_failure_supersedes_prior_qualification(
+    capability_session_factory,
+):
+    gateway = FakeGateway()
+    service = ModelCapabilityService(llm_gateway=gateway)
+    await service.evaluate()
+    gateway.fail_task = "claim_extraction"
+
+    await service.evaluate(tasks=["claim_extraction"])
+    summary = await service.summary()
+    claim = next(
+        item for item in summary["items"] if item["task_type"] == "claim_extraction"
+    )
+
+    assert claim["status"] == "failed"
+    assert "qualification_fallback" not in claim
+    assert summary["blocking"] is True
+    with pytest.raises(ModelCapabilityNotQualifiedError):
+        await service.assert_qualified(
+            task_type="claim_extraction",
             provider="llama_cpp",
             model="local/test-model",
         )

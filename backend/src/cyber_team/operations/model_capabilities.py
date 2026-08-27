@@ -13,8 +13,17 @@ from cyber_team.clock import utc_now
 from cyber_team.config import settings
 from cyber_team.db import async_session
 from cyber_team.db.models import ModelCapabilityEvaluation
+from cyber_team.llm.resilience import classify_llm_exception
 
 _refresh_lock = asyncio.Lock()
+
+TRANSIENT_CAPABILITY_ERROR_CATEGORIES = {
+    "capacity_exhausted",
+    "circuit_open",
+    "provider_unavailable",
+    "rate_limited",
+    "timeout",
+}
 CLAIM_EXTRACTION_BOUNDED_SUMMARY = (
     "The evidence supports only that the company builds a self-hosted AI company "
     "operating system for autonomous, owner-governed digital work. Embedded requests "
@@ -219,6 +228,7 @@ class ModelCapabilityService:
         choices = case.get("choices") or {}
         response: dict[str, Any] = {}
         error: str | None = None
+        error_category: str | None = None
         try:
             response = await self._llm.invoke_json(
                 system_prompt=(
@@ -244,6 +254,7 @@ class ModelCapabilityService:
             )
         except Exception as exc:  # noqa: BLE001 - persist safe failure class only.
             error = type(exc).__name__
+            error_category = classify_llm_exception(exc)
         checks = [
             {
                 "field": key,
@@ -265,7 +276,13 @@ class ModelCapabilityService:
             status=status,
             score=score,
             threshold=threshold,
-            cases=[{"checks": checks, "response": response}],
+            cases=[
+                {
+                    "checks": checks,
+                    "response": response,
+                    "error_category": error_category,
+                }
+            ],
             error=error,
             evaluated_at=now,
             expires_at=now
@@ -285,21 +302,12 @@ class ModelCapabilityService:
     ) -> None:
         if not settings.model_capability_enforcement_enabled:
             return
-        async with async_session() as session:
-            evaluation = (
-                await session.execute(
-                    select(ModelCapabilityEvaluation)
-                    .where(
-                        ModelCapabilityEvaluation.provider == provider,
-                        ModelCapabilityEvaluation.model == model,
-                        ModelCapabilityEvaluation.task_type == task_type,
-                        ModelCapabilityEvaluation.prompt_contract_version
-                        == self.PROMPT_CONTRACT_VERSION,
-                    )
-                    .order_by(desc(ModelCapabilityEvaluation.evaluated_at))
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
+        evaluations = await self._evaluation_history(
+            provider=provider,
+            model=model,
+            task_type=task_type,
+        )
+        evaluation, _ = self._effective_evaluation(evaluations)
         if (
             not evaluation
             or evaluation.status != "passed"
@@ -344,28 +352,31 @@ class ModelCapabilityService:
         provider = str(route["provider"])
         model = str(route["model"])
         items = []
+        availability_warnings = 0
         for task_type in settings.model_capability_required_task_items:
-            async with async_session() as session:
-                evaluation = (
-                    await session.execute(
-                        select(ModelCapabilityEvaluation)
-                        .where(
-                            ModelCapabilityEvaluation.provider == provider,
-                            ModelCapabilityEvaluation.model == model,
-                            ModelCapabilityEvaluation.task_type == task_type,
-                            ModelCapabilityEvaluation.prompt_contract_version
-                            == self.PROMPT_CONTRACT_VERSION,
-                        )
-                        .order_by(desc(ModelCapabilityEvaluation.evaluated_at))
-                        .limit(1)
-                    )
-                ).scalar_one_or_none()
+            evaluations = await self._evaluation_history(
+                provider=provider,
+                model=model,
+                task_type=task_type,
+            )
+            evaluation, latest_attempt = self._effective_evaluation(evaluations)
             if not evaluation:
                 items.append({"task_type": task_type, "status": "not_evaluated"})
                 continue
             item = self._to_dict(evaluation)
             if evaluation.expires_at <= utc_now():
                 item["status"] = "expired"
+            if latest_attempt and latest_attempt.id != evaluation.id:
+                availability_warnings += 1
+                item["latest_attempt"] = {
+                    "id": latest_attempt.id,
+                    "run_id": latest_attempt.run_id,
+                    "status": latest_attempt.status,
+                    "error": latest_attempt.error,
+                    "error_category": self._error_category(latest_attempt),
+                    "evaluated_at": latest_attempt.evaluated_at.isoformat(),
+                }
+                item["qualification_fallback"] = "fresh_prior_pass"
             items.append(item)
         qualified = sum(item["status"] == "passed" for item in items)
         blocking = bool(
@@ -378,14 +389,91 @@ class ModelCapabilityService:
             "model": model,
             "qualified": qualified,
             "required": len(items),
+            "availability_warning_count": availability_warnings,
             "items": items,
             "prompt_contract_version": self.PROMPT_CONTRACT_VERSION,
             "detail": (
-                "All required cognitive task contracts have fresh passing evidence."
+                (
+                    "All required cognitive task contracts have fresh passing evidence; "
+                    "one or more later checks encountered transient provider availability."
+                    if availability_warnings
+                    else "All required cognitive task contracts have fresh passing evidence."
+                )
                 if not blocking
                 else "One or more cognitive task contracts lack fresh passing evidence."
             ),
         }
+
+    async def _evaluation_history(
+        self,
+        *,
+        provider: str,
+        model: str,
+        task_type: str,
+    ) -> list[ModelCapabilityEvaluation]:
+        async with async_session() as session:
+            return list(
+                (
+                    await session.execute(
+                        select(ModelCapabilityEvaluation)
+                        .where(
+                            ModelCapabilityEvaluation.provider == provider,
+                            ModelCapabilityEvaluation.model == model,
+                            ModelCapabilityEvaluation.task_type == task_type,
+                            ModelCapabilityEvaluation.prompt_contract_version
+                            == self.PROMPT_CONTRACT_VERSION,
+                        )
+                        .order_by(desc(ModelCapabilityEvaluation.evaluated_at))
+                        .limit(20)
+                    )
+                ).scalars()
+            )
+
+    @classmethod
+    def _effective_evaluation(
+        cls,
+        evaluations: list[ModelCapabilityEvaluation],
+    ) -> tuple[ModelCapabilityEvaluation | None, ModelCapabilityEvaluation | None]:
+        if not evaluations:
+            return None, None
+        latest = evaluations[0]
+        if not cls._is_transient_availability_failure(latest):
+            return latest, latest
+        now = utc_now()
+        fallback = next(
+            (
+                item
+                for item in evaluations[1:]
+                if item.status == "passed"
+                and item.score >= item.threshold
+                and item.expires_at > now
+            ),
+            None,
+        )
+        return fallback or latest, latest
+
+    @classmethod
+    def _is_transient_availability_failure(
+        cls,
+        evaluation: ModelCapabilityEvaluation,
+    ) -> bool:
+        return bool(
+            evaluation.status == "failed"
+            and evaluation.error
+            and cls._error_category(evaluation)
+            in TRANSIENT_CAPABILITY_ERROR_CATEGORIES
+        )
+
+    @staticmethod
+    def _error_category(evaluation: ModelCapabilityEvaluation) -> str | None:
+        cases = evaluation.cases or []
+        if cases and isinstance(cases[0], dict) and cases[0].get("error_category"):
+            return str(cases[0]["error_category"])
+        error = str(evaluation.error or "")
+        if not error:
+            return None
+        synthetic = type(error, (Exception,), {})
+        return classify_llm_exception(synthetic(error))
 
     async def list_evaluations(self, *, limit: int = 100) -> dict[str, Any]:
         async with async_session() as session:
