@@ -7740,3 +7740,27 @@
   - GitHub Actions: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/33028474989`.
 - Next step:
   - Allow the uninterrupted soak to finish at approximately `2026-08-28T01:48:22Z`, then require its terminal summary to report zero failed samples before closing the `0.3.39` evidence-processing milestone.
+
+### 2026-08-28T01:10:45Z — STEP-314 — Rejected the 0.3.39 soak on hosted inference capacity
+- Files/services changed:
+  - Stopped the already-failed strict soak approximately 45 minutes before its scheduled end to prevent further ineffective provider probes.
+  - Appended this rejection record; application code, live credentials, autonomy policy, and local-inference settings were not changed.
+- Commands run:
+  - Inspected the soak container, state, and all append-only observations; grouped readiness blockers and failed autonomy assertions; correlated the first transition and all subsequent failures.
+  - Inspected Core/Worker provider diagnostics and persisted memory traces; compared non-secret SHA-256 fingerprints of the ignored staging credential with the Core and Worker environments.
+  - Reviewed current official Mistral API setup, Free-mode, usage-limit, and HTTP error documentation.
+- Result:
+  - Soak `staging-soak-20260827T014822Z` recorded `280` samples over `83,701` seconds: `51` passed and `229` failed. The zero-failure acceptance gate is rejected and the milestone remains open.
+  - The first failed sample at `2026-08-27T05:53:22Z` reported a provider circuit-open condition. From `2026-08-27T06:08:22Z` onward, every failed sample reported Mistral HTTP `402`; `228` samples also correctly marked the autonomous company control plane and model-task qualification unavailable.
+  - Exact release identity, public health, owner login, finite signal/event disposition, mandates, bounded portfolio, outcome assessment, action candidates, and Temporal delivery remained healthy. No ERPNext, memory, workflow-integrity, or application-crash failure was found.
+  - Persisted traces show `9` successful model executions and `39` safe failures during the observation window. Later activity was primarily circuit-open suppression plus bounded recovery probes, not an uncontrolled request storm.
+  - The ignored staging credential matches the exact credential loaded by both Core and Worker. The failure is not a stale-secret or missed-restart problem.
+  - Mistral documents HTTP `402` as an account billing/API-access condition; Free mode has limited included usage and workspace-scoped quotas. Cyber-Team correctly failed closed and did not enable paid usage or the intentionally disabled local fallback.
+- Evidence:
+  - `dist/soak/staging-soak-20260827T014822Z.state.json`.
+  - `dist/soak/staging-soak-20260827T014822Z.jsonl`.
+  - Staging PostgreSQL `memory_traces` between `2026-08-27T01:48:22Z` and `2026-08-28T01:10:45Z`.
+  - Mistral API setup and error reference: `https://docs.mistral.ai/getting-started/quickstarts/developer/first-api-request`.
+  - Mistral usage limits: `https://docs.mistral.ai/admin/billing-usage/usage-limits`.
+- Next step:
+  - Restore a genuinely zero-cost, API-enabled inference route without cycling keys to evade workspace quotas, or explicitly re-enable the isolated local open-model fallback. After Core/Worker validation and a fresh five-task semantic qualification pass, start a new uninterrupted strict 24-hour soak; do not close this milestone on the rejected run.
