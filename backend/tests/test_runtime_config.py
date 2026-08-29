@@ -75,6 +75,39 @@ def test_production_runtime_config_accepts_hardened_values():
     settings.validate_runtime_config()
 
 
+def test_mistral_numbered_pool_is_authoritative_and_deduplicated():
+    settings = Settings(
+        mistral_api_key="legacy-key",
+        mistral_api_key_1="pool-key-1",
+        mistral_api_key_2="pool-key-2",
+        mistral_api_key_3="pool-key-2",
+        mistral_api_key_4="pool-key-4",
+        mistral_api_key_5="pool-key-5",
+    )
+
+    assert settings.mistral_effective_api_keys == [
+        "pool-key-1",
+        "pool-key-2",
+        "pool-key-4",
+        "pool-key-5",
+    ]
+    assert settings.llm_effective_api_key == "pool-key-1"
+
+
+def test_mistral_legacy_key_remains_single_key_fallback():
+    settings = Settings(mistral_api_key="legacy-key")
+
+    assert settings.mistral_effective_api_keys == ["legacy-key"]
+
+
+@pytest.mark.parametrize("required_count", [0, 6])
+def test_production_runtime_config_rejects_invalid_credential_pool_size(required_count):
+    settings = production_settings(llm_hosted_credential_required_count=required_count)
+
+    with pytest.raises(RuntimeError, match="LLM_HOSTED_CREDENTIAL_REQUIRED_COUNT"):
+        settings.validate_runtime_config()
+
+
 def test_connection_urls_escape_reserved_characters():
     settings = Settings(
         postgres_user="cyber/team",

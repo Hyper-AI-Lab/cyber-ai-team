@@ -1,8 +1,11 @@
+import sys
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from cyber_team.config import settings
 from cyber_team.db import Base
 from cyber_team.db.models import MemoryEntry
 from cyber_team.memory import service as memory_module
@@ -227,6 +230,39 @@ async def test_embedding_failure_falls_back_to_postgres(monkeypatch):
         assert result[0]["score"] == 1.0
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_embedding_uses_shared_hosted_credential_rotation(monkeypatch):
+    keys = [f"embedding-key-{index}" for index in range(1, 6)]
+    monkeypatch.setattr(settings, "mistral_api_key", "")
+    for index, key in enumerate(keys, start=1):
+        monkeypatch.setattr(settings, f"mistral_api_key_{index}", key)
+    embedding = AsyncMock(
+        return_value=SimpleNamespace(data=[{"embedding": [0.1] * memory_module.VECTOR_SIZE}])
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(aembedding=embedding),
+    )
+    rotator = SimpleNamespace(
+        select=AsyncMock(
+            return_value={
+                "credential_index": 3,
+                "credential_slot": 4,
+                "credential_count": 5,
+            }
+        ),
+        close=AsyncMock(),
+    )
+    service = MemoryService(credential_rotator=rotator)
+
+    result = await service._embed("Company operating evidence")
+
+    assert result == [0.1] * memory_module.VECTOR_SIZE
+    rotator.select.assert_awaited_once_with(provider="mistral", credential_count=5)
+    assert embedding.await_args.kwargs["api_key"] == keys[3]
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,7 @@ from cyber_team.clock import utc_now
 from cyber_team.config import settings
 from cyber_team.db import async_session
 from cyber_team.db.models import MemoryEntry, MemoryTrace
+from cyber_team.llm.pacing import HostedCredentialRotator
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +30,9 @@ VECTOR_SIZE = 1024  # mistral-embed dimension
 
 
 class MemoryService:
-    def __init__(self):
+    def __init__(self, *, credential_rotator: HostedCredentialRotator | None = None):
         self._qdrant: QdrantClient | None = None
+        self._credential_rotator = credential_rotator or HostedCredentialRotator()
 
     async def startup(self):
         try:
@@ -61,6 +63,7 @@ class MemoryService:
     async def shutdown(self):
         if self._qdrant:
             self._qdrant.close()
+        await self._credential_rotator.close()
 
     # ─── Core Memory Operations ──────────────────────────────────────
 
@@ -625,10 +628,16 @@ class MemoryService:
         """Generate embedding using Mistral embed model."""
         try:
             import litellm
-            litellm.api_key = settings.mistral_api_key
+
+            api_keys = settings.mistral_effective_api_keys
+            selection = await self._credential_rotator.select(
+                provider="mistral",
+                credential_count=len(api_keys),
+            )
             response = await litellm.aembedding(
                 model="mistral/mistral-embed",
                 input=[text],
+                api_key=api_keys[int(selection["credential_index"])],
             )
             return response.data[0]["embedding"]
         except Exception as exc:

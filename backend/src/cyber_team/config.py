@@ -109,6 +109,11 @@ class Settings(BaseSettings):
 
     # Mistral / LLM
     mistral_api_key: str = ""
+    mistral_api_key_1: str = ""
+    mistral_api_key_2: str = ""
+    mistral_api_key_3: str = ""
+    mistral_api_key_4: str = ""
+    mistral_api_key_5: str = ""
     litellm_log: str = "INFO"
     llm_provider: str = "mistral"
     llm_default_model: str = "mistral/mistral-large-latest"
@@ -182,6 +187,7 @@ class Settings(BaseSettings):
     llm_hosted_pacing_enabled: bool = True
     llm_hosted_min_interval_seconds: float = 20.0
     llm_hosted_max_queue_wait_seconds: float = 300.0
+    llm_hosted_credential_required_count: int = 1
     llm_recovery_probe_enabled: bool = True
     llm_recovery_probe_initial_delay_seconds: int = 60
     llm_recovery_probe_poll_seconds: int = 30
@@ -369,7 +375,33 @@ class Settings(BaseSettings):
 
     @property
     def llm_effective_api_key(self) -> str:
-        return self.llm_api_key or self.mistral_api_key
+        keys = self.llm_effective_api_keys
+        return keys[0] if keys else ""
+
+    @property
+    def mistral_api_key_slots(self) -> list[str]:
+        return [
+            self.mistral_api_key_1.strip(),
+            self.mistral_api_key_2.strip(),
+            self.mistral_api_key_3.strip(),
+            self.mistral_api_key_4.strip(),
+            self.mistral_api_key_5.strip(),
+        ]
+
+    @property
+    def llm_effective_api_keys(self) -> list[str]:
+        if self.llm_provider_is_local:
+            return [self.llm_api_key.strip()] if self.llm_api_key.strip() else []
+        if self.llm_api_key.strip():
+            return [self.llm_api_key.strip()]
+        return self.mistral_effective_api_keys
+
+    @property
+    def mistral_effective_api_keys(self) -> list[str]:
+        configured_slots = [key for key in self.mistral_api_key_slots if key]
+        candidates = configured_slots or [self.mistral_api_key.strip()]
+        # Duplicate credentials do not satisfy a multi-key pool requirement.
+        return list(dict.fromkeys(key for key in candidates if key))
 
     @property
     def llm_provider_is_local(self) -> bool:
@@ -425,6 +457,10 @@ class Settings(BaseSettings):
         if self.llm_hosted_min_interval_seconds <= 0:
             raise RuntimeError(
                 "Refusing production startup without a positive hosted LLM pacing interval"
+            )
+        if not 1 <= self.llm_hosted_credential_required_count <= 5:
+            raise RuntimeError(
+                "LLM_HOSTED_CREDENTIAL_REQUIRED_COUNT must be between 1 and 5"
             )
 
     model_config = {"env_file": ".env", "extra": "ignore"}

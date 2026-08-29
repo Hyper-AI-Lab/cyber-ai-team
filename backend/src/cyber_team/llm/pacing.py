@@ -25,6 +25,12 @@ class LLMInferenceQueueCapacityError(RuntimeError):
     status_code = 429
 
 
+class LLMCredentialCoordinationUnavailableError(ConnectionError):
+    """Raised when a multi-key hosted credential pool cannot rotate safely."""
+
+    status_code = 503
+
+
 _RESERVE_SLOT_SCRIPT = """
 local time_parts = redis.call('TIME')
 local now_ms = (tonumber(time_parts[1]) * 1000) + math.floor(tonumber(time_parts[2]) / 1000)
@@ -169,3 +175,78 @@ class HostedInferencePacer:
         identity = provider.strip().lower()
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
         return f"cyberteam:llm:hosted-pacing:{digest}"
+
+
+class HostedCredentialRotator:
+    """Select hosted credentials through one process-independent round robin.
+
+    Core, Worker, and embedding callers use the same Redis counter. Credential
+    values never enter Redis; only a monotonically increasing selection number
+    is shared.
+    """
+
+    def __init__(self, *, redis_client: Any | None = None) -> None:
+        self._redis = redis_client
+        self._owns_redis = redis_client is None
+        self._last_selection: dict[str, Any] | None = None
+
+    async def select(self, *, provider: str, credential_count: int) -> dict[str, Any]:
+        count = int(credential_count)
+        if count < 1:
+            raise ValueError("At least one hosted LLM credential is required.")
+        if count == 1:
+            result = self._selection(index=0, count=1)
+            self._last_selection = result
+            return result
+
+        try:
+            sequence = int(await self._redis_client().incr(self._coordination_key(provider)))
+        except Exception as exc:
+            self._last_selection = {
+                "strategy": "redis_round_robin",
+                "outcome": "failed",
+                "category": "coordination_unavailable",
+                "credential_count": count,
+                "at": utc_now().isoformat(),
+            }
+            raise LLMCredentialCoordinationUnavailableError(
+                "Hosted LLM credential rotation coordination is unavailable."
+            ) from exc
+
+        result = self._selection(index=(sequence - 1) % count, count=count)
+        self._last_selection = result
+        return result
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "strategy": "redis_round_robin",
+            "coordination": "redis",
+            "last_selection": self._last_selection,
+        }
+
+    async def close(self) -> None:
+        if self._redis is not None and self._owns_redis:
+            await self._redis.aclose()
+        self._redis = None
+
+    def _redis_client(self) -> Any:
+        if self._redis is None:
+            self._redis = Redis.from_url(settings.redis_url, decode_responses=True)
+        return self._redis
+
+    @staticmethod
+    def _selection(*, index: int, count: int) -> dict[str, Any]:
+        return {
+            "strategy": "redis_round_robin",
+            "outcome": "selected",
+            "credential_slot": index + 1,
+            "credential_index": index,
+            "credential_count": count,
+            "selected_at": utc_now().isoformat(),
+        }
+
+    @staticmethod
+    def _coordination_key(provider: str) -> str:
+        identity = provider.strip().lower()
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+        return f"cyberteam:llm:credential-round-robin:{digest}"

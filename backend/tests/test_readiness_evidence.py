@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from cyber_team.config import settings
 from cyber_team.operations.readiness import ProductionReadinessEvidenceService
 
 
@@ -380,6 +381,27 @@ async def test_alert_and_credential_evidence_do_not_store_secret_values():
     assert audit.recorded[1]["control_id"] == "credential_rotation.staging"
     assert audit.recorded[1]["evidence"]["secret_names"] == ["SMTP_PASSWORD"]
     assert "secret-value" not in json.dumps(audit.recorded)
+
+
+def test_secret_inventory_requires_each_configured_mistral_pool_slot(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "mistral")
+    monkeypatch.setattr(settings, "llm_hosted_credential_required_count", 5)
+    for index in range(1, 6):
+        monkeypatch.setattr(settings, f"mistral_api_key_{index}", f"pool-key-{index}")
+
+    inventory = ProductionReadinessEvidenceService(
+        audit_service=FakeAudit()
+    )._secret_inventory()
+    pool_checks = [item for item in inventory if item.name.startswith("MISTRAL_API_KEY_")]
+
+    assert [item.name for item in pool_checks] == [
+        "MISTRAL_API_KEY_1",
+        "MISTRAL_API_KEY_2",
+        "MISTRAL_API_KEY_3",
+        "MISTRAL_API_KEY_4",
+        "MISTRAL_API_KEY_5",
+    ]
+    assert all(item.required and item.configured for item in pool_checks)
 
 
 @pytest.mark.asyncio

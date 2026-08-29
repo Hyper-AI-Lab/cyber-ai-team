@@ -12,7 +12,7 @@ import httpx
 
 from cyber_team.clock import utc_now
 from cyber_team.config import settings
-from cyber_team.llm.pacing import HostedInferencePacer
+from cyber_team.llm.pacing import HostedCredentialRotator, HostedInferencePacer
 from cyber_team.llm.resilience import (
     classify_llm_exception,
     llm_error_allows_local_fallback,
@@ -35,7 +35,12 @@ class LLMStructuredOutputTruncatedError(LLMStructuredOutputError):
 
 
 class LLMGateway:
-    def __init__(self, *, hosted_pacer: HostedInferencePacer | None = None):
+    def __init__(
+        self,
+        *,
+        hosted_pacer: HostedInferencePacer | None = None,
+        credential_rotator: HostedCredentialRotator | None = None,
+    ):
         self._provider = settings.llm_provider.strip() or "mistral"
         self._default_model = settings.llm_default_model.strip() or (
             "mistral/mistral-large-latest"
@@ -50,6 +55,7 @@ class LLMGateway:
         self._last_invocation_result: dict | None = None
         self._capability_checker = None
         self._hosted_pacer = hosted_pacer or HostedInferencePacer()
+        self._credential_rotator = credential_rotator or HostedCredentialRotator()
 
         # Integrate Langfuse tracing if API keys are configured
         if settings.langfuse_public_key and settings.langfuse_secret_key:
@@ -145,21 +151,38 @@ class LLMGateway:
         attempts = 1 if route["local"] else max(1, settings.llm_retry_attempts)
         last_error: Exception | None = None
         for attempt in range(attempts):
+            credential_selection: dict | None = None
             try:
                 if not route["local"]:
                     await self._hosted_pacer.acquire(
                         provider=route["provider"],
                         model=model,
                     )
+                    credential_selection = await self._credential_rotator.select(
+                        provider=route["provider"],
+                        credential_count=len(route["api_keys"]),
+                    )
+                else:
+                    credential_selection = {
+                        "credential_index": 0,
+                        "credential_slot": 1,
+                        "credential_count": 1,
+                    }
+                credential_index = int(credential_selection["credential_index"])
+                api_key = route["api_keys"][credential_index]
                 request = {
                     "model": model,
                     "messages": messages,
                     "temperature": temperature,
                     "max_tokens": max_tokens,
-                    "metadata": metadata,
+                    "metadata": {
+                        **metadata,
+                        "credential_slot": credential_selection["credential_slot"],
+                        "credential_count": credential_selection["credential_count"],
+                    },
                 }
-                if route["api_key"]:
-                    request["api_key"] = route["api_key"]
+                if api_key:
+                    request["api_key"] = api_key
                 if route["api_base"]:
                     request["api_base"] = route["api_base"]
                 if json_schema:
@@ -177,7 +200,9 @@ class LLMGateway:
                     ),
                 )
                 result = response.choices[0].message.content
-                self._record_provider_success(route=route)
+                self._record_provider_success(
+                    route={**route, **credential_selection},
+                )
                 if conversation_id:
                     self._append_history(conversation_id, user_message, result)
                 logger.info(
@@ -191,7 +216,13 @@ class LLMGateway:
                 last_error = exc
                 category = classify_llm_exception(exc)
                 if attempt >= attempts - 1 or not llm_error_is_retryable(category):
-                    self._record_provider_failure(category, route=route)
+                    self._record_provider_failure(
+                        category,
+                        route={
+                            **route,
+                            **(credential_selection or {}),
+                        },
+                    )
                     logger.error(
                         "LLM invoke failed: agent=%s category=%s attempt=%s/%s",
                         agent_id,
@@ -348,7 +379,7 @@ class LLMGateway:
             result = {
                 "provider": route["provider"],
                 "model": route["model"],
-                "configured": bool(route["api_key"]),
+                "configured": bool(route["api_keys"]),
                 "mode": "configuration_required",
                 "status": "zero_cost_confirmation_required",
                 "blocking": True,
@@ -358,22 +389,28 @@ class LLMGateway:
                 ),
                 "hosted": True,
                 "zero_cost_confirmed": False,
+                "credential_pool": self._credential_pool_status(route),
                 "last_checked_at": now.isoformat(),
             }
             self._last_validation_result = result
             self._last_validation_at = now
             return self._merge_runtime_status(result, now)
 
-        if not route["local"] and not route["api_key"]:
+        required_count = self._required_credential_count(route)
+        if not route["local"] and len(route["api_keys"]) < required_count:
             result = {
                 "provider": route["provider"],
                 "model": route["model"],
-                "configured": False,
+                "configured": bool(route["api_keys"]),
                 "mode": "configuration_required",
                 "status": "configuration_required",
                 "blocking": True,
-                "detail": "An API key is required for the selected hosted LLM provider.",
+                "detail": (
+                    f"Hosted LLM credential pool requires {required_count} distinct keys; "
+                    f"{len(route['api_keys'])} are configured."
+                ),
                 "hosted": True,
+                "credential_pool": self._credential_pool_status(route),
                 "last_checked_at": now.isoformat(),
             }
             self._last_validation_result = result
@@ -403,6 +440,7 @@ class LLMGateway:
                         "mode": result.get("mode"),
                         "status": result.get("status"),
                         "detail": result.get("detail"),
+                        "credential_pool": result.get("credential_pool"),
                     },
                 }
         self._last_validation_result = result
@@ -411,10 +449,28 @@ class LLMGateway:
 
     async def _validate_route(self, route: dict, *, now) -> dict:
         provider_label = "Local model" if route["local"] else "Hosted LLM"
+        credentials = route["api_keys"] or ([""] if route["local"] else [])
+        pool = self._credential_pool_status(route)
         try:
+            responses = []
             async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(route["models_url"], headers=route["headers"])
-            if response.status_code == 200:
+                for index, api_key in enumerate(credentials):
+                    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+                    response = await client.get(route["models_url"], headers=headers)
+                    responses.append((index + 1, int(response.status_code)))
+            healthy_slots = [slot for slot, status_code in responses if status_code == 200]
+            failed_slots = [
+                {"slot": slot, "http_status": status_code}
+                for slot, status_code in responses
+                if status_code != 200
+            ]
+            pool = {
+                **pool,
+                "validated_count": len(healthy_slots),
+                "healthy_slots": healthy_slots,
+                "failed_slots": failed_slots,
+            }
+            if responses and not failed_slots:
                 return {
                     "provider": route["provider"],
                     "model": route["model"],
@@ -431,9 +487,11 @@ class LLMGateway:
                     "zero_cost_confirmed": (
                         True if route["local"] else settings.llm_external_zero_cost_confirmed
                     ),
+                    "credential_pool": pool,
                     "last_checked_at": now.isoformat(),
                 }
-            if response.status_code in {401, 403}:
+            rejected = [item for item in failed_slots if item["http_status"] in {401, 403}]
+            if rejected:
                 return {
                     "provider": route["provider"],
                     "model": route["model"],
@@ -441,10 +499,15 @@ class LLMGateway:
                     "mode": "configuration_required",
                     "status": "configuration_required",
                     "blocking": True,
-                    "detail": f"{provider_label} credentials were rejected.",
+                    "detail": (
+                        f"{provider_label} credential validation rejected "
+                        f"{len(rejected)} of {len(credentials)} configured slots."
+                    ),
+                    "credential_pool": pool,
                     "last_checked_at": now.isoformat(),
                 }
-            status = "capacity_exhausted" if response.status_code == 402 else "unavailable"
+            capacity = [item for item in failed_slots if item["http_status"] == 402]
+            status = "capacity_exhausted" if capacity else "unavailable"
             return {
                 "provider": route["provider"],
                 "model": route["model"],
@@ -452,7 +515,11 @@ class LLMGateway:
                 "mode": "unavailable",
                 "status": status,
                 "blocking": True,
-                "detail": f"{provider_label} validation returned HTTP {response.status_code}.",
+                "detail": (
+                    f"{provider_label} credential validation failed for "
+                    f"{len(failed_slots)} of {len(credentials)} configured slots."
+                ),
+                "credential_pool": pool,
                 "last_checked_at": now.isoformat(),
             }
         except Exception as exc:  # noqa: BLE001 - validation must return safe status.
@@ -464,6 +531,7 @@ class LLMGateway:
                 "status": "unavailable",
                 "blocking": True,
                 "detail": f"{provider_label} validation failed: {type(exc).__name__}.",
+                "credential_pool": pool,
                 "last_checked_at": now.isoformat(),
             }
 
@@ -484,6 +552,7 @@ class LLMGateway:
                 "authentication_error",
                 "rate_limited",
                 "provider_unavailable",
+                "capacity_exhausted",
                 "timeout",
                 "circuit_open",
             }
@@ -504,12 +573,14 @@ class LLMGateway:
             ),
             "last_invocation": last or None,
             "hosted_pacing": self._hosted_pacer.status(),
+            "credential_rotation": self._credential_rotator.status(),
             "checked_at": now.isoformat(),
         }
 
     async def close(self) -> None:
         """Release process-local provider coordination resources."""
         await self._hosted_pacer.close()
+        await self._credential_rotator.close()
 
     def _ensure_provider_available(self) -> None:
         if self._circuit_open_until > time.monotonic():
@@ -526,6 +597,8 @@ class LLMGateway:
             "at": utc_now().isoformat(),
             "provider": (route or {}).get("provider", self._provider),
             "model": (route or {}).get("model", self._default_model),
+            "credential_slot": (route or {}).get("credential_slot"),
+            "credential_count": (route or {}).get("credential_count"),
         }
 
     def _record_provider_failure(self, category: str, *, route: dict | None = None) -> None:
@@ -545,6 +618,8 @@ class LLMGateway:
             "at": utc_now().isoformat(),
             "provider": (route or {}).get("provider", self._provider),
             "model": (route or {}).get("model", self._default_model),
+            "credential_slot": (route or {}).get("credential_slot"),
+            "credential_count": (route or {}).get("credential_count"),
         }
 
     def _primary_route(self, model: str) -> dict:
@@ -557,14 +632,16 @@ class LLMGateway:
             if api_base
             else "https://api.mistral.ai/v1/models"
         )
-        api_key = settings.llm_effective_api_key
+        api_keys = settings.llm_effective_api_keys
+        if local and not api_keys:
+            api_keys = [""]
         return {
             "provider": self._provider,
             "model": model,
             "api_base": api_base,
-            "api_key": api_key,
+            "api_key": api_keys[0] if api_keys else "",
+            "api_keys": api_keys,
             "models_url": models_url,
-            "headers": ({"Authorization": f"Bearer {api_key}"} if api_key else {}),
             "local": local,
         }
 
@@ -576,9 +653,25 @@ class LLMGateway:
             "model": settings.llm_local_model.strip() or "local/open-model",
             "api_base": api_base,
             "api_key": api_key,
+            "api_keys": [api_key],
             "models_url": f"{api_base.rstrip('/')}/models",
-            "headers": ({"Authorization": f"Bearer {api_key}"} if api_key else {}),
             "local": True,
+        }
+
+    @staticmethod
+    def _required_credential_count(route: dict) -> int:
+        if route.get("local") or route.get("provider") != "mistral":
+            return 1
+        return max(1, min(settings.llm_hosted_credential_required_count, 5))
+
+    def _credential_pool_status(self, route: dict) -> dict:
+        configured = len(route.get("api_keys") or [])
+        required = self._required_credential_count(route)
+        return {
+            "strategy": "single" if route.get("local") else "redis_round_robin",
+            "configured_count": configured,
+            "required_count": required,
+            "complete": configured >= required,
         }
 
     def set_capability_checker(self, checker) -> None:

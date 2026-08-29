@@ -13,6 +13,22 @@ from cyber_team.llm.gateway import (
 )
 
 
+def configure_mistral_pool(monkeypatch, keys: list[str], *, required_count: int = 5):
+    monkeypatch.setattr(settings, "llm_provider", "mistral")
+    monkeypatch.setattr(settings, "llm_api_key", "")
+    monkeypatch.setattr(settings, "mistral_api_key", "")
+    for index in range(1, 6):
+        value = keys[index - 1] if index <= len(keys) else ""
+        monkeypatch.setattr(settings, f"mistral_api_key_{index}", value)
+    monkeypatch.setattr(
+        settings,
+        "llm_hosted_credential_required_count",
+        required_count,
+    )
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)
+    monkeypatch.setattr(settings, "llm_local_fallback_enabled", False)
+
+
 def test_llm_history_is_bounded(monkeypatch):
     monkeypatch.setattr(settings, "llm_history_max_conversations", 2)
     monkeypatch.setattr(settings, "llm_history_max_messages", 4)
@@ -90,6 +106,106 @@ async def test_validate_provider_reports_rejected_mistral_credentials(monkeypatc
 
     assert result["mode"] == "configuration_required"
     assert result["blocking"] is True
+
+
+@pytest.mark.asyncio
+async def test_validate_provider_requires_and_validates_all_five_credentials(monkeypatch):
+    keys = [f"pool-key-{index}" for index in range(1, 6)]
+    configure_mistral_pool(monkeypatch, keys)
+    seen_authorization = []
+
+    class FakeResponse:
+        status_code = 200
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, headers):
+            assert url == "https://api.mistral.ai/v1/models"
+            seen_authorization.append(headers["Authorization"])
+            return FakeResponse()
+
+    monkeypatch.setattr("cyber_team.llm.gateway.httpx.AsyncClient", FakeClient)
+
+    result = await LLMGateway().validate_provider(force=True)
+
+    assert result["mode"] == "live"
+    assert result["blocking"] is False
+    assert result["credential_pool"] == {
+        "strategy": "redis_round_robin",
+        "configured_count": 5,
+        "required_count": 5,
+        "complete": True,
+        "validated_count": 5,
+        "healthy_slots": [1, 2, 3, 4, 5],
+        "failed_slots": [],
+    }
+    assert seen_authorization == [f"Bearer {key}" for key in keys]
+
+
+@pytest.mark.asyncio
+async def test_validate_provider_blocks_incomplete_five_credential_pool(monkeypatch):
+    configure_mistral_pool(monkeypatch, [f"pool-key-{index}" for index in range(1, 5)])
+
+    class UnexpectedClient:
+        def __init__(self, timeout):
+            raise AssertionError("validation must not start with an incomplete pool")
+
+    monkeypatch.setattr("cyber_team.llm.gateway.httpx.AsyncClient", UnexpectedClient)
+
+    result = await LLMGateway().validate_provider(force=True)
+
+    assert result["mode"] == "configuration_required"
+    assert result["blocking"] is True
+    assert result["credential_pool"]["configured_count"] == 4
+    assert result["credential_pool"]["required_count"] == 5
+    assert result["credential_pool"]["complete"] is False
+
+
+@pytest.mark.asyncio
+async def test_validate_provider_blocks_when_one_pool_credential_has_no_capacity(
+    monkeypatch,
+):
+    keys = [f"pool-key-{index}" for index in range(1, 6)]
+    configure_mistral_pool(monkeypatch, keys)
+
+    class FakeResponse:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, headers):
+            slot = keys.index(headers["Authorization"].removeprefix("Bearer ")) + 1
+            return FakeResponse(402 if slot == 3 else 200)
+
+    monkeypatch.setattr("cyber_team.llm.gateway.httpx.AsyncClient", FakeClient)
+
+    result = await LLMGateway().validate_provider(force=True)
+
+    assert result["status"] == "capacity_exhausted"
+    assert result["blocking"] is True
+    assert result["credential_pool"]["healthy_slots"] == [1, 2, 4, 5]
+    assert result["credential_pool"]["failed_slots"] == [
+        {"slot": 3, "http_status": 402}
+    ]
+    serialized = repr(result)
+    assert all(key not in serialized for key in keys)
 
 
 @pytest.mark.asyncio
@@ -176,6 +292,66 @@ async def test_invoke_retries_rate_limit_then_records_recovery(monkeypatch):
     assert pacer.acquire.await_count == 2
     assert gateway.runtime_status()["status"] == "ready"
     assert gateway.runtime_status()["last_invocation"]["outcome"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_invoke_distributes_requests_equally_across_five_credentials(monkeypatch):
+    keys = [f"pool-key-{index}" for index in range(1, 6)]
+    configure_mistral_pool(monkeypatch, keys)
+    monkeypatch.setattr(settings, "llm_retry_attempts", 1)
+    seen_keys = []
+    seen_metadata = []
+
+    async def fake_completion(**kwargs):
+        seen_keys.append(kwargs["api_key"])
+        seen_metadata.append(kwargs["metadata"])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Done."))],
+            usage=SimpleNamespace(total_tokens=8),
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=fake_completion),
+    )
+    pacer = MagicMock()
+    pacer.acquire = AsyncMock()
+    pacer.close = AsyncMock()
+    pacer.status.return_value = {"enabled": True}
+    rotator = MagicMock()
+    rotator.select = AsyncMock(
+        side_effect=[
+            {
+                "credential_index": index % 5,
+                "credential_slot": (index % 5) + 1,
+                "credential_count": 5,
+            }
+            for index in range(10)
+        ]
+    )
+    rotator.close = AsyncMock()
+    rotator.status.return_value = {"strategy": "redis_round_robin"}
+    gateway = LLMGateway(hosted_pacer=pacer, credential_rotator=rotator)
+
+    for index in range(10):
+        assert await gateway.invoke("System", f"Task {index}", agent_id="ops") == "Done."
+
+    assert seen_keys == keys + keys
+    assert [metadata["credential_slot"] for metadata in seen_metadata] == [
+        1,
+        2,
+        3,
+        4,
+        5,
+        1,
+        2,
+        3,
+        4,
+        5,
+    ]
+    assert all(metadata["credential_count"] == 5 for metadata in seen_metadata)
+    assert rotator.select.await_count == 10
 
 
 @pytest.mark.asyncio

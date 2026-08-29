@@ -7764,3 +7764,26 @@
   - Mistral usage limits: `https://docs.mistral.ai/admin/billing-usage/usage-limits`.
 - Next step:
   - Restore a genuinely zero-cost, API-enabled inference route without cycling keys to evade workspace quotas, or explicitly re-enable the isolated local open-model fallback. After Core/Worker validation and a fresh five-task semantic qualification pass, start a new uninterrupted strict 24-hour soak; do not close this milestone on the rejected run.
+
+### 2026-08-29T14:08:40Z — STEP-315 — Added fail-closed five-key Mistral rotation
+- Files/services changed:
+  - Added five numbered Mistral credential slots, a required distinct-key count, and backward-compatible single-key fallback in runtime configuration.
+  - Added one Redis-backed global round-robin selector shared by Core, Worker, hosted completion retries, and Mistral embeddings; Redis stores only the selection counter, never credentials.
+  - Extended hosted-provider validation and readiness to require and validate every configured slot, report only non-secret slot/count/status metadata, and fail closed for incomplete, duplicate, rejected, capacity-exhausted, or uncoordinated pools.
+  - Added empty pool fields to the ignored staging environment and repository examples; documented the operating and security model in the hosted-capacity runbook.
+  - Preserved the pre-existing uncommitted ERPNext loopback port-binding change in `docker-compose.yml` without including it in this implementation.
+- Commands run:
+  - Focused Ruff and Pytest verification for the gateway, pacing, memory, runtime configuration, and readiness evidence.
+  - Full backend Ruff, compileall, and Pytest suite.
+  - Repository secret scan, staging Compose configuration rendering, ignored-file verification, and `git diff --check`.
+- Result:
+  - Round-robin tests prove ten requests use slots `1,2,3,4,5,1,2,3,4,5`; the shared Redis counter keeps distribution coordinated across processes and call types.
+  - Validation tests prove four keys cannot start a five-key pool, duplicate values do not satisfy the pool, and one rejected or capacity-exhausted slot blocks the route without exposing credential values.
+  - Focused verification passes `61` tests. Full backend verification passes `462` tests; Ruff, compileall, secret scan, Compose rendering, and diff hygiene pass. The only warning is the existing Starlette `httpx` deprecation warning.
+  - Live containers were intentionally not recreated because all five ignored staging slots are still empty; the currently deployed single-key release remains unchanged until owner configuration is complete.
+- Evidence:
+  - `backend/src/cyber_team/llm/pacing.py`, `backend/src/cyber_team/llm/gateway.py`, `backend/src/cyber_team/memory/service.py`, and their focused tests.
+  - `docs/runbooks/hosted-llm-capacity.md`.
+  - Ignored local configuration: `deploy/environments/staging.env`.
+- Next step:
+  - Owner fills all five distinct numbered slots in the ignored staging environment. Then validate every key without exposing it, release and restart Core/Worker, rerun five-task semantic qualification and strict preflight, and start a fresh uninterrupted 24-hour soak only if all gates pass.
