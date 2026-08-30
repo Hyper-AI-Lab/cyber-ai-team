@@ -7787,3 +7787,30 @@
   - Ignored local configuration: `deploy/environments/staging.env`.
 - Next step:
   - Owner fills all five distinct numbered slots in the ignored staging environment. Then validate every key without exposing it, release and restart Core/Worker, rerun five-task semantic qualification and strict preflight, and start a fresh uninterrupted 24-hour soak only if all gates pass.
+
+### 2026-08-30T10:34:06Z — STEP-316 — Promoted the five-key Mistral Medium route and refreshed closure evidence
+- Files/services changed:
+  - Set the ignored staging route and tracked defaults to `mistral/mistral-medium-3-5`; loaded the owner's refreshed first credential together with four existing distinct credentials through the five-slot pool.
+  - Released immutable staging version `0.3.40` from commit `619530b2cc52a23312f4def39b51ade9c1cd1283` after a fresh PostgreSQL backup.
+  - Reclaimed only unused Docker build cache; retained every named volume and backup artifact.
+- Commands run:
+  - Validated each of the five credential slots independently against hosted completion and embedding endpoints without printing, hashing, or persisting credential values.
+  - Ran focused model/rotation tests, repository secret scan, the complete `0.3.40` release gate, Trivy image scans, GitHub CI, backup-first promotion, public Compose smoke, and exact live build/configuration checks.
+  - Ran the five required semantic capability cases, a strict one-minute soak preflight, fresh PostgreSQL/Qdrant and ERPNext backup/restore drills, and the conservative five-user/five-minute k6 load gate.
+- Result:
+  - All five credential slots are distinct and live for completion and `mistral-embed`; Core and Worker report model `mistral/mistral-medium-3-5`, pool count `5`, required count `5`, and local fallback disabled.
+  - Semantic run `modelcaprun_e5e1081e75bc47238717a08406f16d44` passed all `5/5` required tasks at score `1.0` against threshold `0.8`.
+  - Release `0.3.40` passed `462` backend tests, `31` frontend tests, dependency/license/secret/GCP-isolation checks, PostgreSQL migration rehearsals, Compose smoke, and zero-finding Core/UI image scans. GitHub CI run `33290376612` passed.
+  - The first strict preflight correctly failed `7/7` samples because alert, restore, and load evidence had crossed the 30-day freshness boundary; every evidence-to-outcome autonomy assertion still passed. The failed preflight is retained rather than relabeled.
+  - Fresh PostgreSQL/Qdrant and ERPNext restore drills passed. The load gate passed `1,337` iterations with `0%` request failures, `0` HTTP 5xx responses, checks rate `1.0`, and p95 `722.83 ms` under the `750 ms` threshold.
+  - Operations readiness now has exactly one blocker: the stale real alert-email delivery proof. A new strict soak has not been started while that owner-controlled external side effect remains unproven.
+- Evidence:
+  - `dist/releases/0.3.40.json` and `dist/promotions/staging/0.3.40-20260830-040543.json`.
+  - `backups/staging/cyberteam-staging-0.3.40-20260830-040237.dump`.
+  - `dist/soak/staging-soak-20260830T040952Z.summary.json`.
+  - `dist/restore-drills/staging/staging-restore-drill-20260830T101031Z.json`.
+  - `dist/erpnext/backups/erpnext-backup-20260830T101357Z.json` and `dist/erpnext/restore-drills/erpnext-restore-drill-20260830T101432Z.json`.
+  - `dist/load-tests/load-smoke-20260830T102433Z.json`.
+  - GitHub Actions: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/33290376612`.
+- Next step:
+  - Owner triggers one real `Test Alert Email` from Operations and confirms delivery. Then rerun the strict preflight and start a new uninterrupted 24-hour soak only if readiness has zero blockers and every preflight sample passes.
