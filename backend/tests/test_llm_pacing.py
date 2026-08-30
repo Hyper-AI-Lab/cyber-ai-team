@@ -27,7 +27,7 @@ async def test_pacer_reserves_and_waits_for_shared_slot():
 
     result = await pacer.acquire(
         provider="mistral",
-        model="mistral/mistral-large-latest",
+        model="mistral/mistral-medium-3-5",
     )
 
     assert result["outcome"] == "acquired"

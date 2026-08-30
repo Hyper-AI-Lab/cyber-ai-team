@@ -43,7 +43,7 @@ class LLMGateway:
     ):
         self._provider = settings.llm_provider.strip() or "mistral"
         self._default_model = settings.llm_default_model.strip() or (
-            "mistral/mistral-large-latest"
+            "mistral/mistral-medium-3-5"
         )
         self._conversation_history: OrderedDict[str, list[dict]] = OrderedDict()
         self._max_conversations = max(1, settings.llm_history_max_conversations)

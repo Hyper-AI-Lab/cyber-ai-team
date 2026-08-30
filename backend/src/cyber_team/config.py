@@ -116,7 +116,7 @@ class Settings(BaseSettings):
     mistral_api_key_5: str = ""
     litellm_log: str = "INFO"
     llm_provider: str = "mistral"
-    llm_default_model: str = "mistral/mistral-large-latest"
+    llm_default_model: str = "mistral/mistral-medium-3-5"
     llm_fast_model: str = ""
     llm_critic_model: str = ""
     llm_api_base: str = ""

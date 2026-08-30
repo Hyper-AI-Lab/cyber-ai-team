@@ -506,7 +506,7 @@ async def test_retryable_hosted_failure_routes_to_local_fallback(monkeypatch):
 
     assert result == "Local recovery."
     assert [call["model"] for call in seen] == [
-        "mistral/mistral-large-latest",
+        "mistral/mistral-medium-3-5",
         "local/test-open-model",
     ]
     assert seen[1]["api_key"] == "local-test-key"
@@ -549,7 +549,7 @@ async def test_hosted_capacity_exhaustion_routes_immediately_to_local_fallback(m
     result = await gateway.invoke("System", "Task", agent_id="ops")
 
     assert result == "Local recovery."
-    assert seen == ["mistral/mistral-large-latest", "local/test-open-model"]
+    assert seen == ["mistral/mistral-medium-3-5", "local/test-open-model"]
     assert gateway.runtime_status()["last_invocation"]["provider"] == "llama_cpp"
 
 
