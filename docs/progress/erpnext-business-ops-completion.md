@@ -7814,3 +7814,28 @@
   - GitHub Actions: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/33290376612`.
 - Next step:
   - Owner triggers one real `Test Alert Email` from Operations and confirms delivery. Then rerun the strict preflight and start a new uninterrupted 24-hour soak only if readiness has zero blockers and every preflight sample passes.
+
+### 2026-08-31T15:26:12Z — STEP-317 — Separated owner identity from alert delivery and promoted 0.3.41
+- Files/services changed:
+  - Added `OWNER_NOTIFICATION_EMAIL` as the dedicated critical-notification destination while retaining `OWNER_EMAIL` as the owner login identity and backward-compatible fallback.
+  - Routed the Operations alert proof, owner-attention notifications, executive briefings, and Alertmanager receiver through the dedicated recipient; updated staging/production examples and the production-readiness runbook.
+  - Configured the ignored staging recipient as a separate Gmail mailbox, released immutable Core/UI version `0.3.41`, and recreated only Cyber-Team Core, Worker, and UI after a fresh PostgreSQL backup.
+  - Preserved the pre-existing uncommitted ERPNext loopback port-binding change in `docker-compose.yml` without committing or reverting it.
+- Commands run:
+  - Correlated the first alert proof with communication logs and Gmail IMAP folders; confirmed SMTP acceptance and exact Message-ID presence in All Mail/Sent Mail but absence from Inbox for the Workspace alias-to-self delivery.
+  - Ran focused Ruff and `42` focused tests, then the full quality/release gate: Ruff, `463` backend tests, compileall, Alembic offline SQL, dependency audits, `31` frontend tests, typecheck/build, Compose validation, secret/GCP/FOSS/diff checks, and legacy/representative PostgreSQL migration rehearsals.
+  - Built immutable Core/UI images, recovered from a disposable-cache disk exhaustion during the Trivy database download, scanned both images with zero high/critical findings, and passed an isolated `0.3.41` Compose smoke.
+  - Ran promotion-policy dry run, backup-first staging promotion, public Compose smoke, exact health/build validation, configuration checks in Core/Worker, and one replacement real alert-email proof.
+- Result:
+  - Root cause is confirmed: Gmail accepted the original alert but suppressed alias-to-self inbox delivery because SMTP authenticated as the primary Workspace mailbox while the recipient was an alias of that same mailbox. Cyber-Team had incorrectly coupled authentication identity and notification destination.
+  - Release `0.3.41` is live at build `712b17dcc7a3452096a74d08675031ea97c9d16d`; public health is `ok`, Core and Worker both report a configured recipient distinct from the login identity, and staging Compose smoke passes.
+  - The replacement alert was accepted by SMTP for the separate Gmail domain with communication identifier `1ed03ff2-5a76-45c2-95fb-c89788a2d808`; Operations alert readiness is `ready`. Human mailbox confirmation remains intentionally outstanding and is not inferred from SMTP acceptance.
+  - Public GitHub push CI run `33402575071` passed. No staging database, ERPNext data, backup artifact, or persistent application volume was removed while reclaiming space.
+- Evidence:
+  - `dist/releases/0.3.41.json`.
+  - `backups/staging/cyberteam-staging-0.3.41-20260831-151541.dump`.
+  - `dist/promotions/staging/0.3.41-20260831-151919.json`.
+  - Staging communication log and alert control evidence for communication identifier `1ed03ff2-5a76-45c2-95fb-c89788a2d808`.
+  - GitHub Actions: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/33402575071`.
+- Next step:
+  - Owner confirms receipt in the separate Gmail inbox or spam folder. Only after that human delivery proof, run the strict one-minute preflight and start the fresh uninterrupted 24-hour soak if every sample passes with zero readiness blockers.
