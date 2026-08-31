@@ -2335,10 +2335,14 @@ async def test_alert_email_delivery(
     comms = getattr(request.app.state, "comms_gateway", None)
     if not comms:
         raise HTTPException(503, "Communications gateway is not available")
-    if not settings.owner_email:
-        raise HTTPException(400, "OWNER_EMAIL is required for alert delivery tests")
+    recipient = settings.owner_notification_recipient
+    if not recipient:
+        raise HTTPException(
+            400,
+            "OWNER_NOTIFICATION_EMAIL or OWNER_EMAIL is required for alert delivery tests",
+        )
     email = SimpleNamespace(
-        to_address=settings.owner_email,
+        to_address=recipient,
         subject="[Cyber-Team] Alert delivery test",
         body=(
             "Cyber-Team alert delivery test.\n\n"
@@ -2366,7 +2370,7 @@ async def test_alert_email_delivery(
     return {
         "status": "ready" if response.get("status") in {"sent", "simulated"} else "failed",
         "dry_run": data.dry_run,
-        "recipient": settings.owner_email,
+        "recipient": recipient,
         "response": response,
         "evidence": evidence,
     }

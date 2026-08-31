@@ -48,6 +48,7 @@ class ExecutiveBriefEmailService:
         force: bool = False,
     ) -> dict[str, Any]:
         started_at = utc_now()
+        recipient = settings.owner_notification_recipient
         config_status = await self.status()
         if not settings.executive_brief_email_enabled:
             return self._empty_result(
@@ -112,7 +113,7 @@ class ExecutiveBriefEmailService:
                 outcome="skipped",
                 metadata={
                     "reason": "dry_run",
-                    "recipient": settings.owner_email,
+                    "recipient": recipient,
                     "subject": email.subject,
                     "idempotency_key": email.idempotency_key,
                     "brief_summary": self._brief_summary(brief),
@@ -151,7 +152,7 @@ class ExecutiveBriefEmailService:
             action="send_email",
             outcome=outcome,
             metadata={
-                "recipient": settings.owner_email,
+                "recipient": recipient,
                 "subject": email.subject,
                 "idempotency_key": email.idempotency_key,
                 "response": self._redact_response(response),
@@ -174,13 +175,17 @@ class ExecutiveBriefEmailService:
         )
 
     async def status(self) -> dict[str, Any]:
+        recipient = settings.owner_notification_recipient
         email_status = self._email_provider_status()
         if not settings.executive_brief_email_enabled:
             status = "disabled"
             detail = "Executive brief email delivery is disabled."
-        elif not settings.owner_email:
+        elif not recipient:
             status = "configuration_required"
-            detail = "OWNER_EMAIL is required for executive brief email delivery."
+            detail = (
+                "OWNER_NOTIFICATION_EMAIL or OWNER_EMAIL is required for executive "
+                "brief email delivery."
+            )
         elif email_status.get("mode") == "live":
             status = "ready"
             detail = "Executive brief email delivery can send live owner email."
@@ -204,7 +209,7 @@ class ExecutiveBriefEmailService:
             "status": status,
             "detail": detail,
             "channel": "email",
-            "recipient": settings.owner_email,
+            "recipient": recipient,
             "owner_console_url": settings.owner_console_url,
             "interval_seconds": max(
                 3600,
@@ -258,7 +263,7 @@ class ExecutiveBriefEmailService:
         if force:
             idempotency_key = f"{idempotency_key}:force:{uuid.uuid4().hex[:12]}"
         return ExecutiveBriefEmail(
-            to_address=settings.owner_email,
+            to_address=settings.owner_notification_recipient,
             subject=f"Cyber-Team Executive Brief - {date_key}",
             body=self._body_for_brief(brief, generated_at),
             cc=[],

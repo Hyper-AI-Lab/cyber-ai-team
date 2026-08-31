@@ -349,7 +349,7 @@ services:
       receivers:
         - name: owner-email
           email_configs:
-            - to: '$${OWNER_EMAIL:-owner@example.local}'
+            - to: '$${OWNER_NOTIFICATION_EMAIL:-$${OWNER_EMAIL:-owner@example.local}}'
               send_resolved: true
               require_tls: $${SMTP_STARTTLS:-false}
       EOF

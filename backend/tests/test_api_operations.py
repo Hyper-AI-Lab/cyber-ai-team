@@ -1556,6 +1556,10 @@ def test_alert_email_delivery_records_control_evidence(monkeypatch):
         "cyber_team.api.routes.operations.settings.owner_email",
         "owner@example.com",
     )
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.settings.owner_notification_email",
+        "alerts@example.net",
+    )
 
     async def mock_get_current_principal():
         return owner_principal()
@@ -1577,8 +1581,8 @@ def test_alert_email_delivery_records_control_evidence(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ready"
-    assert body["recipient"] == "owner@example.com"
-    assert comms.sent[0].to_address == "owner@example.com"
+    assert body["recipient"] == "alerts@example.net"
+    assert comms.sent[0].to_address == "alerts@example.net"
     assert comms.sent[0].agent_id is None
     assert "release gate" in comms.sent[0].body
     assert evidence.calls == [

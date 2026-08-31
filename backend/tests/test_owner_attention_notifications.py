@@ -114,6 +114,10 @@ async def test_owner_attention_notification_sends_and_dedupes(monkeypatch):
         "owner@example.com",
     )
     monkeypatch.setattr(
+        "cyber_team.operations.owner_attention.settings.owner_notification_email",
+        "alerts@example.net",
+    )
+    monkeypatch.setattr(
         "cyber_team.operations.owner_attention.settings.owner_console_url",
         "https://cyberteam.example.com",
     )
@@ -142,7 +146,7 @@ async def test_owner_attention_notification_sends_and_dedupes(monkeypatch):
 
     assert first["counts"]["sent"] == 1
     assert first["events"][0]["outcome"] == "sent"
-    assert comms.sent[0].to_address == "owner@example.com"
+    assert comms.sent[0].to_address == "alerts@example.net"
     assert comms.sent[0].agent_id is None
     assert "Finance operating review" in comms.sent[0].subject
     assert "https://cyberteam.example.com" in comms.sent[0].body
@@ -160,6 +164,10 @@ async def test_owner_attention_notification_resends_after_cooldown(monkeypatch):
     monkeypatch.setattr(
         "cyber_team.operations.owner_attention.settings.owner_email",
         "owner@example.com",
+    )
+    monkeypatch.setattr(
+        "cyber_team.operations.owner_attention.settings.owner_notification_email",
+        "",
     )
     monkeypatch.setattr(
         "cyber_team.operations.owner_attention.settings.owner_attention_notifications_enabled",
@@ -193,6 +201,10 @@ async def test_owner_attention_notification_dry_run_records_no_delivery(monkeypa
     monkeypatch.setattr(
         "cyber_team.operations.owner_attention.settings.owner_email",
         "owner@example.com",
+    )
+    monkeypatch.setattr(
+        "cyber_team.operations.owner_attention.settings.owner_notification_email",
+        "",
     )
     monkeypatch.setattr(
         "cyber_team.operations.owner_attention.settings.owner_attention_notifications_enabled",

@@ -54,6 +54,7 @@ class OwnerAttentionNotificationService:
         dry_run: bool = False,
     ) -> dict[str, Any]:
         started_at = utc_now()
+        recipient = settings.owner_notification_recipient
         config_status = await self.status()
         if not settings.owner_attention_notifications_enabled:
             return self._empty_result(
@@ -143,7 +144,7 @@ class OwnerAttentionNotificationService:
                             "reason": "dry_run",
                             "notification_key": notification_key,
                             "channel": "email",
-                            "recipient": settings.owner_email,
+                            "recipient": recipient,
                             "subject": email.subject,
                         },
                     )
@@ -170,7 +171,7 @@ class OwnerAttentionNotificationService:
                     metadata={
                         "notification_key": notification_key,
                         "channel": "email",
-                        "recipient": settings.owner_email,
+                        "recipient": recipient,
                         "subject": email.subject,
                         "response": response,
                     },
@@ -201,13 +202,17 @@ class OwnerAttentionNotificationService:
         }
 
     async def status(self) -> dict[str, Any]:
+        recipient = settings.owner_notification_recipient
         email_status = self._email_provider_status()
         if not settings.owner_attention_notifications_enabled:
             status = "disabled"
             detail = "Owner attention notifications are disabled."
-        elif not settings.owner_email:
+        elif not recipient:
             status = "configuration_required"
-            detail = "OWNER_EMAIL is required for owner attention notifications."
+            detail = (
+                "OWNER_NOTIFICATION_EMAIL or OWNER_EMAIL is required for owner "
+                "attention notifications."
+            )
         elif email_status.get("mode") == "live":
             status = "ready"
             detail = "Owner attention notifications can send live owner email."
@@ -231,7 +236,7 @@ class OwnerAttentionNotificationService:
             "status": status,
             "detail": detail,
             "channel": "email",
-            "recipient": settings.owner_email,
+            "recipient": recipient,
             "owner_console_url": settings.owner_console_url,
             "min_priority": settings.owner_attention_notification_min_priority,
             "interval_seconds": max(
@@ -326,7 +331,7 @@ class OwnerAttentionNotificationService:
             ]
         )
         return OwnerAttentionEmail(
-            to_address=settings.owner_email,
+            to_address=settings.owner_notification_recipient,
             subject=subject,
             body="\n".join(lines),
             cc=[],

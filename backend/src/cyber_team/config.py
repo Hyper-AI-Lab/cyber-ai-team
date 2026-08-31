@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     # Owner
     owner_email: str = "owner@example.com"
+    owner_notification_email: str = ""
     owner_password: str = "changeme-owner-password"
     owner_password_hash: str = ""
     access_token_expire_minutes: int = 60
@@ -343,6 +344,11 @@ class Settings(BaseSettings):
     @property
     def cors_allows_wildcard(self) -> bool:
         return "*" in self.cors_origins
+
+    @property
+    def owner_notification_recipient(self) -> str:
+        """Keep the login identity independent from the notification mailbox."""
+        return self.owner_notification_email.strip() or self.owner_email.strip()
 
     @property
     def required_provider_names(self) -> set[str]:

@@ -88,6 +88,10 @@ async def test_executive_brief_email_sends_live_owner_digest(monkeypatch):
         "owner@example.com",
     )
     monkeypatch.setattr(
+        "cyber_team.operations.executive_briefing.settings.owner_notification_email",
+        "alerts@example.net",
+    )
+    monkeypatch.setattr(
         "cyber_team.operations.executive_briefing.settings.owner_console_url",
         "https://cyberteam.example.com",
     )
@@ -105,7 +109,7 @@ async def test_executive_brief_email_sends_live_owner_digest(monkeypatch):
     assert result["response"]["status"] == "sent"
     assert result["brief_summary"]["latest_run_id"] == "exegov_1"
     assert len(comms.sent) == 1
-    assert comms.sent[0].to_address == "owner@example.com"
+    assert comms.sent[0].to_address == "alerts@example.net"
     assert "Cyber-Team Executive Brief" in comms.sent[0].body
     assert audit.recorded[-1]["event_type"] == "executive_brief.email"
     assert audit.recorded[-1]["outcome"] == "sent"
@@ -120,6 +124,10 @@ async def test_executive_brief_email_skips_recent_delivery(monkeypatch):
     monkeypatch.setattr(
         "cyber_team.operations.executive_briefing.settings.owner_email",
         "owner@example.com",
+    )
+    monkeypatch.setattr(
+        "cyber_team.operations.executive_briefing.settings.owner_notification_email",
+        "",
     )
     monkeypatch.setattr(
         "cyber_team.operations.executive_briefing.settings.executive_brief_email_cooldown_hours",
@@ -158,6 +166,10 @@ async def test_executive_brief_email_force_bypasses_cooldown(monkeypatch):
     monkeypatch.setattr(
         "cyber_team.operations.executive_briefing.settings.owner_email",
         "owner@example.com",
+    )
+    monkeypatch.setattr(
+        "cyber_team.operations.executive_briefing.settings.owner_notification_email",
+        "",
     )
     audit = FakeAudit(
         events=[

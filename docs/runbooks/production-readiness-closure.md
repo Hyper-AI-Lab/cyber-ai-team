@@ -43,8 +43,15 @@ recovery details.
 
 The observability profile includes Alertmanager. At runtime its email receiver is
 generated from the ignored environment file (`SMTP_HOST`, `SMTP_PORT`,
-`SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, and `OWNER_EMAIL`), while
+`SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, and
+`OWNER_NOTIFICATION_EMAIL`), while
 `monitoring/alertmanager.yml` remains a non-secret syntax baseline for CI.
+
+Keep `OWNER_EMAIL` as the console login identity. Set `OWNER_NOTIFICATION_EMAIL`
+to an inbox that can receive mail from the configured SMTP account. This should
+be a separate mailbox when `OWNER_EMAIL` is an alias of the SMTP account because
+some providers suppress alias-to-self delivery. If `OWNER_NOTIFICATION_EMAIL` is
+empty, Cyber-Team falls back to `OWNER_EMAIL` for backward compatibility.
 
 Use the owner console Operations page and click `Test Alert Email`, or call:
 

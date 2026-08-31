@@ -100,6 +100,17 @@ def test_mistral_legacy_key_remains_single_key_fallback():
     assert settings.mistral_effective_api_keys == ["legacy-key"]
 
 
+def test_owner_notification_recipient_is_independent_with_login_fallback():
+    separate = Settings(
+        owner_email="login@example.com",
+        owner_notification_email="alerts@example.net",
+    )
+    fallback = Settings(owner_email="login@example.com", owner_notification_email="")
+
+    assert separate.owner_notification_recipient == "alerts@example.net"
+    assert fallback.owner_notification_recipient == "login@example.com"
+
+
 @pytest.mark.parametrize("required_count", [0, 6])
 def test_production_runtime_config_rejects_invalid_credential_pool_size(required_count):
     settings = production_settings(llm_hosted_credential_required_count=required_count)
