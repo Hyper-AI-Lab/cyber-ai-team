@@ -7839,3 +7839,22 @@
   - GitHub Actions: `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/33402575071`.
 - Next step:
   - Owner confirms receipt in the separate Gmail inbox or spam folder. Only after that human delivery proof, run the strict one-minute preflight and start the fresh uninterrupted 24-hour soak if every sample passes with zero readiness blockers.
+
+### 2026-08-31T16:08:14Z — STEP-318 — Confirmed alert delivery and rejected preflight on hosted capacity
+- Files/services changed:
+  - Recorded the owner's human confirmation that the replacement alert reached the separate Gmail mailbox.
+  - Retained the failed strict preflight as immutable evidence; no application configuration, credential value, local-inference setting, or persistent service was changed.
+- Commands run:
+  - Started a strict 60-second preflight against exact live release `0.3.41` with ten-second sampling.
+  - Inspected all seven observations, the terminal summary, authenticated integration/readiness responses, and non-secret five-slot credential diagnostics.
+- Result:
+  - Real critical-email delivery is proven end to end: the owner received the expected Cyber-Team alert test and its replacement-proof note.
+  - Preflight `staging-soak-20260831T160547Z` correctly failed `7/7` samples. Public health, release identity, and request latency remained healthy; maximum latency was `458.01 ms`.
+  - Mistral slot `1` validates successfully. Slots `2`, `3`, `4`, and `5` each return HTTP `402`, producing `capacity_exhausted`, one required integration blocker, and the derived autonomous-company readiness blocker.
+  - No 24-hour soak was started because its zero-failure prerequisite is not satisfied. Repeated provider retries were avoided.
+- Evidence:
+  - `dist/soak/staging-soak-20260831T160547Z.summary.json`.
+  - `dist/soak/staging-soak-20260831T160547Z.jsonl`.
+  - Authenticated `/api/integrations/status` and `/api/operations/readiness` credential-pool diagnostics checked at `2026-08-31T16:05:48Z`.
+- Next step:
+  - Owner restores API capacity or supplies replacement credentials for `MISTRAL_API_KEY_2` through `MISTRAL_API_KEY_5`. Then validate all five slots without exposing values, recreate Core/Worker, rerun semantic qualification and the strict preflight, and start the 24-hour soak only after every gate passes.
