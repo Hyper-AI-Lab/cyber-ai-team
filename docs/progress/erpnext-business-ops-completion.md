@@ -7858,3 +7858,23 @@
   - Authenticated `/api/integrations/status` and `/api/operations/readiness` credential-pool diagnostics checked at `2026-08-31T16:05:48Z`.
 - Next step:
   - Owner restores API capacity or supplies replacement credentials for `MISTRAL_API_KEY_2` through `MISTRAL_API_KEY_5`. Then validate all five slots without exposing values, recreate Core/Worker, rerun semantic qualification and the strict preflight, and start the 24-hour soak only after every gate passes.
+
+### 2026-09-01T06:14:55Z — STEP-319 — Revalidated unchanged Mistral pool and started strict 24-hour soak
+- Files/services changed:
+  - Left all five owner-provided Mistral credentials unchanged after their quota reset restored API access.
+  - Started the detached strict staging soak monitor against exact live release `0.3.41`; no application service, policy, credential, or persistent volume was modified.
+- Commands run:
+  - Performed fresh authenticated provider/readiness validation without exposing credential values.
+  - Ran two immutable 60-second preflight windows at ten-second intervals, inspected every observation, and started the 86,400-second monitor at five-minute intervals only after a clean preflight.
+- Result:
+  - All five configured Mistral slots validate healthy with provider mode/status `live`; the prior four HTTP `402` responses were quota-state failures rather than invalid keys.
+  - Recovery preflight `staging-soak-20260901T061152Z` retained a strict failure with `5/7` passing samples because its first two samples observed the prior cached blocker before fresh provider state propagated; its final five samples were ready.
+  - Clean-window preflight `staging-soak-20260901T061316Z` passed `7/7` samples with zero failures, exact release identity, and maximum latency `225.37 ms`.
+  - Full run `staging-soak-20260901T061430Z` is running for 86,400 seconds at five-minute intervals. Its first sample passed with zero failures against version `0.3.41` and build `712b17dcc7a3452096a74d08675031ea97c9d16d`.
+- Evidence:
+  - `dist/soak/staging-soak-20260901T061152Z.summary.json` and corresponding JSONL observations.
+  - `dist/soak/staging-soak-20260901T061316Z.summary.json` and corresponding JSONL observations.
+  - `dist/soak/staging-soak-20260901T061430Z.state.json` and `dist/soak/staging-soak-20260901T061430Z.jsonl`.
+  - Detached container `cyberteam-staging-soak`.
+- Next step:
+  - Leave the monitor uninterrupted until approximately `2026-09-02T06:14:31Z` (`08:14:31` Europe/Berlin), then require the terminal summary to report `status=passed` and zero failed samples before closing the soak gate.
