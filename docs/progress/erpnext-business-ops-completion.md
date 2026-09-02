@@ -7878,3 +7878,22 @@
   - Detached container `cyberteam-staging-soak`.
 - Next step:
   - Leave the monitor uninterrupted until approximately `2026-09-02T06:14:31Z` (`08:14:31` Europe/Berlin), then require the terminal summary to report `status=passed` and zero failed samples before closing the soak gate.
+
+### 2026-09-02T06:57:47Z — STEP-320 — Closed the strict 0.3.41 staging soak gate
+- Files/services changed:
+  - Recorded the terminal soak evidence and completion assessment; the self-removing monitor container exited normally.
+  - No application code, runtime configuration, credential, deployment, database, or persistent volume was changed.
+- Commands run:
+  - Inspected the terminal summary, state, all `289` append-only JSONL observations, container lifecycle, public health, authenticated operations readiness, and non-secret Mistral pool diagnostics.
+  - Audited all observations for failed status, non-ready readiness, blockers, failed evidence-to-outcome autonomy checks, and release-version/build drift.
+- Result:
+  - Strict run `staging-soak-20260901T061430Z` completed the full `86,400.28`-second window with `status=passed`: `289/289` samples passed and zero failed.
+  - Every sample reported operations readiness `ready`, zero blockers, all ten evidence-to-outcome autonomy checks passing, version `0.3.41`, and build `712b17dcc7a3452096a74d08675031ea97c9d16d`.
+  - Mean recorded component latency was `100.86 ms`. One successful readiness request took `5,079.38 ms`; it returned ready with zero blockers and caused no timeout or failed sample.
+  - Current public health remains `ok`, operations readiness remains `ready` with zero blockers, and the five-key Mistral pool remains `5/5` live with no failed slot.
+- Evidence:
+  - `dist/soak/staging-soak-20260901T061430Z.summary.json`.
+  - `dist/soak/staging-soak-20260901T061430Z.state.json`.
+  - `dist/soak/staging-soak-20260901T061430Z.jsonl`.
+- Next step:
+  - Treat the `0.3.41` staging soak gate as complete. Resume the Autonomous Company Operations v3 rollout from the next unfinished milestone; continue monitoring the isolated readiness-latency outlier through normal metrics rather than reopening this successful gate.
