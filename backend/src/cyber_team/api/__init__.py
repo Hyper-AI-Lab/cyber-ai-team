@@ -64,6 +64,7 @@ from cyber_team.operations.llm_recovery import LLMProviderRecoveryService
 from cyber_team.operations.memory_conflicts import MemoryCanonicalConflictService
 from cyber_team.operations.memory_steward import MemoryStewardService
 from cyber_team.operations.model_capabilities import ModelCapabilityService
+from cyber_team.operations.operating_model import OperatingModelLifecycleService
 from cyber_team.operations.outcomes import OutcomeLearningService
 from cyber_team.operations.owner_attention import OwnerAttentionNotificationService
 from cyber_team.operations.planning import AutonomousPlanningService
@@ -153,6 +154,14 @@ async def lifespan(app: FastAPI):
         memory_service=app.state.memory_service,
         audit_service=app.state.audit_service,
     )
+    app.state.operating_model_lifecycle_service = OperatingModelLifecycleService(
+        tool_registry=app.state.tool_registry,
+        agent_manager=app.state.agent_manager,
+        work_portfolio_service=app.state.work_portfolio_service,
+        company_intelligence_service=app.state.company_intelligence_service,
+        action_policy_service=app.state.action_policy_service,
+        audit_service=app.state.audit_service,
+    )
     app.state.autonomous_company_cycle_service = AutonomousCompanyCycleService(
         intelligence_service=app.state.company_intelligence_service,
         strategy_service=app.state.company_strategy_service,
@@ -160,6 +169,8 @@ async def lifespan(app: FastAPI):
         outcome_learning_service=app.state.outcome_learning_service,
         action_policy_service=app.state.action_policy_service,
         model_capability_service=app.state.model_capability_service,
+        operating_model_service=app.state.operating_model_lifecycle_service,
+        tool_registry=app.state.tool_registry,
         audit_service=app.state.audit_service,
     )
     app.state.temporal_autonomy_controller = TemporalAutonomyController()

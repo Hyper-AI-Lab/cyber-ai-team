@@ -22,15 +22,21 @@ from cyber_team.db.models import (
     CompanyObjectiveRevision,
     CompanySignal,
     CompanySource,
+    DiscoveryObligation,
     DomainAutonomyControl,
+    LifecycleAssessment,
+    OperatingDomain,
+    OperatingDomainRevision,
     OperatingKPIRevision,
+    OperatingModelReconciliationRun,
+    OperatingModelRevision,
     OutcomeAssessment,
     WorkflowSpecification,
 )
 
 
 class AutonomousCompanyReadinessService:
-    """Explain v3 autonomy readiness without hiding unknown or stale state."""
+    """Explain autonomy readiness without hiding unknown or transitional state."""
 
     CRITICAL_MODEL_FIELDS = {
         "business_description",
@@ -304,6 +310,49 @@ class AutonomousCompanyReadinessService:
                     )
                 )
             ).scalars().all()
+            operating_model = (
+                await session.execute(
+                    select(OperatingModelRevision)
+                    .where(OperatingModelRevision.status == "active")
+                    .order_by(desc(OperatingModelRevision.revision))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            operating_model_candidate = (
+                await session.execute(
+                    select(OperatingModelRevision)
+                    .order_by(desc(OperatingModelRevision.revision))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            operating_domains = (
+                await session.execute(select(OperatingDomain))
+            ).scalars().all()
+            operating_domain_revisions = (
+                await session.execute(select(OperatingDomainRevision))
+            ).scalars().all()
+            latest_reconciliation = await self._latest(
+                session,
+                OperatingModelReconciliationRun,
+                OperatingModelReconciliationRun.created_at,
+            )
+            discovery_obligations = (
+                await session.execute(select(DiscoveryObligation))
+            ).scalars().all()
+            lifecycle_assessment_counts = await self._counts(
+                session,
+                LifecycleAssessment.lifecycle_status,
+            )
+            active_agent_rows = (
+                await session.execute(
+                    select(Agent.id, Agent.role_family).where(Agent.status == "active")
+                )
+            ).all()
+            active_mandates = (
+                await session.execute(
+                    select(AgentMandate).where(AgentMandate.status == "active")
+                )
+            ).scalars().all()
 
         critical_unknowns = sorted(
             field
@@ -530,8 +579,169 @@ class AutonomousCompanyReadinessService:
             ),
         }
         model_availability = await self._model_availability()
+        latest_domain_revisions: dict[str, OperatingDomainRevision] = {}
+        for revision in sorted(
+            operating_domain_revisions,
+            key=lambda item: item.revision,
+            reverse=True,
+        ):
+            latest_domain_revisions.setdefault(revision.domain_id, revision)
+        agent_ids_by_domain: dict[str, set[str]] = {}
+        for agent_id, family in active_agent_rows:
+            domain = self._canonical_family(str(family))
+            agent_ids_by_domain.setdefault(domain, set()).add(agent_id)
+        mandates_by_agent = {item.agent_id: item for item in active_mandates}
+        effective_domains = [
+            item for item in operating_domains if item.lifecycle_state in {"shadow", "active"}
+        ]
+        active_domains = [
+            item for item in operating_domains if item.lifecycle_state == "active"
+        ]
+        missing_specifications = sorted(
+            item.domain_key
+            for item in active_domains
+            if item.id not in latest_domain_revisions
+        )
+        missing_domain_agents = sorted(
+            item.domain_key
+            for item in active_domains
+            if not agent_ids_by_domain.get(item.domain_key)
+        )
+        missing_domain_mandates = sorted(
+            item.domain_key
+            for item in active_domains
+            if not any(
+                agent_id in mandates_by_agent
+                for agent_id in agent_ids_by_domain.get(item.domain_key, set())
+            )
+        )
+        missing_domain_objectives = sorted(
+            item.domain_key
+            for item in active_domains
+            if not any(
+                mandates_by_agent[agent_id].objective_ids
+                for agent_id in agent_ids_by_domain.get(item.domain_key, set())
+                if agent_id in mandates_by_agent
+            )
+        )
+        operating_model_invariants = sorted(
+            set(missing_specifications)
+            | set(missing_domain_agents)
+            | set(missing_domain_mandates)
+            | set(missing_domain_objectives)
+        )
+        operating_model_blocking = bool(
+            settings.company_autonomy_enabled
+            and model
+            and (not operating_model or operating_model_invariants)
+        )
+        operating_model_section = {
+            "status": (
+                "invariant_failed"
+                if operating_model_invariants
+                else "reconciling"
+                if operating_model and any(
+                    item.lifecycle_state in {"proposed", "shadow", "retiring"}
+                    for item in operating_domains
+                )
+                else "ready"
+                if operating_model
+                else "observer_review"
+                if operating_model_candidate
+                and operating_model_candidate.status == "owner_review"
+                else "not_synthesized"
+            ),
+            "blocking": operating_model_blocking,
+            "revision_id": operating_model.id if operating_model else None,
+            "candidate_revision_id": (
+                operating_model_candidate.id if operating_model_candidate else None
+            ),
+            "candidate_status": (
+                operating_model_candidate.status if operating_model_candidate else None
+            ),
+            "confidence": operating_model.confidence if operating_model else 0.0,
+            "desired_domains": list(operating_model.domain_keys or [])
+            if operating_model
+            else [],
+            "effective_domain_count": len(effective_domains),
+            "lifecycle_counts": self._value_counts(
+                item.lifecycle_state for item in operating_domains
+            ),
+            "missing_specifications": missing_specifications,
+            "missing_agents": missing_domain_agents,
+            "missing_mandates": missing_domain_mandates,
+            "missing_objectives": missing_domain_objectives,
+            "latest_reconciliation": (
+                {
+                    "id": latest_reconciliation.id,
+                    "status": latest_reconciliation.status,
+                    "dry_run": latest_reconciliation.dry_run,
+                    "completed_at": (
+                        latest_reconciliation.completed_at.isoformat()
+                        if latest_reconciliation.completed_at
+                        else None
+                    ),
+                }
+                if latest_reconciliation
+                else None
+            ),
+            "lifecycle_assessments": lifecycle_assessment_counts,
+            "detail": (
+                "Active domains violate one or more operating-model invariants."
+                if operating_model_invariants
+                else "Desired and actual domains are converging through bounded lifecycle states."
+                if operating_model
+                else "No Observer-approved desired operating model is active."
+            ),
+        }
+        obligation_counts = self._value_counts(
+            item.status for item in discovery_obligations
+        )
+        active_obligations = [
+            item
+            for item in discovery_obligations
+            if item.status not in {"resolved", "superseded"}
+        ]
+        owner_blockers = [
+            item.id
+            for item in active_obligations
+            if item.status == "owner_review" and item.blocking
+        ]
+        model_unknowns = {
+            self._canonical_unknown(item) for item in (model.unknowns or [])
+        } if model else set()
+        disposed_unknowns = {item.predicate for item in active_obligations}
+        undispositioned_unknowns = sorted(model_unknowns - disposed_unknowns)
+        discovery_blocking = bool(owner_blockers or undispositioned_unknowns)
+        discovery_section = {
+            "status": (
+                "owner_review"
+                if owner_blockers
+                else "undispositioned"
+                if undispositioned_unknowns
+                else "discovering"
+                if active_obligations
+                else "ready"
+            ),
+            "blocking": discovery_blocking,
+            "counts": obligation_counts,
+            "active": len(active_obligations),
+            "owner_review_blockers": owner_blockers,
+            "undispositioned_unknowns": undispositioned_unknowns,
+            "detail": (
+                "Private or authoritative facts require owner evidence after source exhaustion."
+                if owner_blockers
+                else "Company-model unknowns lack durable discovery obligations."
+                if undispositioned_unknowns
+                else "Unknowns are being resolved through bounded permitted sources."
+                if active_obligations
+                else "Every company-model unknown has a terminal discovery disposition."
+            ),
+        }
         sections = {
             "company_model": company_model,
+            "operating_model": operating_model_section,
+            "discovery_obligations": discovery_section,
             "source_freshness": source_freshness,
             "company_signals": signal_plane,
             "claim_extraction": claim_extraction,
@@ -640,6 +850,20 @@ class AutonomousCompanyReadinessService:
         }
         normalized = str(value or "operations").lower().replace(" ", "_")
         return aliases.get(normalized, normalized)
+
+    @staticmethod
+    def _canonical_unknown(value: Any) -> str:
+        if isinstance(value, dict):
+            value = value.get("predicate") or value.get("field") or ""
+        return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+    @staticmethod
+    def _value_counts(values) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for value in values:
+            key = str(value)
+            counts[key] = counts.get(key, 0) + 1
+        return dict(sorted(counts.items()))
 
     async def _model_availability(self) -> dict[str, Any]:
         if not self._llm:

@@ -157,3 +157,26 @@ def test_memory_steward_migration_downgrade_removes_findings_table_and_indexes()
     assert "DROP INDEX IF EXISTS ix_memory_steward_findings_status" in sql
     assert "DROP INDEX IF EXISTS ix_memory_steward_findings_created_at" in sql
     assert "DROP TABLE IF EXISTS memory_steward_findings CASCADE" in sql
+
+
+def test_operating_model_lifecycle_migration_contains_durable_control_plane():
+    sql = render_offline_upgrade_sql()
+
+    for table in [
+        "operating_model_revisions",
+        "operating_domains",
+        "operating_domain_revisions",
+        "operating_model_reconciliation_runs",
+        "operating_lifecycle_decisions",
+        "lifecycle_assessments",
+        "discovery_obligations",
+        "domain_control_revisions",
+    ]:
+        assert f"CREATE TABLE {table}" in sql
+
+    assert "uq_operating_model_revisions_namespace_hash" in sql
+    assert "uq_operating_domain_revisions_domain_hash" in sql
+    assert "uq_operating_model_reconciliation_runs_key" in sql
+    assert "uq_operating_lifecycle_decisions_key" in sql
+    assert "uq_discovery_obligations_key" in sql
+    assert "uq_domain_control_revisions_namespace_domain_revision" in sql

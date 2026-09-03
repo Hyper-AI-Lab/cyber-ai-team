@@ -197,6 +197,13 @@ async def test_erpnext_business_tool_is_config_required_when_unconfigured(monkey
     assert contract["state"] == "configuration_required"
     assert contract["side_effects"] is True
     assert contract["requires_configuration"] is True
+    assert contract["action_class"] == "erpnext"
+    assert contract["canary_profile"] == {
+        "kind": "erpnext_synthetic_task",
+        "subject_prefix": "[CYBERTEAM-CANARY]",
+        "allowed_fields": ["subject", "description", "status"],
+        "allowed_statuses": ["Open", "Completed", "Cancelled"],
+    }
 
     result = await registry.execute("task_create", {"task_data": {"subject": "Follow up"}})
 

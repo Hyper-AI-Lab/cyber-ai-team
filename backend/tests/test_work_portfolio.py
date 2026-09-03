@@ -27,6 +27,7 @@ from cyber_team.db.models import (
     CompanySignal,
     CompanySource,
     DomainAutonomyControl,
+    DomainControlRevision,
     MemoryEntry,
     MemoryStewardFinding,
     MemoryTrace,
@@ -2293,6 +2294,45 @@ async def test_domain_pause_defers_events_and_stops_role_loop(
         disposition = (await session.execute(select(BusinessEventDisposition))).scalar_one()
     assert gaps == []
     assert "owner control" in disposition.reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_domain_controls_are_append_only_locks_and_active_releases(
+    portfolio_session_factory,
+):
+    service = WorkPortfolioService()
+
+    paused = await service.update_domain_control(
+        "knowledge",
+        state="paused",
+        reason="Owner pause.",
+        owner="owner@example.com",
+    )
+    released = await service.update_domain_control(
+        "knowledge",
+        state="active",
+        reason="Release to autonomous reconciliation.",
+        owner="owner@example.com",
+    )
+
+    async with portfolio_session_factory() as session:
+        revisions = (
+            (
+                await session.execute(
+                    select(DomainControlRevision).order_by(DomainControlRevision.revision)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert paused["owner_locked"] is True
+    assert paused["control_mode"] == "pause"
+    assert released["owner_locked"] is False
+    assert released["control_mode"] == "release"
+    assert [item.revision for item in revisions] == [1, 2]
+    assert revisions[1].supersedes_id == revisions[0].id
+    assert revisions[0].locked is True
+    assert revisions[1].locked is False
 
 
 @pytest.mark.asyncio

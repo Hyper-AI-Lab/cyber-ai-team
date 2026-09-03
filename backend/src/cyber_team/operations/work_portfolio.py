@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import desc, func, or_, select
 
 from cyber_team.clock import utc_now
+from cyber_team.company.domain_registry import DomainRegistry, canonical_domain_key
 from cyber_team.config import settings
 from cyber_team.db import async_session
 from cyber_team.db.models import (
@@ -28,6 +29,7 @@ from cyber_team.db.models import (
     CompanyObjectiveRevision,
     CompanySignal,
     DomainAutonomyControl,
+    DomainControlRevision,
     EvidenceArtifact,
     ExecutiveBenchmarkDefinition,
     ExecutiveBenchmarkResult,
@@ -35,6 +37,8 @@ from cyber_team.db.models import (
     MemoryStewardFinding,
     MemoryTrace,
     ObserverReview,
+    OperatingDomain,
+    OperatingDomainRevision,
     OperatingKPIDefinition,
     OperatingKPIObservation,
     OperationGraphNode,
@@ -43,60 +47,6 @@ from cyber_team.db.models import (
 )
 
 logger = logging.getLogger(__name__)
-
-DOMAIN_INPUTS = {
-    "company_builder": ["company_model", "company_claim", "role_gap"],
-    "finance": ["erpnext.sales_invoice", "erpnext.account", "erpnext.opportunity"],
-    "legal": ["company_claim.jurisdiction", "contract", "policy", "regulation"],
-    "sales": ["erpnext.lead", "erpnext.opportunity", "customer_signal"],
-    "marketing": ["market_evidence", "brand_signal", "experiment_result"],
-    "support": ["erpnext.issue", "email.received", "customer_signal"],
-    "product": ["erpnext.project", "erpnext.task", "customer_signal"],
-    "engineering": ["business_work_item", "workflow_failure", "quality_signal"],
-    "operations": ["erpnext.material_request", "workflow_state", "readiness"],
-    "hr": ["role_gap", "workload_signal", "mandate_health"],
-    "security": ["audit_event", "auth_failure", "injection_quarantine"],
-    "knowledge": ["document", "research", "memory", "company_claim"],
-    "communications": ["approved_communication", "owner_notification"],
-    "supervisor": ["domain_health", "observer_finding", "owner_instruction"],
-    "governance": ["governor_decision", "policy_decision", "audit_event"],
-}
-
-DOMAIN_OUTPUTS = {
-    "company_builder": ["company_model_revision", "role_proposal", "capability_gap"],
-    "finance": ["financial_analysis", "forecast", "approval_backed_financial_action"],
-    "legal": ["legal_analysis", "policy_draft", "owner_escalation"],
-    "sales": ["pipeline_analysis", "lead_work", "approval_backed_outreach"],
-    "marketing": ["market_hypothesis", "content_draft", "experiment_proposal"],
-    "support": ["issue_assessment", "reply_draft", "escalation"],
-    "product": ["prioritized_backlog", "project_update", "acceptance_assessment"],
-    "engineering": ["technical_plan", "quality_evidence", "outsourcing_request"],
-    "operations": ["operating_plan", "procurement_proposal", "process_improvement"],
-    "hr": ["capacity_assessment", "role_proposal", "operating_guidance"],
-    "security": ["security_finding", "containment_plan", "owner_escalation"],
-    "knowledge": ["evidence_summary", "claim_challenge", "memory_update"],
-    "communications": ["communication_draft", "delivery_evidence"],
-    "supervisor": ["outcome_contract", "dependency_resolution", "owner_attention"],
-    "governance": ["observer_review", "policy_finding", "consensus_record"],
-}
-
-EVENT_FAMILY_MAP = {
-    "erpnext.company_context_snapshot": "company_builder",
-    "erpnext.sales_invoice": "finance",
-    "erpnext.opportunity": "sales",
-    "erpnext.lead": "sales",
-    "erpnext.issue": "support",
-    "erpnext.project": "product",
-    "erpnext.task": "product",
-    "erpnext.material_request": "operations",
-    "email.received": "support",
-    "document.updated": "knowledge",
-    "website.snapshot": "knowledge",
-    "research.results": "knowledge",
-    "memory.entry": "knowledge",
-    "audit.event": "governance",
-    "owner.instruction": "supervisor",
-}
 
 SAFE_AGENT_PROPOSED_WORK_TYPES = {
     "action_candidate",
@@ -249,12 +199,16 @@ class WorkPortfolioService:
         company_intelligence_service=None,
         tool_registry=None,
         action_policy_service=None,
+        domain_registry: DomainRegistry | None = None,
     ) -> None:
         self._agent_manager = agent_manager
         self._audit = audit_service
         self._intelligence = company_intelligence_service
         self._tools = tool_registry
         self._action_policy = action_policy_service
+        self._domains = domain_registry or DomainRegistry.builtin(
+            max_domains=settings.operating_model_max_domains
+        )
 
     async def ensure_active_agent_mandates(
         self,
@@ -323,6 +277,7 @@ class WorkPortfolioService:
 
             for agent in agents:
                 family = self._canonical_family(agent.role_family)
+                domain = self._domains.get(family)
                 manifest = manifests.get(agent.role_family) or manifests.get(family)
                 objective_ids = self._objective_ids_for_family(objectives, family)
                 kpi_keys = self._kpi_keys_for_family(kpis, family)
@@ -345,8 +300,14 @@ class WorkPortfolioService:
                         "financial_daily_limit_usd": settings.governor_financial_daily_limit_usd,
                         "autonomous_external_spend_usd": 0,
                     },
-                    "inputs": DOMAIN_INPUTS.get(family, ["company_model", "business_event"]),
-                    "outputs": DOMAIN_OUTPUTS.get(family, ["assessment", "work_proposal"]),
+                    "inputs": (
+                        list(domain.inputs)
+                        if domain
+                        else ["company_model", "business_event"]
+                    ),
+                    "outputs": (
+                        list(domain.outputs) if domain else ["assessment", "work_proposal"]
+                    ),
                     "kpi_keys": kpi_keys,
                     "cadence": {
                         "interval_seconds": settings.domain_loop_interval_seconds,
@@ -968,16 +929,52 @@ class WorkPortfolioService:
         }
 
     async def list_domain_controls(self) -> list[dict[str, Any]]:
-        domains = sorted(set(DOMAIN_INPUTS) | set(DOMAIN_OUTPUTS))
         async with async_session() as session:
             controls = {
                 item.domain: item
                 for item in (await session.execute(select(DomainAutonomyControl))).scalars().all()
             }
+            operating_domains = {
+                item.domain_key: item
+                for item in (await session.execute(select(OperatingDomain))).scalars().all()
+            }
+            control_revision_rows = (
+                (
+                    await session.execute(
+                        select(DomainControlRevision).order_by(
+                            DomainControlRevision.domain_key,
+                            desc(DomainControlRevision.revision),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            control_revisions = {}
+            for item in control_revision_rows:
+                control_revisions.setdefault(item.domain_key, item)
+            domain_revision_rows = (
+                (
+                    await session.execute(
+                        select(OperatingDomainRevision).order_by(
+                            OperatingDomainRevision.domain_id,
+                            desc(OperatingDomainRevision.revision),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            domain_revisions = {}
+            for item in domain_revision_rows:
+                domain_revisions.setdefault(item.domain_id, item)
             agent_families = {
                 item.id: self._canonical_family(item.role_family)
                 for item in (await session.execute(select(Agent))).scalars().all()
             }
+            domains = sorted(
+                set(self._domains.keys()) | set(operating_domains) | set(controls)
+            )
             backlog_counts = {domain: 0 for domain in domains}
             for agent_id, count in (
                 await session.execute(
@@ -990,26 +987,68 @@ class WorkPortfolioService:
                 if family in backlog_counts:
                     backlog_counts[family] += int(count or 0)
         backlog_limit = self._domain_backlog_limit()
-        return [
-            {
-                "domain": domain,
-                "state": controls[domain].state if domain in controls else "active",
-                "reason": controls[domain].reason if domain in controls else "",
-                "owner": controls[domain].owner if domain in controls else "system",
-                "nonterminal_work_items": backlog_counts[domain],
-                "backlog_limit": backlog_limit,
-                "backlog_saturated": backlog_counts[domain] >= backlog_limit,
-                "recovery_required": bool(
-                    domain in controls
-                    and controls[domain].state == "paused"
-                    and controls[domain].owner == "autonomy_grounding_circuit_breaker"
-                ),
-                "updated_at": (
-                    controls[domain].updated_at.isoformat() if domain in controls else None
-                ),
-            }
-            for domain in domains
-        ]
+        results = []
+        for domain in domains:
+            projection = controls.get(domain)
+            operating_domain = operating_domains.get(domain)
+            revision = (
+                domain_revisions.get(operating_domain.id) if operating_domain else None
+            )
+            owner_control = control_revisions.get(domain)
+            results.append(
+                {
+                    "domain": domain,
+                    "state": projection.state if projection else "active",
+                    "desired_state": revision.desired_state if revision else "active",
+                    "effective_state": (
+                        operating_domain.effective_state
+                        if operating_domain
+                        else (projection.state if projection else "active")
+                    ),
+                    "lifecycle_state": (
+                        operating_domain.lifecycle_state if operating_domain else "active"
+                    ),
+                    "control_mode": (
+                        owner_control.control_mode if owner_control else "release"
+                    ),
+                    "owner_locked": bool(owner_control and owner_control.locked),
+                    "source_revision": (
+                        operating_domain.operating_model_revision_id
+                        if operating_domain
+                        else None
+                    ),
+                    "shadow_progress": {
+                        "successes": operating_domain.shadow_successes,
+                        "required_successes": settings.operating_model_shadow_successes,
+                        "started_at": (
+                            operating_domain.shadow_started_at.isoformat()
+                            if operating_domain.shadow_started_at
+                            else None
+                        ),
+                    }
+                    if operating_domain
+                    else None,
+                    "transition_reason": (
+                        operating_domain.status_reason
+                        if operating_domain
+                        else (projection.reason if projection else "")
+                    ),
+                    "reason": projection.reason if projection else "",
+                    "owner": projection.owner if projection else "system",
+                    "nonterminal_work_items": backlog_counts[domain],
+                    "backlog_limit": backlog_limit,
+                    "backlog_saturated": backlog_counts[domain] >= backlog_limit,
+                    "recovery_required": bool(
+                        projection
+                        and projection.state == "paused"
+                        and projection.owner == "autonomy_grounding_circuit_breaker"
+                    ),
+                    "updated_at": (
+                        projection.updated_at.isoformat() if projection else None
+                    ),
+                }
+            )
+        return results
 
     async def agent_tool_authority(
         self,
@@ -1068,7 +1107,7 @@ class WorkPortfolioService:
         selected_domains = {
             self._canonical_family(value) for value in (domains or []) if str(value).strip()
         }
-        unknown = selected_domains - (set(DOMAIN_INPUTS) | set(DOMAIN_OUTPUTS))
+        unknown = selected_domains - set(self._domains.keys())
         if unknown:
             raise ValueError(f"Unknown company operating domain: {sorted(unknown)[0]}")
         max_depth = self._proposal_max_depth()
@@ -1216,11 +1255,47 @@ class WorkPortfolioService:
         owner: str,
     ) -> dict[str, Any]:
         domain = self._canonical_family(domain)
-        if domain not in set(DOMAIN_INPUTS) | set(DOMAIN_OUTPUTS):
-            raise ValueError("Unknown company operating domain")
         if state not in {"active", "paused", "takeover"}:
             raise ValueError("Domain state must be active, paused, or takeover")
         async with async_session() as session:
+            operating_domain = (
+                await session.execute(
+                    select(OperatingDomain).where(
+                        OperatingDomain.company_namespace == settings.company_namespace,
+                        OperatingDomain.domain_key == domain,
+                    )
+                )
+            ).scalar_one_or_none()
+            if not self._domains.get(domain) and not operating_domain:
+                raise ValueError("Unknown company operating domain")
+            latest_revision = (
+                await session.execute(
+                    select(DomainControlRevision)
+                    .where(
+                        DomainControlRevision.company_namespace == settings.company_namespace,
+                        DomainControlRevision.domain_key == domain,
+                    )
+                    .order_by(desc(DomainControlRevision.revision))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            now = utc_now()
+            control_mode = "release" if state == "active" else state.removesuffix("d")
+            revision = DomainControlRevision(
+                id=f"domainctl_{uuid.uuid4().hex}",
+                company_namespace=settings.company_namespace,
+                domain_key=domain,
+                revision=(latest_revision.revision + 1) if latest_revision else 1,
+                control_mode=control_mode,
+                locked=state != "active",
+                reason=reason[:4000],
+                actor=owner[:200],
+                actor_type="owner",
+                source_type="owner_console",
+                supersedes_id=latest_revision.id if latest_revision else None,
+                effective_from=now,
+            )
+            session.add(revision)
             control = await session.get(DomainAutonomyControl, domain)
             if not control:
                 control = DomainAutonomyControl(
@@ -1234,11 +1309,24 @@ class WorkPortfolioService:
                 control.state = state
                 control.reason = reason[:4000]
                 control.owner = owner[:200]
-                control.updated_at = utc_now()
+                control.updated_at = now
+            if operating_domain:
+                operating_domain.effective_state = state
+                operating_domain.status_reason = reason[:4000]
+                operating_domain.last_reconciled_at = now
             await session.commit()
             result = {
                 "domain": control.domain,
                 "state": control.state,
+                "desired_state": "active",
+                "effective_state": state,
+                "lifecycle_state": (
+                    operating_domain.lifecycle_state if operating_domain else "active"
+                ),
+                "control_mode": control_mode,
+                "owner_locked": revision.locked,
+                "control_revision_id": revision.id,
+                "control_revision": revision.revision,
                 "reason": control.reason,
                 "owner": control.owner,
                 "updated_at": control.updated_at.isoformat(),
@@ -2741,6 +2829,50 @@ class WorkPortfolioService:
                     control.reason = reason
                     control.owner = "autonomy_grounding_circuit_breaker"
                     control.updated_at = now
+                latest_control_revision = (
+                    await session.execute(
+                        select(DomainControlRevision)
+                        .where(
+                            DomainControlRevision.company_namespace
+                            == item.company_namespace,
+                            DomainControlRevision.domain_key == family,
+                        )
+                        .order_by(desc(DomainControlRevision.revision))
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if not (
+                    latest_control_revision
+                    and latest_control_revision.locked
+                    and latest_control_revision.control_mode == "pause"
+                    and latest_control_revision.actor
+                    == "autonomy_grounding_circuit_breaker"
+                ):
+                    session.add(
+                        DomainControlRevision(
+                            id=f"domainctl_{uuid.uuid4().hex}",
+                            company_namespace=item.company_namespace,
+                            domain_key=family,
+                            revision=(
+                                latest_control_revision.revision + 1
+                                if latest_control_revision
+                                else 1
+                            ),
+                            control_mode="pause",
+                            locked=True,
+                            reason=reason,
+                            actor="autonomy_grounding_circuit_breaker",
+                            actor_type="system",
+                            source_type="memory_grounding_circuit_breaker",
+                            source_id=finding_id,
+                            supersedes_id=(
+                                latest_control_revision.id
+                                if latest_control_revision
+                                else None
+                            ),
+                            effective_from=now,
+                        )
+                    )
             await session.commit()
             result = {
                 "finding_id": finding_id,
@@ -4437,19 +4569,8 @@ class WorkPortfolioService:
             or payload.get("severity") == "critical"
         )
 
-    @staticmethod
-    def _family_for_event(signal_type: str, payload: dict[str, Any]) -> str:
-        for prefix, family in EVENT_FAMILY_MAP.items():
-            if signal_type == prefix or signal_type.startswith(prefix + "."):
-                return family
-        text = json.dumps(payload, sort_keys=True).lower()
-        if any(marker in text for marker in ("invoice", "payment", "expense", "cash")):
-            return "finance"
-        if any(marker in text for marker in ("contract", "legal", "privacy", "tax")):
-            return "legal"
-        if any(marker in text for marker in ("security", "credential", "auth", "injection")):
-            return "security"
-        return "operations"
+    def _family_for_event(self, signal_type: str, payload: dict[str, Any]) -> str:
+        return self._domains.route_event(signal_type, json.dumps(payload, sort_keys=True))
 
     @staticmethod
     def _priority_for_event(event: BusinessEvent) -> str:
@@ -4479,15 +4600,7 @@ class WorkPortfolioService:
 
     @staticmethod
     def _canonical_family(value: str) -> str:
-        aliases = {
-            "compliance": "security",
-            "research": "knowledge",
-            "project_management": "product",
-            "people": "hr",
-            "observer": "governance",
-        }
-        normalized = str(value or "operations").lower().replace(" ", "_")
-        return aliases.get(normalized, normalized)
+        return canonical_domain_key(value)
 
     @classmethod
     def _matches_unresolved_role_gap(

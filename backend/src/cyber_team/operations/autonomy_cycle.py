@@ -25,7 +25,7 @@ from cyber_team.config import settings
 class AutonomousCompanyCycleService:
     """Run the complete idempotent evidence-to-outcome operating cycle."""
 
-    CYCLE_VERSION = "autonomous-company-cycle-v3"
+    CYCLE_VERSION = "autonomous-company-cycle-v4"
 
     def __init__(
         self,
@@ -36,6 +36,8 @@ class AutonomousCompanyCycleService:
         outcome_learning_service,
         action_policy_service,
         model_capability_service=None,
+        operating_model_service=None,
+        tool_registry=None,
         audit_service=None,
     ) -> None:
         self._intelligence = intelligence_service
@@ -44,6 +46,8 @@ class AutonomousCompanyCycleService:
         self._outcomes = outcome_learning_service
         self._policy = action_policy_service
         self._model_capabilities = model_capability_service
+        self._operating_model = operating_model_service
+        self._tools = tool_registry
         self._audit = audit_service
 
     async def run(
@@ -74,11 +78,34 @@ class AutonomousCompanyCycleService:
                 actor="company_discovery_agent",
             )
         strategy = await self._strategy.run_strategy_cycle()
+        if self._operating_model:
+            operating_model = await self._operating_model.synthesize_and_review()
+            reconciliation = await self._operating_model.reconcile()
+            convergence = await self._operating_model.converge_roles_and_mandates()
+            discovery_obligations = (
+                await self._operating_model.reconcile_discovery_obligations()
+            )
+            backlog_reconciliation = await self._operating_model.reconcile_backlogs()
+        else:
+            operating_model = {"status": "not_configured"}
+            reconciliation = {"status": "not_configured"}
+            convergence = {"status": "not_configured"}
+            discovery_obligations = {"status": "not_configured"}
+            backlog_reconciliation = {"status": "not_configured"}
         mandates = await self._work.ensure_active_agent_mandates()
+        policies = await self._policy.ensure_default_policies()
+        if self._tools:
+            policy_qualification = (
+                await self._policy.qualify_registered_action_classes(
+                    self._tools.list_tool_contracts(),
+                    max_cases_per_class=settings.operating_model_policy_cases_per_cycle,
+                )
+            )
+        else:
+            policy_qualification = {"status": "not_configured"}
         routing = await self._work.route_pending_events()
         domain_work = await self._work.run_all_domain_loops(max_items_per_agent=1)
         outcomes = await self._outcomes.assess_terminal_work()
-        policies = await self._policy.ensure_default_policies()
         result = {
             "status": "completed",
             "cycle_version": self.CYCLE_VERSION,
@@ -91,6 +118,11 @@ class AutonomousCompanyCycleService:
             "discovery": discovery,
             "public_research": research,
             "strategy": strategy,
+            "operating_model": operating_model,
+            "reconciliation": reconciliation,
+            "role_mandate_convergence": convergence,
+            "discovery_obligations": discovery_obligations,
+            "backlog_reconciliation": backlog_reconciliation,
             "mandates": mandates,
             "routing": routing,
             "domain_work": {
@@ -102,6 +134,7 @@ class AutonomousCompanyCycleService:
                 "remediation": outcomes["remediation"],
             },
             "policies": policies,
+            "policy_qualification": policy_qualification,
         }
         if self._audit:
             await self._audit.record_control_evidence(

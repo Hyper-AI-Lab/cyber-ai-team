@@ -174,3 +174,26 @@ The permanent owner gates remain unchanged: contracts, legal and tax filings, pa
 payroll, credentials and permissions, destructive deletion, and production deployment.
 The Observer remains read-only. Generated code is never hot-loaded. Paid services remain
 disallowed unless the owner explicitly changes the resource policy.
+
+## V4 Operating-Model Continuation
+
+The v3 evidence-to-outcome closure proves that evidence can become authorized work and
+measured learning. Autonomous Operating-Model Lifecycle v4 closes the remaining product
+boundary: Cyber-Team, rather than an operator, must decide which operating domains, roles,
+mandates, discovery obligations, workflows, and action classes the company currently
+needs and continuously reconcile that desired model with runtime state.
+
+V4 is complete only when:
+
+- domain selection and lifecycle transitions are evidence-driven, Observer-reviewed,
+  idempotent, and durable;
+- owner pause and takeover controls are immutable overrides that no autonomous cycle can
+  bypass;
+- role gaps, outsourcing requests, approvals, and discovery unknowns converge to an
+  explained current, resolved, superseded, blocked, or owner-review state;
+- policy qualification is driven by declarative action-class profiles rather than a
+  fixed Communications/ERPNext list;
+- multiple synthetic company archetypes derive materially different operating models
+  without code changes; and
+- a full staging soak proves automatic convergence without granting additional external
+  side-effect authority.

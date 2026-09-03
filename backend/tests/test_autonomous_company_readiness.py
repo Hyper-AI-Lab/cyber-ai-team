@@ -16,9 +16,14 @@ from cyber_team.db.models import (
     CompanyObjectiveRevision,
     CompanySignal,
     CompanySource,
+    DiscoveryObligation,
     DomainAutonomyControl,
+    OperatingDomain,
+    OperatingDomainRevision,
     OperatingKPIDefinition,
     OperatingKPIRevision,
+    OperatingModelReconciliationRun,
+    OperatingModelRevision,
     OutcomeAssessment,
 )
 from cyber_team.operations import readiness_v3 as readiness_module
@@ -351,6 +356,63 @@ async def test_ready_control_plane_has_fresh_sources_model_strategy_and_mandates
             escalation_rules=[],
             activated_at=now,
         )
+        operating_model = OperatingModelRevision(
+            id="operating-model-1",
+            company_namespace="company:test",
+            revision=1,
+            status="active",
+            company_model_revision_id="model-1",
+            source_hash="operating-model-hash",
+            summary={"domains": [{"key": "knowledge"}]},
+            domain_keys=["knowledge"],
+            objective_revision_ids=[objective_revision.id],
+            evidence_ids=["evidence-1"],
+            confidence=0.9,
+            activated_at=now,
+        )
+        operating_domain = OperatingDomain(
+            id="operating-domain-knowledge",
+            company_namespace="company:test",
+            domain_key="knowledge",
+            display_name="Knowledge",
+            lifecycle_state="active",
+            effective_state="active",
+            current_revision=1,
+            operating_model_revision_id=operating_model.id,
+            activated_at=now,
+        )
+        operating_domain_revision = OperatingDomainRevision(
+            id="operating-domain-revision-knowledge",
+            domain_id=operating_domain.id,
+            operating_model_revision_id=operating_model.id,
+            revision=1,
+            desired_state="active",
+            purpose="Maintain evidence.",
+            inputs=[],
+            outputs=[],
+            required_capabilities=[],
+            required_tools=[],
+            event_selectors=[],
+            objective_revision_ids=[objective_revision.id],
+            evidence_ids=["evidence-1"],
+            cadence={},
+            budget={},
+            activation_criteria={},
+            retirement_criteria={},
+            confidence=0.9,
+            source_hash="operating-domain-revision-hash",
+        )
+        reconciliation = OperatingModelReconciliationRun(
+            id="reconciliation-1",
+            company_namespace="company:test",
+            operating_model_revision_id=operating_model.id,
+            status="completed",
+            dry_run=False,
+            actual_state_hash="actual-state-hash",
+            idempotency_key="reconciliation-1",
+            summary={"counts": {"activate": 1}},
+            completed_at=now,
+        )
         session.add_all(
             [
                 objective,
@@ -359,6 +421,10 @@ async def test_ready_control_plane_has_fresh_sources_model_strategy_and_mandates
                 kpi_revision,
                 agent,
                 mandate,
+                operating_model,
+                operating_domain,
+                operating_domain_revision,
+                reconciliation,
             ]
         )
         await session.commit()
@@ -370,6 +436,90 @@ async def test_ready_control_plane_has_fresh_sources_model_strategy_and_mandates
     assert result["sections"]["source_freshness"]["stale_required"] == []
     assert result["sections"]["mandates"]["missing_mandates"] == 0
     assert result["sections"]["strategy"]["status"] == "ready"
+    assert result["sections"]["operating_model"]["status"] == "ready"
+    assert result["sections"]["operating_model"]["missing_agents"] == []
+    assert result["sections"]["discovery_obligations"]["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_company_unknown_without_discovery_disposition_is_blocking(
+    readiness_session_factory,
+):
+    now = utc_now()
+    async with readiness_session_factory() as session:
+        session.add(
+            CompanyModelRevision(
+                id="model-unknown",
+                company_namespace="company:test",
+                revision=1,
+                status="active",
+                model={},
+                claim_ids=[],
+                unknowns=["jurisdictions"],
+                disputes=[],
+                provenance_coverage=0.8,
+                confidence=0.8,
+                source_hash="model-unknown-hash",
+                activated_at=now,
+            )
+        )
+        await session.commit()
+
+    result = await AutonomousCompanyReadinessService(llm_gateway=FakeLLM()).summary()
+
+    discovery = result["sections"]["discovery_obligations"]
+    assert discovery["status"] == "undispositioned"
+    assert discovery["blocking"] is True
+    assert discovery["undispositioned_unknowns"] == ["jurisdictions"]
+
+
+@pytest.mark.asyncio
+async def test_exhausted_blocking_discovery_obligation_requires_owner_review(
+    readiness_session_factory,
+):
+    now = utc_now()
+    async with readiness_session_factory() as session:
+        model = CompanyModelRevision(
+            id="model-owner-review",
+            company_namespace="company:test",
+            revision=1,
+            status="active",
+            model={},
+            claim_ids=[],
+            unknowns=["legal_name"],
+            disputes=[],
+            provenance_coverage=0.8,
+            confidence=0.8,
+            source_hash="model-owner-review-hash",
+            activated_at=now,
+        )
+        session.add(model)
+        session.add(
+            DiscoveryObligation(
+                id="discovery-owner-review",
+                company_namespace="company:test",
+                predicate="legal_name",
+                question="What is the verified legal name?",
+                priority="high",
+                status="owner_review",
+                blocking=True,
+                company_model_revision_id=model.id,
+                source_types=["erpnext"],
+                attempted_source_ids=["source-erpnext"],
+                attempts=3,
+                max_attempts=3,
+                owner_attention_id="event-owner-review",
+                idempotency_key="discovery-owner-review",
+            )
+        )
+        await session.commit()
+
+    result = await AutonomousCompanyReadinessService(llm_gateway=FakeLLM()).summary()
+
+    discovery = result["sections"]["discovery_obligations"]
+    assert discovery["status"] == "owner_review"
+    assert discovery["blocking"] is True
+    assert discovery["owner_review_blockers"] == ["discovery-owner-review"]
 
 
 @pytest.mark.asyncio

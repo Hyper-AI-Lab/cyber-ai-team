@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -35,9 +35,22 @@ async def test_company_cycle_runs_evidence_to_outcome_sequence():
     }
     policy = AsyncMock()
     policy.ensure_default_policies.return_value = {"created": 0}
+    policy.qualify_registered_action_classes.return_value = {"status": "completed"}
     capabilities = AsyncMock()
     capabilities.ensure_fresh.return_value = {"status": "ready", "refreshed": False}
     audit = AsyncMock()
+    operating_model = AsyncMock()
+    operating_model.synthesize_and_review.return_value = {"model": {"id": "model-v4"}}
+    operating_model.reconcile.return_value = {"status": "completed"}
+    operating_model.converge_roles_and_mandates.return_value = {"status": "completed"}
+    operating_model.reconcile_discovery_obligations.return_value = {
+        "status": "completed"
+    }
+    operating_model.reconcile_backlogs.return_value = {"status": "completed"}
+    tools = MagicMock()
+    tools.list_tool_contracts.return_value = [
+        {"name": "memory_recall", "action_class": "memory", "side_effects": False}
+    ]
     service = AutonomousCompanyCycleService(
         intelligence_service=intelligence,
         strategy_service=strategy,
@@ -45,6 +58,8 @@ async def test_company_cycle_runs_evidence_to_outcome_sequence():
         outcome_learning_service=outcomes,
         action_policy_service=policy,
         model_capability_service=capabilities,
+        operating_model_service=operating_model,
+        tool_registry=tools,
         audit_service=audit,
     )
 
@@ -55,6 +70,8 @@ async def test_company_cycle_runs_evidence_to_outcome_sequence():
     assert result["domain_work"] == {"agents": 3, "processed": 2}
     assert result["outcomes"]["assessed"] == 2
     assert result["model_capability_qualification"]["status"] == "ready"
+    assert result["reconciliation"]["status"] == "completed"
+    assert result["discovery_obligations"]["status"] == "completed"
     capabilities.ensure_fresh.assert_awaited_once_with(
         actor="chief_operating_agent_scheduler"
     )
@@ -62,6 +79,15 @@ async def test_company_cycle_runs_evidence_to_outcome_sequence():
         acquire=False,
         activate_if_ready=True,
         actor="company_discovery_agent",
+    )
+    operating_model.synthesize_and_review.assert_awaited_once()
+    operating_model.reconcile.assert_awaited_once()
+    operating_model.converge_roles_and_mandates.assert_awaited_once()
+    operating_model.reconcile_discovery_obligations.assert_awaited_once()
+    operating_model.reconcile_backlogs.assert_awaited_once()
+    policy.qualify_registered_action_classes.assert_awaited_once_with(
+        tools.list_tool_contracts.return_value,
+        max_cases_per_class=settings.operating_model_policy_cases_per_cycle,
     )
     audit.record_control_evidence.assert_awaited_once()
 

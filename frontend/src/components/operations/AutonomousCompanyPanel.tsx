@@ -7,9 +7,13 @@ import {
   Clock3,
   GitFork,
   Hand,
+  Layers3,
+  LockKeyhole,
   Pause,
   Play,
   RefreshCw,
+  RotateCcw,
+  Search,
   ShieldCheck,
   TriangleAlert,
 } from 'lucide-react'
@@ -55,9 +59,15 @@ export default function AutonomousCompanyPanel({ readiness, onChanged, onNavigat
   const [controls, setControls] = useState<any[]>([])
   const [modelCapabilities, setModelCapabilities] = useState<any | null>(null)
   const [actionCandidates, setActionCandidates] = useState<any[]>([])
+  const [operatingModel, setOperatingModel] = useState<any | null>(null)
+  const [reconciliationRuns, setReconciliationRuns] = useState<any[]>([])
+  const [lifecycleAssessments, setLifecycleAssessments] = useState<any[]>([])
+  const [discoveryObligations, setDiscoveryObligations] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
+  const [reconciling, setReconciling] = useState(false)
   const [changingDomain, setChangingDomain] = useState<string | null>(null)
+  const [retryingDiscovery, setRetryingDiscovery] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -73,6 +83,10 @@ export default function AutonomousCompanyPanel({ readiness, onChanged, onNavigat
         nextControls,
         nextCapabilities,
         nextCandidates,
+        nextOperatingModel,
+        nextReconciliationRuns,
+        nextLifecycleAssessments,
+        nextDiscoveryObligations,
       ] = await Promise.all([
         api.listAgentMandates({ status: 'active', limit: 200 }),
         api.listBusinessEvents({ limit: 100 }),
@@ -82,6 +96,10 @@ export default function AutonomousCompanyPanel({ readiness, onChanged, onNavigat
         api.listDomainAutonomyControls(),
         api.getModelCapabilities(),
         api.listAutonomousActionCandidates({ limit: 100 }),
+        api.getOperatingModel(),
+        api.listOperatingModelReconciliationRuns(50),
+        api.listOperatingModelLifecycleAssessments({ limit: 100 }),
+        api.listOperatingModelDiscoveryObligations({ limit: 100 }),
       ])
       setMandates(nextMandates.items || nextMandates || [])
       setEvents(nextEvents.items || nextEvents || [])
@@ -91,6 +109,10 @@ export default function AutonomousCompanyPanel({ readiness, onChanged, onNavigat
       setControls(nextControls.items || nextControls || [])
       setModelCapabilities(nextCapabilities)
       setActionCandidates(nextCandidates.items || nextCandidates || [])
+      setOperatingModel(nextOperatingModel)
+      setReconciliationRuns(nextReconciliationRuns.items || [])
+      setLifecycleAssessments(nextLifecycleAssessments.items || [])
+      setDiscoveryObligations(nextDiscoveryObligations.items || [])
     } catch (reason: any) {
       setError(reason.message || 'Autonomous company control plane is unavailable.')
     } finally {
@@ -111,6 +133,34 @@ export default function AutonomousCompanyPanel({ readiness, onChanged, onNavigat
       setError(reason.message || 'Autonomous company cycle failed.')
     } finally {
       setRunning(false)
+    }
+  }
+
+  const previewReconciliation = async () => {
+    setReconciling(true)
+    setError(null)
+    try {
+      await api.reconcileOperatingModel(true)
+      await load()
+      await onChanged?.()
+    } catch (reason: any) {
+      setError(reason.message || 'Operating-model dry run failed.')
+    } finally {
+      setReconciling(false)
+    }
+  }
+
+  const retryDiscovery = async (obligationId: string) => {
+    setRetryingDiscovery(obligationId)
+    setError(null)
+    try {
+      await api.retryOperatingModelDiscoveryObligation(obligationId, true)
+      await load()
+      await onChanged?.()
+    } catch (reason: any) {
+      setError(reason.message || 'The discovery obligation could not be retried.')
+    } finally {
+      setRetryingDiscovery(null)
     }
   }
 
@@ -139,6 +189,22 @@ export default function AutonomousCompanyPanel({ readiness, onChanged, onNavigat
     [work],
   )
   const pausedDomains = controls.filter((item) => item.state !== 'active').length
+  const desiredDomains = operatingModel?.domain_keys || []
+  const actualDomains = operatingModel?.actual_domains || []
+  const effectiveDomains = actualDomains.filter(
+    (item: any) => item.effective_state === 'active',
+  )
+  const shadowDomains = actualDomains.filter(
+    (item: any) => item.lifecycle_state === 'shadow',
+  )
+  const ownerLocks = controls.filter((item) => item.owner_locked).length
+  const ownerDiscovery = discoveryObligations.filter(
+    (item) => item.status === 'owner_review',
+  )
+  const latestReconciliation = reconciliationRuns[0]
+  const cleanupAssessments = lifecycleAssessments.filter(
+    (item) => ['resolved', 'superseded'].includes(item.lifecycle_status),
+  )
 
   return (
     <section className="border-y border-slate-800 py-6">
@@ -149,6 +215,7 @@ export default function AutonomousCompanyPanel({ readiness, onChanged, onNavigat
         </div>
         <div className="flex gap-2">
           <button type="button" onClick={load} disabled={loading} className="btn-secondary flex items-center gap-2 text-sm" title="Refresh control plane"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />Refresh</button>
+          <button type="button" onClick={previewReconciliation} disabled={reconciling} className="btn-secondary flex items-center gap-2 text-sm" title="Preview desired versus actual changes without applying them"><GitFork className={`h-4 w-4 ${reconciling ? 'animate-pulse' : ''}`} />{reconciling ? 'Checking...' : 'Preview reconciliation'}</button>
           <button type="button" onClick={runCycle} disabled={running} className="btn-primary flex items-center gap-2 text-sm"><Play className={`h-4 w-4 ${running ? 'animate-pulse' : ''}`} />{running ? 'Running...' : 'Run cycle'}</button>
         </div>
       </div>
@@ -156,27 +223,35 @@ export default function AutonomousCompanyPanel({ readiness, onChanged, onNavigat
       {error && <div className="mt-4 rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>}
 
       <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-        <Metric label="Model" value={section.company_model?.status || 'unavailable'} />
+        <Metric label="Operating model" value={operatingModel?.status || 'not created'} detail={operatingModel?.id} />
+        <Metric label="Desired domains" value={desiredDomains.length} />
+        <Metric label="Effective domains" value={effectiveDomains.length} />
+        <Metric label="In shadow" value={shadowDomains.length} />
         <Metric label="Mandates" value={`${mandates.length}`} detail={section.mandates?.status} />
         <Metric label="Open work" value={openWork.length} detail={section.work_portfolio?.status} />
-        <Metric label="Unexplained" value={section.business_events?.unexplained ?? '-'} />
-        <Metric label="Workflows" value={specifications.length} />
-        <Metric label="Outcomes" value={outcomes.length} />
-        <Metric label="Owner control" value={pausedDomains} />
-        <Metric label="Temporal" value={section.temporal_delivery?.status || 'unavailable'} />
+        <Metric label="Discovery review" value={ownerDiscovery.length} />
+        <Metric label="Owner locks" value={ownerLocks || pausedDomains} />
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_1fr]">
         <div>
-          <div className="flex items-center gap-2"><Hand className="h-4 w-4 text-blue-300" /><h4 className="font-medium text-slate-200">Domain authority</h4></div>
+          <div className="flex items-center gap-2"><Hand className="h-4 w-4 text-blue-300" /><h4 className="font-medium text-slate-200">Desired versus effective domains</h4></div>
           <div className="mt-3 divide-y divide-slate-800 border-y border-slate-800">
             {controls.map((control) => (
               <div key={control.domain} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                <div className="min-w-0"><p className="font-medium capitalize text-slate-200">{control.domain.replaceAll('_', ' ')}</p><p className="mt-0.5 truncate text-xs text-slate-500">{control.reason || 'Autonomous operation is active.'}</p><p className="mt-1 text-xs text-slate-600">{control.nonterminal_work_items ?? 0}/{control.backlog_limit ?? '-'} queued{control.recovery_required ? ' · grounded recovery required' : ''}</p></div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-medium capitalize text-slate-200">{control.domain.replaceAll('_', ' ')}</p>
+                    {control.owner_locked && <LockKeyhole className="h-3.5 w-3.5 text-blue-300" aria-label="Owner locked" />}
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-500">{control.transition_reason || control.reason || 'Released to autonomous reconciliation.'}</p>
+                  <DomainLifecycleDetails control={control} />
+                  {control.source_revision && <p className="mt-1 truncate text-xs text-slate-700">source {control.source_revision}</p>}
+                </div>
                 <div className="flex items-center gap-2">
-                  <span className={`rounded-full border px-2 py-0.5 text-xs ${badge(control.state)}`}>{control.state}</span>
+                  <span className={`rounded-full border px-2 py-0.5 text-xs ${badge(control.lifecycle_state || control.state)}`}>{control.lifecycle_state || control.state}</span>
                   <select aria-label={`${control.domain} autonomy state`} value={control.state} disabled={changingDomain === control.domain} onChange={(event) => changeDomain(control.domain, event.target.value)} className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-slate-200 focus:border-blue-500 focus:outline-none">
-                    <option value="active">Autonomous</option><option value="paused">Paused</option><option value="takeover">Owner takeover</option>
+                    <option value="active">Release to autonomy</option><option value="paused">Paused</option><option value="takeover">Owner takeover</option>
                   </select>
                 </div>
               </div>
@@ -198,11 +273,57 @@ export default function AutonomousCompanyPanel({ readiness, onChanged, onNavigat
         </div>
       </div>
 
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_1fr]">
+        <div>
+          <div className="flex items-center gap-2"><Search className="h-4 w-4 text-cyan-300" /><h4 className="font-medium text-slate-200">Discovery obligations</h4></div>
+          <p className="mt-1 text-xs text-slate-500">Important unknowns stay visible until evidence resolves them or permitted sources are exhausted.</p>
+          <div className="mt-3 divide-y divide-slate-800 border-y border-slate-800">
+            {discoveryObligations.slice(0, 10).map((item) => (
+              <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-medium text-slate-200">{item.question}</p><span className={`rounded-full border px-2 py-0.5 text-xs ${badge(item.status)}`}>{item.status.replaceAll('_', ' ')}</span></div>
+                  <p className="mt-1 text-xs text-slate-500">{item.predicate} · {item.attempts}/{item.max_attempts} attempts · {(item.source_types || []).join(', ') || 'no permitted source'}</p>
+                  {item.last_error && <p className="mt-1 text-xs text-red-300">{item.last_error}</p>}
+                  {item.next_attempt_at && <p className="mt-1 text-xs text-slate-600">next attempt {when(item.next_attempt_at)}</p>}
+                </div>
+                {!['resolved', 'superseded'].includes(item.status) && (
+                  <button type="button" onClick={() => retryDiscovery(item.id)} disabled={retryingDiscovery !== null} className="btn-secondary flex items-center gap-2 text-sm" title="Retry permitted evidence sources now"><RotateCcw className={`h-4 w-4 ${retryingDiscovery === item.id ? 'animate-spin' : ''}`} />Retry</button>
+                )}
+              </div>
+            ))}
+            {!discoveryObligations.length && <Empty text={loading ? 'Loading discovery obligations...' : 'No unknown fact requires discovery. Current claims have a complete disposition.'} />}
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center gap-2"><Layers3 className="h-4 w-4 text-violet-300" /><h4 className="font-medium text-slate-200">Lifecycle reconciliation</h4></div>
+          <p className="mt-1 text-xs text-slate-500">Recent convergence and cleanup decisions remain linked to their operating-model revision.</p>
+          <div className="mt-3 border-y border-slate-800 py-3">
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <Evidence label="Latest run" value={latestReconciliation?.status || 'not recorded'} />
+              <Evidence label="Run time" value={when(latestReconciliation?.completed_at || latestReconciliation?.created_at)} />
+              <Evidence label="Assessments" value={String(lifecycleAssessments.length)} />
+              <Evidence label="Resolved / superseded" value={String(cleanupAssessments.length)} />
+            </div>
+            {latestReconciliation?.errors?.length > 0 && <p className="mt-3 text-xs text-red-300">{latestReconciliation.errors.join('; ')}</p>}
+            <div className="mt-3 divide-y divide-slate-800 border-t border-slate-800">
+              {lifecycleAssessments.slice(0, 6).map((item) => (
+                <div key={item.id} className="py-2.5">
+                  <div className="flex items-center justify-between gap-2"><p className="truncate text-xs font-medium text-slate-300">{item.resource_type}: {item.resource_id}</p><span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs ${badge(item.lifecycle_status)}`}>{item.lifecycle_status}</span></div>
+                  <p className="mt-1 text-xs text-slate-600">{item.reason}</p>
+                </div>
+              ))}
+              {!lifecycleAssessments.length && <Empty text={loading ? 'Loading lifecycle decisions...' : 'No backlog cleanup decision has been required yet.'} />}
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Health icon={ShieldCheck} title="Evidence and strategy" value={section.source_freshness?.status || 'unavailable'} detail={`${section.company_model?.critical_unknowns?.length || 0} critical unknowns · ${section.strategy?.status || 'strategy unavailable'}`} />
+        <Health icon={ShieldCheck} title="Operating model" value={section.operating_model?.status || operatingModel?.status || 'unavailable'} detail={`${desiredDomains.length} desired · ${effectiveDomains.length} effective · ${shadowDomains.length} shadow`} />
+        <Health icon={Search} title="Discovery closure" value={section.discovery_obligations?.status || 'unavailable'} detail={`${discoveryObligations.length} tracked · ${ownerDiscovery.length} require owner facts`} />
         <Health icon={GitFork} title="Workflow compiler" value={section.workflow_compiler?.status || 'unavailable'} detail={`${specifications.filter((item) => item.status === 'active').length} active immutable specifications`} />
         <Health icon={Clock3} title="Outcome learning" value={section.outcome_learning?.status || 'unavailable'} detail={`${section.outcome_learning?.unassessed_work || 0} unassessed · ${outcomes.filter((item) => item.recommendation === 'rollback').length} rollback recommendations · latest ${when(section.outcome_learning?.latest_assessment_at)}`} />
-        <Health icon={BriefcaseBusiness} title="Portfolio bounds" value={section.work_portfolio?.status || 'unavailable'} detail={`${(section.work_portfolio?.saturated_domains || []).length} saturated · ${(section.work_portfolio?.recovery_required_domains || []).length} recovery required`} />
       </div>
 
       {events.some((item) => item.status === 'pending') && <div className="mt-4 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /><span>Pending events are waiting for outbox delivery or mandate routing. The next Temporal cycle will reconcile them.</span></div>}
@@ -230,4 +351,18 @@ function Health({ icon: Icon, title, value, detail }: { icon: any; title: string
 
 function Empty({ text }: { text: string }) {
   return <div className="py-8 text-center text-sm text-slate-500">{text}</div>
+}
+
+function Evidence({ label, value }: { label: string; value: string }) {
+  return <div><p className="text-slate-600">{label}</p><p className="mt-1 break-words text-slate-300">{value}</p></div>
+}
+
+export function DomainLifecycleDetails({ control }: { control: any }) {
+  return (
+    <p className="mt-1 text-xs text-slate-600">
+      desired {control.desired_state || 'active'} · effective {control.effective_state || control.state} · lifecycle {control.lifecycle_state || 'active'} · {control.nonterminal_work_items ?? 0}/{control.backlog_limit ?? '-'} queued
+      {control.shadow_progress ? ` · shadow ${control.shadow_progress.successes}/${control.shadow_progress.required_successes}` : ''}
+      {control.recovery_required ? ' · grounded recovery required' : ''}
+    </p>
+  )
 }

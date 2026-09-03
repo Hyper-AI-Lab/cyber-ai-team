@@ -12,8 +12,6 @@ import {
 } from 'lucide-react'
 import { api } from '@/lib/api'
 
-const actionClasses = ['communications', 'erpnext'] as const
-
 const statusTone: Record<string, string> = {
   active: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200',
   validated: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200',
@@ -26,6 +24,12 @@ const statusTone: Record<string, string> = {
 
 function badge(value: string) {
   return statusTone[value] || 'border-slate-700 bg-slate-800 text-slate-300'
+}
+
+export function actionClassKeys(policies: any[]) {
+  return Array.from(new Set(
+    policies.map((item) => String(item.action_class || '')).filter(Boolean),
+  )).sort()
 }
 
 export default function ActionPolicyValidationPanel({ onChanged }: {
@@ -41,16 +45,19 @@ export default function ActionPolicyValidationPanel({ onChanged }: {
     setLoading(true)
     setError(null)
     try {
-      const [policyResponse, communications, erpnext] = await Promise.all([
-        api.listActionClassPolicies(),
-        api.listActionPolicyValidationCases('communications', { limit: 50 }),
-        api.listActionPolicyValidationCases('erpnext', { limit: 50 }),
-      ])
-      setPolicies(policyResponse.items || [])
-      setCases({
-        communications: communications.items || [],
-        erpnext: erpnext.items || [],
-      })
+      const policyResponse = await api.listActionClassPolicies()
+      const nextPolicies = policyResponse.items || []
+      const evidence = await Promise.all(
+        nextPolicies.map(async (policy: any) => {
+          const response = await api.listActionPolicyValidationCases(
+            policy.action_class,
+            { limit: 50 },
+          )
+          return [policy.action_class, response.items || []] as const
+        }),
+      )
+      setPolicies(nextPolicies)
+      setCases(Object.fromEntries(evidence))
     } catch (reason: any) {
       setError(reason.message || 'Action-policy evidence is unavailable.')
     } finally {
@@ -62,6 +69,10 @@ export default function ActionPolicyValidationPanel({ onChanged }: {
 
   const policiesByClass = useMemo(
     () => Object.fromEntries(policies.map((item) => [item.action_class, item])),
+    [policies],
+  )
+  const actionClasses = useMemo(
+    () => actionClassKeys(policies),
     [policies],
   )
 
@@ -141,6 +152,8 @@ export default function ActionPolicyValidationPanel({ onChanged }: {
           const policy = policiesByClass[actionClass] || {}
           const items = cases[actionClass] || []
           const liveCases = items.filter((item) => item.mode === 'live_canary')
+          const external = Boolean(policy.metadata?.external_side_effects)
+          const permanentGate = Boolean(policy.permanent_gate)
           const validated = items.filter((item) => item.status === 'validated').length
           const failed = items.filter((item) => item.status === 'failed').length
           return (
@@ -152,13 +165,15 @@ export default function ActionPolicyValidationPanel({ onChanged }: {
                     <span className={`rounded-full border px-2 py-0.5 text-xs ${badge(policy.status || 'unavailable')}`}>{policy.status || 'unavailable'}</span>
                   </div>
                   <p className="mt-1 text-xs text-slate-500">
-                    {policy.shadow_validated_cases || 0}/{policy.required_validated_cases || 10} shadow · {policy.live_canary_cases || 0}/{policy.required_live_canaries || 1} live · score {Number(policy.evaluator_score || 0).toFixed(2)}
+                    {policy.shadow_validated_cases || 0}/{policy.required_validated_cases || 10} shadow · {external ? `${policy.live_canary_cases || 0}/${policy.required_live_canaries || 1} live` : 'no external canary required'} · score {Number(policy.evaluator_score || 0).toFixed(2)}
                   </p>
                 </div>
-                <button type="button" onClick={() => generate(actionClass)} disabled={running !== null} className="btn-secondary flex items-center gap-2 text-sm">
-                  <FlaskConical className={`h-4 w-4 ${running === actionClass ? 'animate-pulse' : ''}`} />
-                  {running === actionClass ? 'Validating...' : 'Run shadow suite'}
-                </button>
+                {!permanentGate && (
+                  <button type="button" onClick={() => generate(actionClass)} disabled={running !== null} className="btn-secondary flex items-center gap-2 text-sm">
+                    <FlaskConical className={`h-4 w-4 ${running === actionClass ? 'animate-pulse' : ''}`} />
+                    {running === actionClass ? 'Validating...' : 'Run shadow suite'}
+                  </button>
+                )}
               </div>
               <div className="mt-3 grid grid-cols-3 gap-3 text-xs">
                 <EvidenceMetric label="Recorded" value={items.length} />
@@ -203,6 +218,11 @@ export default function ActionPolicyValidationPanel({ onChanged }: {
             </div>
           )
         })}
+        {!loading && actionClasses.length === 0 && (
+          <p className="py-8 text-center text-sm text-slate-500">
+            No action classes are registered. Tool contracts must declare an action class before qualification can begin.
+          </p>
+        )}
       </div>
     </section>
   )

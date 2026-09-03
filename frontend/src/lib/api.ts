@@ -915,6 +915,60 @@ class ApiClient {
     return this.request('/api/operations/domain-controls');
   }
 
+  async getOperatingModel() {
+    return this.request('/api/operations/operating-model');
+  }
+
+  async listOperatingModelRevisions(limit: number = 100) {
+    return this.request(`/api/operations/operating-model/revisions?limit=${limit}`);
+  }
+
+  async listOperatingModelReconciliationRuns(limit: number = 100) {
+    return this.request(
+      `/api/operations/operating-model/reconciliation-runs?limit=${limit}`,
+    );
+  }
+
+  async listOperatingModelLifecycleAssessments(filters: {
+    resourceType?: string;
+    limit?: number;
+  } = {}) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 200) });
+    if (filters.resourceType) params.set('resource_type', filters.resourceType);
+    return this.request(
+      `/api/operations/operating-model/lifecycle-assessments?${params.toString()}`,
+    );
+  }
+
+  async listOperatingModelDiscoveryObligations(filters: {
+    status?: string;
+    limit?: number;
+  } = {}) {
+    const params = new URLSearchParams({ limit: String(filters.limit ?? 200) });
+    if (filters.status) params.set('status', filters.status);
+    return this.request(
+      `/api/operations/operating-model/discovery-obligations?${params.toString()}`,
+    );
+  }
+
+  async reconcileOperatingModel(dryRun: boolean = true) {
+    return this.request('/api/operations/operating-model/reconcile', {
+      method: 'POST',
+      body: JSON.stringify({ dry_run: dryRun }),
+    });
+  }
+
+  async retryOperatingModelDiscoveryObligation(
+    obligationId: string,
+    force: boolean = true,
+  ) {
+    return this.request(
+      `/api/operations/operating-model/discovery-obligations/`
+      + `${encodeURIComponent(obligationId)}/retry`,
+      { method: 'POST', body: JSON.stringify({ force }) },
+    );
+  }
+
   async stabilizeBusinessWorkItems(domains: string[] = [], dryRun: boolean = true) {
     return this.request('/api/operations/work-items/stabilize', {
       method: 'POST',

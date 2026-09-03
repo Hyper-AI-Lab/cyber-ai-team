@@ -271,6 +271,14 @@ class DomainAutonomyControlRequest(BaseModel):
     reason: str = Field(default="", max_length=4000)
 
 
+class OperatingModelReconcileRequest(BaseModel):
+    dry_run: bool = True
+
+
+class DiscoveryObligationRetryRequest(BaseModel):
+    force: bool = True
+
+
 class BusinessWorkItemCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=240)
     description: str = Field(default="", max_length=8000)
@@ -311,7 +319,7 @@ class WorkflowSpecificationRunRequest(BaseModel):
 class ActionPolicyCanaryStageRequest(BaseModel):
     scenario_key: str = Field(..., min_length=1, max_length=160)
     agent_id: str = Field(..., min_length=1, max_length=64)
-    tool_name: str = Field(..., pattern="^(send_email|task_create)$")
+    tool_name: str = Field(..., min_length=1, max_length=100)
     params: dict[str, Any]
     expected_effect: str = Field(..., min_length=1, max_length=2000)
     evidence_ids: list[str] = Field(default_factory=list, min_length=1, max_length=50)
@@ -1277,6 +1285,131 @@ async def update_domain_autonomy_control(
     return result
 
 
+@router.get("/operating-model")
+async def get_operating_model(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "operating_model")
+    latest = await request.app.state.operating_model_lifecycle_service.latest()
+    return latest or {
+        "status": "not_created",
+        "detail": "No desired operating-model revision has been synthesized yet.",
+    }
+
+
+@router.get("/operating-model/revisions")
+async def list_operating_model_revisions(
+    request: Request,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "operating_model_revision")
+    items = await request.app.state.operating_model_lifecycle_service.list_revisions(
+        limit=limit
+    )
+    return {"count": len(items), "items": items}
+
+
+@router.get("/operating-model/reconciliation-runs")
+async def list_operating_model_reconciliation_runs(
+    request: Request,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "operating_model_reconciliation")
+    items = (
+        await request.app.state.operating_model_lifecycle_service.list_reconciliation_runs(
+            limit=limit
+        )
+    )
+    return {"count": len(items), "items": items}
+
+
+@router.get("/operating-model/lifecycle-assessments")
+async def list_operating_model_lifecycle_assessments(
+    request: Request,
+    resource_type: str | None = None,
+    limit: int = 200,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "lifecycle_assessment")
+    items = (
+        await request.app.state.operating_model_lifecycle_service.list_lifecycle_assessments(
+            resource_type=resource_type,
+            limit=limit,
+        )
+    )
+    return {"count": len(items), "items": items}
+
+
+@router.get("/operating-model/discovery-obligations")
+async def list_operating_model_discovery_obligations(
+    request: Request,
+    status: str | None = None,
+    limit: int = 200,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(request, principal, "read", "discovery_obligation")
+    items = (
+        await request.app.state.operating_model_lifecycle_service.list_discovery_obligations(
+            status=status,
+            limit=limit,
+        )
+    )
+    return {"count": len(items), "items": items}
+
+
+@router.post("/operating-model/reconcile")
+async def reconcile_operating_model(
+    data: OperatingModelReconcileRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "run",
+        "operating_model_reconciliation",
+        context=data.model_dump(),
+    )
+    result = await request.app.state.operating_model_lifecycle_service.reconcile(
+        dry_run=data.dry_run,
+        actor=principal.email,
+    )
+    _clear_operations_readiness_cache(request)
+    return result
+
+
+@router.post("/operating-model/discovery-obligations/{obligation_id}/retry")
+async def retry_operating_model_discovery_obligation(
+    obligation_id: str,
+    data: DiscoveryObligationRetryRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "run",
+        "discovery_obligation",
+        obligation_id,
+        context=data.model_dump(),
+    )
+    try:
+        result = (
+            await request.app.state.operating_model_lifecycle_service.retry_discovery_obligation(
+                obligation_id,
+                force=data.force,
+                actor=principal.email,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    _clear_operations_readiness_cache(request)
+    return result
+
+
 @router.post("/company-cycle/run")
 async def run_autonomous_company_cycle(
     request: Request,
@@ -1520,17 +1653,27 @@ async def stage_action_policy_live_canary(
             "scenario_key": data.scenario_key,
         },
     )
-    expected_tool = "send_email" if action_class == "communications" else "task_create"
-    if action_class not in {"communications", "erpnext"} or data.tool_name != expected_tool:
-        raise HTTPException(400, "Canary action class and tool do not match")
     registry = request.app.state.tool_registry
+    tool = registry.get_tool(data.tool_name)
+    if not tool:
+        raise HTTPException(400, "Canary tool is not registered")
+    if (tool.action_class or tool.category) != action_class:
+        raise HTTPException(400, "Canary action class and tool do not match")
+    readiness = registry.get_tool_readiness(data.tool_name)
+    if not tool.side_effects or readiness.get("state") != "live":
+        raise HTTPException(400, "Canary tool is not a ready external executor")
+    canary_profile = tool.canary_profile or {}
+    canary_kind = canary_profile.get("kind")
+    if not canary_kind:
+        raise HTTPException(400, "Canary tool has no bounded validation profile")
     valid, validated_params, validation_error = registry.validate_params(
         data.tool_name,
         data.params,
     )
     if not valid:
         raise HTTPException(400, validation_error or "Canary parameters are invalid")
-    if action_class == "communications":
+    recipients = 0
+    if canary_kind == "single_recipient_email":
         allowed_recipient = settings.action_policy_canary_email_recipient.strip().lower()
         supplied_recipient = str(validated_params.get("to_address") or "").strip().lower()
         if not allowed_recipient:
@@ -1538,25 +1681,33 @@ async def stage_action_policy_live_canary(
         if supplied_recipient != allowed_recipient:
             raise HTTPException(400, "Canary email recipient is not allowlisted")
         if not str(validated_params.get("subject") or "").startswith(
-            "[Cyber-Team Canary]"
+            str(canary_profile["subject_prefix"])
         ):
             raise HTTPException(400, "Canary email subject must use the required prefix")
-        if len(str(validated_params.get("body") or "")) > 4000:
+        if len(str(validated_params.get("body") or "")) > int(
+            canary_profile["max_body_length"]
+        ):
             raise HTTPException(400, "Canary email body is too large")
+        recipients = 1
         payload_summary = {
             "tool_name": data.tool_name,
             "recipient_count": 1,
             "recipient_hash": hashlib.sha256(supplied_recipient.encode()).hexdigest(),
             "subject": str(validated_params["subject"])[:240],
         }
-    else:
+    elif canary_kind == "erpnext_synthetic_task":
         task_data = dict(validated_params.get("task_data") or {})
-        if not str(task_data.get("subject") or "").startswith("[CYBERTEAM-CANARY]"):
+        if not str(task_data.get("subject") or "").startswith(
+            str(canary_profile["subject_prefix"])
+        ):
             raise HTTPException(400, "ERPNext canary Task must use the required prefix")
-        unsupported = sorted(set(task_data) - {"subject", "description", "status"})
+        unsupported = sorted(set(task_data) - set(canary_profile["allowed_fields"]))
         if unsupported:
             raise HTTPException(400, "ERPNext canary contains unsupported Task fields")
-        if task_data.get("status") not in {None, "Open", "Completed", "Cancelled"}:
+        if task_data.get("status") not in {
+            None,
+            *canary_profile["allowed_statuses"],
+        }:
             raise HTTPException(400, "ERPNext canary Task status is unsupported")
         payload_summary = {
             "tool_name": data.tool_name,
@@ -1565,6 +1716,8 @@ async def stage_action_policy_live_canary(
             "subject": str(task_data["subject"])[:240],
             "status": task_data.get("status") or "Open",
         }
+    else:
+        raise HTTPException(400, "Canary validation profile is not supported")
     authority = await request.app.state.work_portfolio_service.agent_tool_authority(
         data.agent_id,
         data.tool_name,
@@ -1597,7 +1750,7 @@ async def stage_action_policy_live_canary(
         "reversible": True,
         "financial_exposure_usd": 0,
         "financial_daily_usd": 0,
-        "recipients": 1 if action_class == "communications" else 0,
+        "recipients": recipients,
         "data_sensitivity": "synthetic",
         "external_side_effect": True,
         "fresh_backup": True,

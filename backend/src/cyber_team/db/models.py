@@ -1220,6 +1220,320 @@ class DomainAutonomyControl(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
 
+class OperatingModelRevision(Base):
+    __tablename__ = "operating_model_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_namespace",
+            "revision",
+            name="uq_operating_model_revisions_namespace_revision",
+        ),
+        UniqueConstraint(
+            "company_namespace",
+            "source_hash",
+            name="uq_operating_model_revisions_namespace_hash",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    company_namespace: Mapped[str] = mapped_column(String(200), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(30), default="proposed", index=True)
+    company_model_revision_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("company_model_revisions.id"),
+        nullable=True,
+        index=True,
+    )
+    strategy_context_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    source_hash: Mapped[str] = mapped_column(String(64), index=True)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    domain_keys: Mapped[list] = mapped_column(JSON, default=list)
+    objective_revision_ids: Mapped[list] = mapped_column(JSON, default=list)
+    evidence_ids: Mapped[list] = mapped_column(JSON, default=list)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    observer_review_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("observer_reviews.id"),
+        nullable=True,
+        index=True,
+    )
+    created_by: Mapped[str] = mapped_column(
+        String(200), default="chief_operating_agent"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    activated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )
+
+
+class OperatingDomain(Base):
+    __tablename__ = "operating_domains"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_namespace",
+            "domain_key",
+            name="uq_operating_domains_namespace_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    company_namespace: Mapped[str] = mapped_column(String(200), index=True)
+    domain_key: Mapped[str] = mapped_column(String(100), index=True)
+    display_name: Mapped[str] = mapped_column(String(200))
+    lifecycle_state: Mapped[str] = mapped_column(
+        String(30), default="proposed", index=True
+    )
+    effective_state: Mapped[str] = mapped_column(
+        String(30), default="paused", index=True
+    )
+    core: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    current_revision: Mapped[int] = mapped_column(Integer, default=0)
+    operating_model_revision_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("operating_model_revisions.id"),
+        nullable=True,
+        index=True,
+    )
+    status_reason: Mapped[str] = mapped_column(Text, default="")
+    shadow_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    shadow_successes: Mapped[int] = mapped_column(Integer, default=0)
+    shadow_failures: Mapped[int] = mapped_column(Integer, default=0)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+    last_reconciled_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class OperatingDomainRevision(Base):
+    __tablename__ = "operating_domain_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "domain_id",
+            "revision",
+            name="uq_operating_domain_revisions_domain_revision",
+        ),
+        UniqueConstraint(
+            "domain_id",
+            "source_hash",
+            name="uq_operating_domain_revisions_domain_hash",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    domain_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("operating_domains.id"), index=True
+    )
+    operating_model_revision_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("operating_model_revisions.id"), index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer)
+    desired_state: Mapped[str] = mapped_column(
+        String(30), default="shadow", index=True
+    )
+    purpose: Mapped[str] = mapped_column(Text)
+    inputs: Mapped[list] = mapped_column(JSON, default=list)
+    outputs: Mapped[list] = mapped_column(JSON, default=list)
+    required_capabilities: Mapped[list] = mapped_column(JSON, default=list)
+    required_tools: Mapped[list] = mapped_column(JSON, default=list)
+    event_selectors: Mapped[list] = mapped_column(JSON, default=list)
+    objective_revision_ids: Mapped[list] = mapped_column(JSON, default=list)
+    evidence_ids: Mapped[list] = mapped_column(JSON, default=list)
+    cadence: Mapped[dict] = mapped_column(JSON, default=dict)
+    budget: Mapped[dict] = mapped_column(JSON, default=dict)
+    activation_criteria: Mapped[dict] = mapped_column(JSON, default=dict)
+    retirement_criteria: Mapped[dict] = mapped_column(JSON, default=dict)
+    risk_level: Mapped[str] = mapped_column(String(20), default="low", index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    source_hash: Mapped[str] = mapped_column(String(64), index=True)
+    observer_review_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("observer_reviews.id"),
+        nullable=True,
+        index=True,
+    )
+    created_by: Mapped[str] = mapped_column(
+        String(200), default="chief_operating_agent"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
+class OperatingModelReconciliationRun(Base):
+    __tablename__ = "operating_model_reconciliation_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "idempotency_key",
+            name="uq_operating_model_reconciliation_runs_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    company_namespace: Mapped[str] = mapped_column(String(200), index=True)
+    operating_model_revision_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("operating_model_revisions.id"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(30), default="running", index=True)
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    actual_state_hash: Mapped[str] = mapped_column(String(64), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(240), index=True)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    errors: Mapped[list] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(
+        String(200), default="operating_model_reconciler"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )
+
+
+class OperatingLifecycleDecision(Base):
+    __tablename__ = "operating_lifecycle_decisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "idempotency_key",
+            name="uq_operating_lifecycle_decisions_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    reconciliation_run_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("operating_model_reconciliation_runs.id"), index=True
+    )
+    operating_model_revision_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("operating_model_revisions.id"), index=True
+    )
+    resource_type: Mapped[str] = mapped_column(String(80), index=True)
+    resource_id: Mapped[str] = mapped_column(String(200), index=True)
+    domain_key: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, index=True
+    )
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    from_state: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    to_state: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    decision_status: Mapped[str] = mapped_column(String(30), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    evidence_ids: Mapped[list] = mapped_column(JSON, default=list)
+    policy_decision: Mapped[dict] = mapped_column(JSON, default=dict)
+    observer_review_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("observer_reviews.id"), nullable=True, index=True
+    )
+    approval_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("approval_requests.id"), nullable=True, index=True
+    )
+    operation_node_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("operation_graph_nodes.id"), nullable=True, index=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(240), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class LifecycleAssessment(Base):
+    __tablename__ = "lifecycle_assessments"
+    __table_args__ = (
+        UniqueConstraint(
+            "idempotency_key",
+            name="uq_lifecycle_assessments_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    company_namespace: Mapped[str] = mapped_column(String(200), index=True)
+    resource_type: Mapped[str] = mapped_column(String(80), index=True)
+    resource_id: Mapped[str] = mapped_column(String(200), index=True)
+    operating_model_revision_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("operating_model_revisions.id"), index=True
+    )
+    lifecycle_status: Mapped[str] = mapped_column(String(40), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    evidence_ids: Mapped[list] = mapped_column(JSON, default=list)
+    observer_review_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("observer_reviews.id"), nullable=True, index=True
+    )
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    idempotency_key: Mapped[str] = mapped_column(String(240), index=True)
+    assessed_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class DiscoveryObligation(Base):
+    __tablename__ = "discovery_obligations"
+    __table_args__ = (
+        UniqueConstraint(
+            "idempotency_key",
+            name="uq_discovery_obligations_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    company_namespace: Mapped[str] = mapped_column(String(200), index=True)
+    predicate: Mapped[str] = mapped_column(String(160), index=True)
+    question: Mapped[str] = mapped_column(Text)
+    priority: Mapped[str] = mapped_column(String(20), default="medium", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    blocking: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    company_model_revision_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("company_model_revisions.id"), index=True
+    )
+    claim_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("company_claims.id"), nullable=True, index=True
+    )
+    source_types: Mapped[list] = mapped_column(JSON, default=list)
+    attempted_source_ids: Mapped[list] = mapped_column(JSON, default=list)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    evidence_ids: Mapped[list] = mapped_column(JSON, default=list)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )
+    owner_attention_id: Mapped[str | None] = mapped_column(
+        String(200), nullable=True, index=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution: Mapped[dict] = mapped_column(JSON, default=dict)
+    idempotency_key: Mapped[str] = mapped_column(String(240), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class DomainControlRevision(Base):
+    __tablename__ = "domain_control_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_namespace",
+            "domain_key",
+            "revision",
+            name="uq_domain_control_revisions_namespace_domain_revision",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    company_namespace: Mapped[str] = mapped_column(String(200), index=True)
+    domain_key: Mapped[str] = mapped_column(String(100), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    control_mode: Mapped[str] = mapped_column(String(30), default="release", index=True)
+    locked: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    actor: Mapped[str] = mapped_column(String(200))
+    actor_type: Mapped[str] = mapped_column(String(30), default="user")
+    source_type: Mapped[str] = mapped_column(String(80), default="owner_console")
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    supersedes_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("domain_control_revisions.id"), nullable=True
+    )
+    effective_from: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
 class BusinessEvent(Base):
     __tablename__ = "business_events"
     __table_args__ = (

@@ -59,6 +59,7 @@ if [ "$SKIP_BACKEND_INSTALL" != "1" ]; then
     pytest \
     pytest-asyncio \
     pytest-cov \
+    'httpx2>=2.12.0' \
     ruff \
     alembic
 fi

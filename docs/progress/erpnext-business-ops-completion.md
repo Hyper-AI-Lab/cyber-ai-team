@@ -7897,3 +7897,277 @@
   - `dist/soak/staging-soak-20260901T061430Z.jsonl`.
 - Next step:
   - Treat the `0.3.41` staging soak gate as complete. Resume the Autonomous Company Operations v3 rollout from the next unfinished milestone; continue monitoring the isolated readiness-latency outlier through normal metrics rather than reopening this successful gate.
+
+### 2026-09-02T12:34:39Z — STEP-321 — Established the Autonomous Operating-Model Lifecycle v4 contract
+- Files/services changed:
+  - Extended `docs/architecture/autonomous-company-os.md` with desired-versus-actual operating models, domain lifecycle states, automatic commissioning, owner locks, soft retirement, dynamic domains, and backlog/discovery convergence.
+  - Extended `docs/architecture/autonomy-outcome-closure-plan.md` with the v4 continuation and its completion conditions.
+  - No runtime service, database, deployment, credential, or environment configuration was changed.
+- Commands run:
+  - Inspected the existing v3 architecture, outcome-closure plan, domain-control implementation, policy-qualification implementation, and live staging domain state.
+  - Ran `git diff --check` and reviewed the documentation diff statistics.
+- Result:
+  - The source-of-truth contract now distinguishes product-level autonomous operating-model management from manual company operation.
+  - Domain activation explicitly permits reasoning and internal work only; tool grants, action policy, impact thresholds, and approvals continue to mediate external effects.
+  - Owner pause/takeover controls, circuit-breaker recovery, soft retirement, custom-domain bounds, and discovery/backlog convergence now have fixed semantics for implementation.
+- Evidence:
+  - `docs/architecture/autonomous-company-os.md` section `Operating-Model Lifecycle`.
+  - `docs/architecture/autonomy-outcome-closure-plan.md` section `V4 Operating-Model Continuation`.
+- Next step:
+  - Add the v4 persistence model and additive Alembic migration without modifying existing records or API contracts.
+
+### 2026-09-02T12:41:59Z — STEP-322 — Added additive v4 lifecycle persistence
+- Files/services changed:
+  - Added SQLAlchemy models for operating-model revisions, operating domains and revisions, reconciliation runs and decisions, lifecycle assessments, discovery obligations, and append-only domain-control revisions.
+  - Added additive Alembic revision `0022_operating_model_lifecycle_v4` after `0021_autonomous_action_candidates`.
+  - Extended migration coverage for all new tables and core uniqueness constraints.
+  - Existing domain controls, business records, APIs, runtime services, and the user-owned Compose edit were not modified.
+- Commands run:
+  - Ran Python compile checks and focused Ruff checks for the models and migration.
+  - Ran `PYTHONPATH=backend/src .venv-quality/bin/pytest -q backend/tests/test_migrations.py`.
+  - Ran `git diff --check` for the persistence surface.
+- Result:
+  - The migration chain renders successfully through the new head.
+  - Focused migration tests pass: `6` existing tests plus the new v4 persistence test (`7 passed`).
+  - Ruff, compile, and whitespace validation pass for the changed persistence files.
+- Evidence:
+  - `backend/alembic/versions/0022_operating_model_lifecycle_v4.py`.
+  - `backend/src/cyber_team/db/models.py` v4 lifecycle models.
+  - `backend/tests/test_migrations.py::test_v4_lifecycle_migration_contains_core_tables`.
+- Next step:
+  - Replace fixed domain constants and validation with a schema-validated declarative domain registry seeded with the existing catalog.
+
+### 2026-09-02T13:02:19Z — STEP-323 — Replaced fixed domain routing with a declarative registry
+- Files/services changed:
+  - Added `backend/src/cyber_team/company/domain_registry.py` with a strict data-only `DomainSpecification` schema, a bounded registry, canonical aliases, deterministic event routing, and the existing 15 domain families as seed data.
+  - Updated `backend/src/cyber_team/operations/work_portfolio.py` to obtain mandate inputs, outputs, domain validation, and event routing from the registry instead of fixed module constants.
+  - Added the `OPERATING_MODEL_MAX_DOMAINS` configuration default and focused registry tests.
+  - No executable-code loading, deployment, database mutation, credential change, or modification to the user-owned Compose edit occurred.
+- Commands run:
+  - Ran `PYTHONPATH=backend/src .venv-quality/bin/pytest -q backend/tests/test_domain_registry.py backend/tests/test_work_portfolio.py`.
+  - Ran focused Ruff checks for the registry, portfolio integration, and tests.
+  - Ran `git diff --check`.
+- Result:
+  - All `16` focused domain-registry and work-portfolio tests pass.
+  - Ruff and whitespace validation pass.
+  - Built-in behavior remains compatible while evidence-derived custom domains can now be registered as bounded, schema-validated data without loading runtime code.
+- Evidence:
+  - `backend/src/cyber_team/company/domain_registry.py`.
+  - `backend/tests/test_domain_registry.py`.
+  - Corrected STEP-322 test reference: `backend/tests/test_migrations.py::test_operating_model_lifecycle_migration_contains_durable_control_plane`.
+- Next step:
+  - Synthesize versioned desired operating models from company evidence, objectives, KPIs, events, workload, and capability readiness.
+
+### 2026-09-02T13:20:39Z — STEP-324 — Added evidence-driven desired operating-model synthesis
+- Files/services changed:
+  - Added `OperatingModelLifecycleService` to aggregate the active company model, provenance claims, objective/KPI revisions, recent business events, active work, and role gaps into a versioned desired operating model.
+  - Added explicit evidence selectors to the declarative domain specifications and bounded custom-domain ingestion from verified company evidence.
+  - Added reconciliation, confidence, shadow, retirement, policy-case, and discovery-attempt configuration defaults.
+- Commands run:
+  - Ran focused Ruff checks for the domain registry, configuration, synthesis service, and tests.
+  - Ran `PYTHONPATH=backend/src .venv-quality/bin/pytest backend/tests/test_domain_registry.py backend/tests/test_operating_model_lifecycle.py -q`.
+- Result:
+  - Synthesis is source-hashed and idempotent; an unchanged company state reuses the existing revision.
+  - Core control-plane domains remain available without manufacturing company facts; every non-core domain carries matched evidence and confidence.
+  - Evidence-derived custom domains are accepted only through the strict data-only schema and bounded catalog.
+  - All `8` focused tests pass; Ruff passes.
+- Evidence:
+  - `backend/src/cyber_team/operations/operating_model.py::OperatingModelLifecycleService.synthesize`.
+  - `backend/tests/test_operating_model_lifecycle.py::test_synthesis_is_evidence_driven_versioned_and_idempotent`.
+- Next step:
+  - Apply independent Observer review to every proposed operating-model revision before it can become effective.
+
+### 2026-09-02T13:20:40Z — STEP-325 — Enforced independent Observer review for model revisions
+- Files/services changed:
+  - Added a read-only Observer review path validating provenance, confidence, duplication, domain bounds, and registered-tool exposure.
+  - Linked reviews to operating-model revisions and preserved any prior active model when blocking objections remain.
+- Commands run:
+  - Exercised valid activation, review idempotency, and an injected unproven-domain objection in the focused lifecycle suite.
+  - Re-ran focused Ruff and Pytest checks.
+- Result:
+  - Valid revisions become active only after an `agreed` Observer record.
+  - Blocking objections move the candidate to `owner_review`; the Observer has no side-effect authority.
+  - Review reuse prevents duplicate critiques for the same revision.
+- Evidence:
+  - `backend/src/cyber_team/operations/operating_model.py::OperatingModelLifecycleService.review_revision`.
+  - `backend/tests/test_operating_model_lifecycle.py::test_observer_preserves_previous_model_on_unproven_domain`.
+- Next step:
+  - Implement the desired-versus-actual lifecycle reconciler with shadow qualification, idempotency, retirement, and control overrides.
+
+### 2026-09-02T13:33:50Z — STEP-326 — Implemented desired-versus-actual lifecycle reconciliation
+- Files/services changed:
+  - Extended `OperatingModelLifecycleService` with durable dry-run and applying reconciliation runs, per-domain lifecycle decisions, domain revisions, and the legacy domain-control compatibility projection.
+  - Implemented `proposed → shadow → active` qualification and reversible `retiring → retired` behavior using configurable cycle, elapsed-time, grace-period, and absent-revision requirements.
+- Commands run:
+  - Ran focused lifecycle and work-portfolio Pytest suites.
+  - Ran focused Ruff checks for the reconciler and integration surface.
+- Result:
+  - Shadow domains require three successful reconciliations and one elapsed hour before activation.
+  - Stable actual state reuses the previous no-op reconciliation; dry runs persist their decisions without mutating domains.
+  - Retirement remains soft, time-delayed, evidence-versioned, and reversible.
+  - The focused lifecycle suite passes, including shadow promotion and dry-run mutation protection.
+- Evidence:
+  - `backend/src/cyber_team/operations/operating_model.py::OperatingModelLifecycleService.reconcile`.
+  - `backend/tests/test_operating_model_lifecycle.py::test_reconciler_qualifies_shadow_then_becomes_idempotent`.
+- Next step:
+  - Convert domain pause, takeover, release, and circuit-breaker controls to append-only revision semantics.
+
+### 2026-09-02T13:33:51Z — STEP-327 — Added append-only owner and circuit-breaker control semantics
+- Files/services changed:
+  - Updated domain controls to append immutable revisions for owner pause/takeover locks and active/release decisions while retaining the existing API `state` field.
+  - Extended domain-control responses with desired, effective, lifecycle, lock, source-revision, transition, and shadow-progress fields.
+  - Added append-only circuit-breaker pause evidence and custom-domain control support.
+- Commands run:
+  - Ran the domain pause, in-flight circuit-breaker, append-only release, and lifecycle reconciliation tests.
+  - Ran focused Ruff checks.
+- Result:
+  - Owner pause and takeover are locked; active explicitly releases the domain to autonomous reconciliation.
+  - Prior control history is preserved through `supersedes_id`; reconciliation cannot override a current lock.
+  - The focused control and lifecycle set passes (`9` selected tests).
+- Evidence:
+  - `backend/src/cyber_team/operations/work_portfolio.py::WorkPortfolioService.update_domain_control`.
+  - `backend/tests/test_work_portfolio.py::test_domain_controls_are_append_only_locks_and_active_releases`.
+- Next step:
+  - Converge safe advisory roles, grants, and versioned mandates to active or shadow desired domains.
+
+### 2026-09-02T13:39:05Z — STEP-328 — Added role, grant, and mandate convergence
+- Files/services changed:
+  - Extended the operating-model controller to provision one safe advisory role/agent for each required active or shadow domain, then invoke the existing versioned mandate service.
+  - Added least-privilege grant convergence: ready non-mutating tools activate directly, side-effectful tools create exact-target approvals and pending grants, and unavailable required tools create deduplicated role/capability gaps.
+  - Added soft agent and mandate retirement only after the domain lifecycle itself reaches `retired`.
+- Commands run:
+  - Ran focused Ruff checks and the operating-model lifecycle tests.
+  - Exercised repeat convergence to verify role, approval, grant, and gap deduplication.
+- Result:
+  - A missing role can no longer block domain commissioning when safe advisory authority is sufficient.
+  - Side-effect tools are never inserted into an agent's active tool list without their separate grant lifecycle.
+  - Repeat convergence creates no duplicate role, approval, or capability gap; the focused convergence test passes.
+- Evidence:
+  - `backend/src/cyber_team/operations/operating_model.py::OperatingModelLifecycleService.converge_roles_and_mandates`.
+  - `backend/tests/test_operating_model_lifecycle.py::test_role_convergence_provisions_safe_authority_and_gates_side_effects`.
+- Next step:
+  - Reassess role gaps, outsourcing requests, work items, and approvals against the current operating-model revision.
+
+### 2026-09-02T14:03:31Z — STEP-329 — Reconciled lifecycle backlogs against the current model
+- Files/services changed:
+  - Extended the operating-model controller with durable lifecycle assessments for role gaps, outsourcing requests, business work items, and approval requests.
+  - Added current, actionable, configuration-required, owner-review, resolved, and superseded classifications tied to the governing operating-model revision.
+  - Added fail-closed invalidation for unconsumed approvals whose target or source revision is obsolete; stale nonterminal work is cancelled without executing side effects.
+- Commands run:
+  - Ran the complete operating-model lifecycle, domain-registry, and work-portfolio focused suites.
+  - Ran focused Ruff and `git diff --check` validation.
+- Result:
+  - Reconciliation is idempotent and does not duplicate lifecycle assessments.
+  - Current backlog records retain an explicit disposition; obsolete approvals cannot be replayed and historical records are preserved.
+  - The combined control-plane verification passes: `63 passed`; Ruff and whitespace checks pass.
+- Evidence:
+  - `backend/src/cyber_team/operations/operating_model.py::OperatingModelLifecycleService.reconcile_backlogs`.
+  - `backend/tests/test_operating_model_lifecycle.py::test_backlog_reconciliation_classifies_and_invalidates_obsolete_records`.
+- Next step:
+  - Generalize action-policy qualification from named Communications/ERPNext suites to declarative tool action classes.
+
+### 2026-09-02T14:03:31Z — STEP-330 — Generalized action-policy qualification across registered tools
+- Files/services changed:
+  - Added explicit `action_class` support to tool definitions, public contracts, readiness responses, and action envelopes.
+  - Added declarative action-class profile reconciliation and bounded qualification across all registered tool contracts.
+  - Replaced class-specific shadow scenarios with generic internal/external profiles while preserving permanent gates and real-canary requirements for external side effects.
+  - Versioned the deterministic validation suite as `action-policy-validation-v2`.
+- Commands run:
+  - Ran `backend/tests/test_action_policy_and_workflow_compiler.py` and focused Ruff checks.
+  - Re-ran the combined lifecycle, registry, and portfolio suite plus `git diff --check`.
+- Result:
+  - Generic internal action classes can promote from compliant shadow evidence without an artificial external canary.
+  - Generic external action classes remain in shadow until exact owner-approved live-canary evidence is recorded.
+  - Permanent-gate classes remain non-promotable, and existing Communications/ERPNext canary behavior remains compatible.
+  - Action-policy verification passes: `15 passed`; combined control-plane verification passes: `63 passed`.
+- Evidence:
+  - `backend/src/cyber_team/operations/action_policy.py::ActionPolicyService.ensure_action_class_profiles`.
+  - `backend/src/cyber_team/operations/action_policy.py::ActionPolicyService.qualify_registered_action_classes`.
+  - `backend/tests/test_action_policy_and_workflow_compiler.py::test_registered_action_classes_use_generic_qualification_profiles`.
+- Next step:
+  - Convert every important company-model unknown into an idempotent discovery obligation with bounded automatic source acquisition and owner escalation only after exhaustion.
+
+### 2026-09-03T00:44:59Z — STEP-331 — Closed company-model unknowns through autonomous discovery obligations
+- Files/services changed:
+  - Extended the operating-model controller with durable discovery-obligation reconciliation, bounded execution, retry backoff, evidence resolution, and one-time owner escalation.
+  - Reused the existing ERPNext, IMAP, authenticated owner-instruction, Cyber-Team internal-state, allowlisted document/website, and SearXNG adapters instead of introducing a parallel acquisition path.
+  - Added explicit source selection for public versus private facts and a configurable three-attempt retry budget.
+- Commands run:
+  - Ran focused Ruff checks for configuration, the lifecycle service, and discovery tests.
+  - Ran `PYTHONPATH=backend/src .venv-quality/bin/pytest -q backend/tests/test_operating_model_lifecycle.py`.
+- Result:
+  - Every latest-model unknown receives one current, idempotent obligation and an explicit source disposition.
+  - New evidence resolves the obligation; unresolved facts retry with bounded exponential backoff.
+  - Exhausted obligations produce one processed `owner_escalation` business event and cannot generate duplicate attention items on repeat reconciliation.
+  - Focused lifecycle verification passes: `11 passed`; Ruff passes.
+- Evidence:
+  - `backend/src/cyber_team/operations/operating_model.py::OperatingModelLifecycleService.reconcile_discovery_obligations`.
+  - `backend/src/cyber_team/operations/operating_model.py::OperatingModelLifecycleService.retry_discovery_obligation`.
+  - `backend/tests/test_operating_model_lifecycle.py::test_discovery_exhaustion_creates_one_owner_attention_event`.
+- Next step:
+  - Integrate model synthesis, Observer review, lifecycle reconciliation, role convergence, discovery, generic policy qualification, and backlog reconciliation into the durable company cycle, APIs, operation graph, and readiness.
+
+### 2026-09-03T01:12:09Z — STEP-332 — Integrated lifecycle reconciliation into durable orchestration and readiness
+- Files/services changed:
+  - Extended the autonomous company cycle and Temporal worker composition with operating-model synthesis, independent review, lifecycle reconciliation, role/mandate convergence, discovery closure, backlog reconciliation, and generic action-class qualification.
+  - Added authenticated operating-model, revision, reconciliation, assessment, discovery-list, dry-run, and forced-retry APIs.
+  - Added readiness sections for operating-model invariants and discovery disposition.
+  - Linked operating-model revisions, reconciliation runs, and lifecycle transitions into the operation graph; every transition records a masked OPA decision reference and fails closed when policy is unavailable or denies the action.
+- Commands run:
+  - Ran focused API, readiness, autonomy-cycle, lifecycle, policy, and tool tests through `.venv-quality`.
+  - Ran focused Ruff checks and `git diff --check`.
+- Result:
+  - The periodic company cycle now executes the full desired-versus-actual control loop before routing domain work.
+  - Every lifecycle transition is durable, graph-linked, policy-mediated, and redacted; a denied transition cannot alter effective domain state.
+  - Focused backend verification passes: `83 passed`; Ruff and whitespace validation pass.
+- Evidence:
+  - `backend/src/cyber_team/operations/autonomy_cycle.py::AutonomousCompanyCycleService.run_cycle`.
+  - `backend/src/cyber_team/operations/operating_model.py::OperatingModelLifecycleService.reconcile`.
+  - `backend/src/cyber_team/api/routes/operations.py` operating-model endpoints.
+  - `backend/tests/test_operating_model_lifecycle.py::test_every_transition_has_graph_and_policy_evidence`.
+- Next step:
+  - Complete the Owner Console with desired/effective lifecycle state, discovery obligations, cleanup evidence, and API-driven action-class qualification.
+
+### 2026-09-03T01:12:32Z — STEP-333 — Completed the operating-model Owner Console
+- Files/services changed:
+  - Extended the frontend API client with operating-model, revision, reconciliation, lifecycle-assessment, discovery, dry-run, and retry methods.
+  - Expanded the Autonomous Company panel with desired/effective/lifecycle states, shadow progress, source revisions, owner locks, discovery obligations, bounded retries, and lifecycle cleanup evidence.
+  - Changed the domain `active` control label to `Release to autonomy` so owner-lock semantics are explicit.
+  - Replaced hard-coded Communications/ERPNext policy rendering with API-derived action classes.
+  - Added declarative bounded live-canary profiles to tool contracts; unknown action classes remain fail-closed and tools without a supported bounded profile cannot enter live validation.
+- Commands run:
+  - Ran frontend Vitest, TypeScript no-emit checking, and the optimized Next.js production build.
+  - Ran the focused backend tool, action-policy, API, lifecycle, cycle, and readiness suite plus Ruff.
+- Result:
+  - Owners can inspect desired versus effective operating state and intervene without raw record IDs.
+  - Unknown facts clearly distinguish automatic discovery, retry, exhaustion, and owner-review states.
+  - Policy qualification renders every registered class returned by the API, including future evidence-derived domains; permanent gates cannot be presented as promotable shadow suites.
+  - Frontend verification passes: `34 passed`, typecheck passes, and the production build succeeds. Backend verification remains green at `83 passed`.
+- Evidence:
+  - `frontend/src/components/operations/AutonomousCompanyPanel.tsx`.
+  - `frontend/src/components/operations/ActionPolicyValidationPanel.tsx`.
+  - `frontend/src/components/operations/OperatingModelLifecycle.test.tsx`.
+  - `backend/src/cyber_team/tools/registry.py::ToolDefinition.canary_profile`.
+- Next step:
+  - Execute migration/release closure: archetype validation, full quality gates, staging backup/deploy, lifecycle shadow acceptance, operational smokes, and strict 24-hour soak.
+
+### 2026-09-03T07:30:25Z — STEP-334 — Passed archetype, repository, and migration release gates
+- Files/services changed:
+  - Added a four-company offline acceptance matrix for B2B SaaS, digital consultancy, e-commerce, and regulated services.
+  - Hardened deterministic evidence matching for ordinary plural business terms and added `client` as a commercial-domain signal.
+  - Added the BSD-licensed `httpx2` client to the development quality toolchain, following Starlette's current TestClient migration, without changing production HTTP client behavior.
+- Commands run:
+  - Ran the four-archetype synthesis matrix and focused Ruff checks.
+  - Ran the full repository quality gate with existing pinned environments.
+  - Ran the real PostgreSQL migration rehearsal from both the legacy pre-Alembic schema and the representative seeded `0001` schema through head `0022`.
+- Result:
+  - All four archetypes derive materially different, evidence-supported domain sets without code changes or side effects.
+  - Full verification passes: `490` backend tests, `34` frontend tests, Ruff, compileall, optimized frontend build/typecheck, offline Alembic SQL, Python/Node dependency audits, Compose configuration, script/dashboard syntax, secret scan, Google Cloud isolation, FOSS/resource policy, and diff hygiene.
+  - Both real PostgreSQL upgrade paths preserve representative records and required indexes through the new additive lifecycle migration.
+  - The Starlette TestClient transition no longer emits its deprecated-client warning in focused verification.
+- Evidence:
+  - `backend/tests/test_operating_model_lifecycle.py::test_offline_company_archetypes_derive_distinct_supported_domains`.
+  - `/tmp/cyberteam-alembic.sql`.
+  - `scripts/migration-rehearsal.sh` terminal result at `2026-09-03`.
+- Next step:
+  - Commit the verified release candidate, build and scan immutable images, execute isolated Compose smoke, then promote backup-first to staging.

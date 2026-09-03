@@ -1082,6 +1082,63 @@ describe('ApiClient', () => {
     )
   })
 
+  it('reads and reconciles the desired operating-model lifecycle', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'opmodel-1', status: 'active' }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'opmodel-1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'reconcile-1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'assessment-1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'discovery-1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'dry_run' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'discovery-1', attempts: 2 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient('http://api.test')
+    client.setTokens('access-1')
+
+    await client.getOperatingModel()
+    await client.listOperatingModelRevisions(25)
+    await client.listOperatingModelReconciliationRuns(30)
+    await client.listOperatingModelLifecycleAssessments({
+      resourceType: 'approval',
+      limit: 35,
+    })
+    await client.listOperatingModelDiscoveryObligations({
+      status: 'owner_review',
+      limit: 40,
+    })
+    await client.reconcileOperatingModel(true)
+    await client.retryOperatingModelDiscoveryObligation('discovery/1', true)
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://api.test/api/operations/operating-model',
+    )
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'http://api.test/api/operations/operating-model/revisions?limit=25',
+    )
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      'http://api.test/api/operations/operating-model/reconciliation-runs?limit=30',
+    )
+    const assessmentUrl = new URL(fetchMock.mock.calls[3][0] as string)
+    expect(assessmentUrl.searchParams.get('resource_type')).toBe('approval')
+    expect(assessmentUrl.searchParams.get('limit')).toBe('35')
+    const discoveryUrl = new URL(fetchMock.mock.calls[4][0] as string)
+    expect(discoveryUrl.searchParams.get('status')).toBe('owner_review')
+    expect(discoveryUrl.searchParams.get('limit')).toBe('40')
+    expect(fetchMock.mock.calls[5][0]).toBe(
+      'http://api.test/api/operations/operating-model/reconcile',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[5][1]?.body as string)).toEqual({
+      dry_run: true,
+    })
+    expect(fetchMock.mock.calls[6][0]).toBe(
+      'http://api.test/api/operations/operating-model/discovery-obligations/'
+      + 'discovery%2F1/retry',
+    )
+    expect(JSON.parse(fetchMock.mock.calls[6][1]?.body as string)).toEqual({
+      force: true,
+    })
+  })
+
   it('runs bounded work portfolio stabilization', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
       status: 'dry_run',

@@ -39,7 +39,7 @@ class ActionPolicyService:
     """Evaluate complete action envelopes through OPA and durable class policy."""
 
     POLICY_VERSION = "action-envelope-v3"
-    VALIDATION_SUITE_VERSION = "action-policy-validation-v1"
+    VALIDATION_SUITE_VERSION = "action-policy-validation-v2"
 
     def __init__(self, *, audit_service=None, client_factory=None) -> None:
         self._audit = audit_service
@@ -72,12 +72,178 @@ class ActionPolicyService:
                         auto_execute_enabled=False,
                         thresholds=self.default_thresholds(),
                         created_by="policy_engine",
-                        metadata_={"policy_version": self.POLICY_VERSION},
+                        metadata_={
+                            "policy_version": self.POLICY_VERSION,
+                            "external_side_effects": True,
+                        },
                     )
                 )
                 created += 1
             await session.commit()
         return {"created": created, "permanent_gates": len(PERMANENT_GATES)}
+
+    async def ensure_action_class_profiles(
+        self,
+        tool_contracts: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Persist declarative profiles for every registered tool action class."""
+        profiles: dict[str, dict[str, Any]] = {}
+        for contract in tool_contracts:
+            action_class = str(
+                contract.get("action_class") or contract.get("category") or "general"
+            )[:120]
+            profile = profiles.setdefault(
+                action_class,
+                {
+                    "action_class": action_class,
+                    "external_side_effects": False,
+                    "tool_names": [],
+                    "permanent_gate": action_class in PERMANENT_GATES,
+                },
+            )
+            profile["external_side_effects"] = bool(
+                profile["external_side_effects"] or contract.get("side_effects")
+            )
+            profile["tool_names"].append(str(contract.get("name") or "")[:100])
+        for action_class in PERMANENT_GATES:
+            profiles.setdefault(
+                action_class,
+                {
+                    "action_class": action_class,
+                    "external_side_effects": True,
+                    "tool_names": [],
+                    "permanent_gate": True,
+                },
+            )
+
+        created = 0
+        revised = 0
+        unchanged = 0
+        async with async_session() as session:
+            for action_class, profile in sorted(profiles.items()):
+                profile["tool_names"] = sorted(set(profile["tool_names"]))
+                profile_hash = self._hash(profile)
+                current = await self._policy_model(session, action_class)
+                if current and (current.metadata_ or {}).get("profile_hash") == profile_hash:
+                    unchanged += 1
+                    continue
+                prior_metadata = dict(current.metadata_ or {}) if current else {}
+                metadata = {
+                    **prior_metadata,
+                    "policy_version": self.POLICY_VERSION,
+                    "profile": profile,
+                    "profile_hash": profile_hash,
+                    "external_side_effects": profile["external_side_effects"],
+                    "tool_names": profile["tool_names"],
+                }
+                if current:
+                    prior_status = current.status
+                    current.status = "superseded"
+                    policy = ActionClassPolicy(
+                        id=f"actpol_{uuid.uuid4().hex}",
+                        action_class=action_class,
+                        version=current.version + 1,
+                        status=(
+                            "permanent_gate"
+                            if profile["permanent_gate"]
+                            else prior_status
+                        ),
+                        permanent_gate=profile["permanent_gate"],
+                        auto_execute_enabled=(
+                            current.auto_execute_enabled and not profile["permanent_gate"]
+                        ),
+                        thresholds=current.thresholds,
+                        validated_cases=current.validated_cases,
+                        hard_policy_compliance=current.hard_policy_compliance,
+                        evaluator_score=current.evaluator_score,
+                        high_severity_findings=current.high_severity_findings,
+                        shadow_started_at=current.shadow_started_at or utc_now(),
+                        promoted_at=current.promoted_at,
+                        created_by="policy_profile_reconciler",
+                        metadata_=metadata,
+                    )
+                    revised += 1
+                else:
+                    policy = ActionClassPolicy(
+                        id=f"actpol_{uuid.uuid4().hex}",
+                        action_class=action_class,
+                        version=1,
+                        status="permanent_gate" if profile["permanent_gate"] else "shadow",
+                        permanent_gate=profile["permanent_gate"],
+                        auto_execute_enabled=False,
+                        thresholds=self.default_thresholds(),
+                        shadow_started_at=utc_now(),
+                        created_by="policy_profile_reconciler",
+                        metadata_=metadata,
+                    )
+                    created += 1
+                session.add(policy)
+            await session.commit()
+        return {
+            "status": "completed",
+            "profile_count": len(profiles),
+            "created": created,
+            "revised": revised,
+            "unchanged": unchanged,
+            "profiles": list(profiles.values()),
+        }
+
+    async def qualify_registered_action_classes(
+        self,
+        tool_contracts: list[dict[str, Any]],
+        *,
+        max_cases_per_class: int | None = None,
+        actor: str = "policy_profile_reconciler",
+    ) -> dict[str, Any]:
+        profiles = await self.ensure_action_class_profiles(tool_contracts)
+        limit = max(
+            1,
+            min(
+                max_cases_per_class or settings.operating_model_policy_cases_per_cycle,
+                10,
+            ),
+        )
+        results = []
+        for profile in profiles["profiles"]:
+            action_class = profile["action_class"]
+            if profile["permanent_gate"]:
+                results.append(
+                    {
+                        "action_class": action_class,
+                        "status": "permanent_gate",
+                        "evaluated": 0,
+                    }
+                )
+                continue
+            existing = await self.list_validation_cases(
+                action_class=action_class,
+                mode="shadow",
+                limit=500,
+            )
+            seen = {item["scenario_key"] for item in existing}
+            pending = [
+                item
+                for item in self._shadow_scenarios(
+                    action_class,
+                    external_side_effects=profile["external_side_effects"],
+                    permanent_gate=False,
+                )
+                if item["scenario_key"] not in seen
+            ][:limit]
+            cases = [
+                await self._evaluate_shadow_case(action_class, item, actor)
+                for item in pending
+            ]
+            results.append(
+                {
+                    "action_class": action_class,
+                    "status": "qualified" if not pending else "progressed",
+                    "evaluated": len(cases),
+                    "remaining": max(0, 10 - len(seen) - len(cases)),
+                    "external_side_effects": profile["external_side_effects"],
+                }
+            )
+        return {"status": "completed", "profiles": profiles, "items": results}
 
     async def evaluate(
         self,
@@ -108,13 +274,31 @@ class ActionPolicyService:
                 "requires_approval": False,
                 "reasons": ["opa_unavailable_fail_closed"],
                 "source": "fail_closed",
+                "decision_reference": "opa_unavailable_"
+                + self._hash(
+                    {
+                        "policy_version": self.POLICY_VERSION,
+                        "target_type": normalized["target_type"],
+                        "target_id": normalized["target_id"],
+                    }
+                )[:16],
             }
         else:
+            decision_reference = opa.pop("_decision_reference", None)
             decision = {
                 "allowed": bool(opa.get("allowed")),
                 "requires_approval": bool(opa.get("requires_approval")),
                 "reasons": list(opa.get("reasons") or local_reasons),
                 "source": "opa",
+                "decision_reference": decision_reference
+                or "opa_"
+                + self._hash(
+                    {
+                        "policy_version": self.POLICY_VERSION,
+                        "envelope": self._safe_envelope(normalized),
+                        "decision": opa,
+                    }
+                )[:20],
             }
         decision.update(
             {
@@ -215,7 +399,10 @@ class ActionPolicyService:
                     auto_execute_enabled=False,
                     thresholds=self.default_thresholds(),
                     shadow_started_at=utc_now(),
-                    metadata_={"policy_version": self.POLICY_VERSION},
+                    metadata_={
+                        "policy_version": self.POLICY_VERSION,
+                        "external_side_effects": True,
+                    },
                 )
                 session.add(current)
                 await session.flush()
@@ -234,11 +421,22 @@ class ActionPolicyService:
             else:
                 shadow_cases += 1
             shadow_age = utc_now() - (current.shadow_started_at or utc_now())
+            external_side_effects = bool(
+                metadata.get(
+                    "external_side_effects",
+                    True,
+                )
+            )
+            live_evidence_satisfied = (
+                live_canaries >= settings.action_policy_min_live_canaries
+                if external_side_effects
+                else True
+            )
             promotable = bool(
                 not current.permanent_gate
                 and shadow_age >= timedelta(days=settings.action_policy_shadow_days)
                 and total >= settings.action_policy_min_validated_cases
-                and live_canaries >= settings.action_policy_min_live_canaries
+                and live_evidence_satisfied
                 and compliance == 1.0
                 and average_score >= settings.action_policy_min_evaluator_score
                 and findings == 0
@@ -305,10 +503,20 @@ class ActionPolicyService:
         actor: str = "policy_validation_runner",
     ) -> dict[str, Any]:
         """Evaluate an idempotent ten-case policy suite without side effects."""
-        if action_class not in {"communications", "erpnext"}:
-            raise ValueError("Shadow suite is only defined for communications and erpnext")
+        policy = await self._policy_for(action_class)
+        metadata = policy.get("metadata") or {}
+        external_side_effects = bool(
+            metadata.get(
+                "external_side_effects",
+                True,
+            )
+        )
         cases = []
-        for scenario in self._shadow_scenarios(action_class):
+        for scenario in self._shadow_scenarios(
+            action_class,
+            external_side_effects=external_side_effects,
+            permanent_gate=policy["permanent_gate"],
+        ):
             cases.append(await self._evaluate_shadow_case(action_class, scenario, actor))
         return {
             "action_class": action_class,
@@ -390,8 +598,9 @@ class ActionPolicyService:
         validation_case_id: str | None = None,
     ) -> dict[str, Any]:
         """Persist a reviewed live canary without executing its side effect."""
-        if action_class not in {"communications", "erpnext"}:
-            raise ValueError("Live canary is only supported for communications and erpnext")
+        policy = await self._policy_for(action_class)
+        if not bool((policy.get("metadata") or {}).get("external_side_effects", True)):
+            raise ValueError("Internal action classes do not require live external canaries")
         if observer_review.get("status") != "agreed":
             raise ValueError("Observer must agree before a live canary can be staged")
         normalized = self.normalize_envelope(action_envelope)
@@ -803,7 +1012,12 @@ class ActionPolicyService:
             }
 
         envelope = {
-            **self._base_shadow_envelope(action_class),
+            **self._base_shadow_envelope(
+                action_class,
+                external_side_effects=bool(
+                    scenario.get("external_side_effects", True)
+                ),
+            ),
             **scenario.get("overrides", {}),
         }
         decision = await self.evaluate(envelope, approval_present=False)
@@ -905,15 +1119,28 @@ class ActionPolicyService:
         return result
 
     @classmethod
-    def _shadow_scenarios(cls, action_class: str) -> list[dict[str, Any]]:
-        target = "send_email" if action_class == "communications" else "task_create"
-        payload_kind = "email" if action_class == "communications" else "erpnext_task"
-        return [
+    def _shadow_scenarios(
+        cls,
+        action_class: str,
+        *,
+        external_side_effects: bool = True,
+        permanent_gate: bool = False,
+    ) -> list[dict[str, Any]]:
+        target = f"{action_class}_shadow_target"
+        bounded_decision = "allow"
+        bounded_reasons = []
+        if permanent_gate:
+            bounded_decision = "approval"
+            bounded_reasons = ["permanent_owner_gate"]
+        elif external_side_effects:
+            bounded_decision = "approval"
+            bounded_reasons = ["action_class_not_promoted"]
+        scenarios = [
             {
                 "scenario_key": "bounded_reversible",
-                "expected_decision": "approval",
-                "expected_reasons": ["action_class_not_promoted"],
-                "payload_summary": {"kind": payload_kind, "records": 1},
+                "expected_decision": bounded_decision,
+                "expected_reasons": bounded_reasons,
+                "payload_summary": {"kind": action_class, "records": 1},
                 "overrides": {"target_id": target},
             },
             {
@@ -978,9 +1205,17 @@ class ActionPolicyService:
                 },
             },
         ]
+        for scenario in scenarios:
+            scenario["external_side_effects"] = external_side_effects
+        return scenarios
 
     @classmethod
-    def _base_shadow_envelope(cls, action_class: str) -> dict[str, Any]:
+    def _base_shadow_envelope(
+        cls,
+        action_class: str,
+        *,
+        external_side_effects: bool = True,
+    ) -> dict[str, Any]:
         return {
             "action_class": action_class,
             "actor": "policy_validation_runner",
@@ -993,9 +1228,9 @@ class ActionPolicyService:
             "reversible": True,
             "financial_exposure_usd": 0,
             "financial_daily_usd": 0,
-            "recipients": 1 if action_class == "communications" else 0,
+            "recipients": 1 if external_side_effects else 0,
             "data_sensitivity": "synthetic",
-            "external_side_effect": True,
+            "external_side_effect": external_side_effects,
             "fresh_backup": True,
             "observer_status": "agreed",
             "benchmark_fresh": True,
@@ -1133,7 +1368,10 @@ class ActionPolicyService:
                     thresholds=self.default_thresholds(),
                     shadow_started_at=utc_now(),
                     created_by="policy_engine",
-                    metadata_={"policy_version": self.POLICY_VERSION},
+                    metadata_={
+                        "policy_version": self.POLICY_VERSION,
+                        "external_side_effects": True,
+                    },
                 )
                 session.add(model)
                 await session.commit()
@@ -1163,8 +1401,22 @@ class ActionPolicyService:
                 )
             if response.status_code != 200:
                 return None
-            result = response.json().get("result")
-            return result if isinstance(result, dict) else None
+            payload = response.json()
+            result = payload.get("result")
+            if not isinstance(result, dict):
+                return None
+            raw_decision_id = payload.get("decision_id") or getattr(
+                response,
+                "headers",
+                {},
+            ).get("x-decision-id")
+            if raw_decision_id:
+                result = {
+                    **result,
+                    "_decision_reference": "opa_"
+                    + hashlib.sha256(str(raw_decision_id).encode()).hexdigest()[:20],
+                }
+            return result
         except Exception:  # noqa: BLE001 - policy dependency must fail closed.
             return None
 

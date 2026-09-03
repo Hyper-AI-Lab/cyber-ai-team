@@ -37,6 +37,7 @@ async def activity_services():
     from cyber_team.operations.governor import OrchestrationGovernorService
     from cyber_team.operations.memory_steward import MemoryStewardService
     from cyber_team.operations.model_capabilities import ModelCapabilityService
+    from cyber_team.operations.operating_model import OperatingModelLifecycleService
     from cyber_team.operations.outcomes import OutcomeLearningService
     from cyber_team.operations.planning import AutonomousPlanningService
     from cyber_team.operations.readiness import ProductionReadinessEvidenceService
@@ -92,6 +93,14 @@ async def activity_services():
         memory_service=memory,
         audit_service=audit,
     )
+    operating_model = OperatingModelLifecycleService(
+        tool_registry=registry,
+        agent_manager=manager,
+        work_portfolio_service=work_portfolio,
+        company_intelligence_service=intelligence,
+        action_policy_service=action_policy,
+        audit_service=audit,
+    )
     autonomy_cycle = AutonomousCompanyCycleService(
         intelligence_service=intelligence,
         strategy_service=strategy,
@@ -99,6 +108,8 @@ async def activity_services():
         outcome_learning_service=outcomes,
         action_policy_service=action_policy,
         model_capability_service=model_capabilities,
+        operating_model_service=operating_model,
+        tool_registry=registry,
         audit_service=audit,
     )
     memory_steward = MemoryStewardService(

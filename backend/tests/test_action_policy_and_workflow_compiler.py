@@ -184,6 +184,42 @@ def compiler_services(*, opa_client=FakeOPAClient):
     )
 
 
+def test_tool_contract_exposes_declared_action_class():
+    registry = ToolRegistry()
+
+    async def execute_tool():
+        return {"status": "completed"}
+
+    registry.register(
+        ToolDefinition(
+            name="partner_record_update",
+            description="Update one external partner record.",
+            category="integrations",
+            action_class="partner_records",
+            executor_kind="live",
+            side_effects=True,
+        ),
+        execute_tool,
+    )
+
+    contract = next(
+        item
+        for item in registry.list_tool_contracts()
+        if item["name"] == "partner_record_update"
+    )
+    action_envelope = registry._tool_action_envelope(
+        registry.get_tool("partner_record_update"),
+        actor="operations-agent",
+        actor_type="agent",
+        supplied=None,
+    )
+
+    assert contract["action_class"] == "partner_records"
+    assert contract["side_effects"] is True
+    assert action_envelope["action_class"] == "partner_records"
+    assert action_envelope["external_side_effect"] is True
+
+
 @pytest.mark.asyncio
 async def test_policy_fails_closed_when_opa_is_unavailable(compiler_session_factory):
     service = ActionPolicyService(client_factory=FailingOPAClient)
@@ -353,6 +389,54 @@ async def test_shadow_suite_is_durable_idempotent_and_side_effect_free(
     async with compiler_session_factory() as session:
         stored_count = await session.scalar(select(func.count(ActionPolicyValidationCase.id)))
     assert stored_count == 10
+
+
+@pytest.mark.asyncio
+async def test_registered_action_classes_use_generic_qualification_profiles(
+    compiler_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "action_policy_shadow_days", 0)
+    monkeypatch.setattr(settings, "action_policy_min_validated_cases", 2)
+    monkeypatch.setattr(settings, "action_policy_min_evaluator_score", 0.8)
+    monkeypatch.setattr(settings, "action_policy_min_live_canaries", 1)
+    service = ActionPolicyService(client_factory=FakeOPAClient)
+    contracts = [
+        {
+            "name": "company_fact_read",
+            "category": "company_intelligence",
+            "action_class": "internal_company_read",
+            "side_effects": False,
+        },
+        {
+            "name": "partner_record_update",
+            "category": "integrations",
+            "action_class": "partner_records",
+            "side_effects": True,
+        },
+    ]
+
+    result = await service.qualify_registered_action_classes(
+        contracts,
+        max_cases_per_class=2,
+    )
+    policies = {
+        item["action_class"]: item for item in await service.list_policies()
+    }
+
+    assert result["status"] == "completed"
+    assert {item["action_class"] for item in result["items"]} >= {
+        "internal_company_read",
+        "partner_records",
+    }
+    assert policies["payment"]["status"] == "permanent_gate"
+    assert policies["payment"]["auto_execute_enabled"] is False
+    assert policies["internal_company_read"]["status"] == "active"
+    assert policies["internal_company_read"]["auto_execute_enabled"] is True
+    assert policies["internal_company_read"]["live_canary_cases"] == 0
+    assert policies["partner_records"]["status"] == "shadow"
+    assert policies["partner_records"]["auto_execute_enabled"] is False
+    assert policies["partner_records"]["metadata"]["external_side_effects"] is True
 
 
 @pytest.mark.asyncio

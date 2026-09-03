@@ -2,7 +2,8 @@
 
 Cyber-Team is a single-owner, self-hosted company operating system for a digital-first startup. Its purpose is to let AI workers run as much of the company as possible while keeping the human owner able to see, steer, pause, override, and approve large-impact actions.
 
-The v3 operating contract is evidence-to-outcome autonomy. The company must not wait for
+The v4 operating contract is evidence-to-outcome autonomy with automatic operating-model
+convergence. The company must not wait for
 the owner to author its business description, objectives, KPIs, role backlog, or routine
 work. It continuously discovers evidence, distinguishes fact from hypothesis, builds and
 revises a living company model, assigns outcome mandates to specialist agents, executes
@@ -139,6 +140,43 @@ steps, tools, compensations, acceptance tests, and metrics. Specifications are i
 once activated. Schema validation, cycle detection, tool readiness, policy evaluation,
 sandbox execution, and Observer review occur before activation. Temporal owns durable
 execution; LLM calls are activities and never part of deterministic workflow code.
+
+## Operating-Model Lifecycle
+
+Cyber-Team manages the organization through a declarative desired operating model. Each
+version states which operating domains the current company evidence and strategy require,
+why they are required, which objectives and evidence support them, the capabilities and
+tools they need, their cadence and budget, and their activation and retirement criteria.
+The actual operating model is the observed set of agents, mandates, domain controls, tool
+grants, policy qualifications, work backlogs, and outcome health.
+
+An idempotent reconciler continually compares desired and actual state and records every
+decision. Domains move through `proposed`, `shadow`, `active`, `retiring`, and `retired`,
+with explicit `blocked`, `paused`, and `takeover` states. A low-risk domain may enter
+shadow automatically only when its evidence, model capability, tool readiness, and
+Observer review pass. It may become active after three successful shadow cycles over at
+least one hour. Activation permits reasoning and internal work; it never grants external
+side-effect authority, which remains independently mediated by tool grants, action-class
+policy, impact thresholds, and exact-bound approvals.
+
+Owner `pause` and `takeover` controls are durable locks. Releasing a control returns the
+domain to reconciliation rather than forcing it active. Circuit-breaker pauses require
+recovery evidence before release. A non-core domain may retire only after at least seven
+days and three consecutive active company-model revisions show no current need, all work
+and approvals are terminal, and the Observer agrees. Retirement is reversible and retains
+the domain, agent, mandate, decision, memory, and operation-graph history.
+
+The built-in domain catalog supplies safe defaults, not a closed taxonomy. Evidence may
+produce a schema-validated custom domain that runs through the universal mandate loop.
+Custom domains can use only registered tool contracts. A missing executable capability
+creates a role, skill, workflow, tool, configuration, or outsourcing lifecycle; model
+output can never register code or grant itself authority.
+
+Role gaps, outsourcing requests, approvals, and generated work are reconciled against the
+latest accepted operating model. Obsolete items are superseded with evidence instead of
+deleted. Unknown business facts become durable discovery obligations with bounded source
+attempts and retry schedules. The owner is asked only when configured sources cannot
+establish a private or authoritative fact.
 
 ## Execution Authority
 

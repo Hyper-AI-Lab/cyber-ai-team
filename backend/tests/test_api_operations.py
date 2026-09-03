@@ -113,6 +113,84 @@ def test_action_candidate_route_is_owner_authorized(monkeypatch):
     authorization.assert_awaited_once()
 
 
+def test_operating_model_routes_are_owner_authorized(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    service = AsyncMock()
+    service.latest.return_value = {"id": "opmodel-1", "status": "active"}
+    service.list_revisions.return_value = [{"id": "opmodel-1"}]
+    service.list_reconciliation_runs.return_value = [{"id": "reconcile-1"}]
+    service.list_lifecycle_assessments.return_value = [{"id": "assessment-1"}]
+    service.list_discovery_obligations.return_value = [{"id": "discovery-1"}]
+    service.reconcile.return_value = {"id": "reconcile-2", "status": "dry_run"}
+    service.retry_discovery_obligation.return_value = {
+        "id": "discovery-1",
+        "status": "retrying",
+    }
+    app.state.operating_model_lifecycle_service = service
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    authorization = AsyncMock(return_value=None)
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        authorization,
+    )
+    client = TestClient(app)
+
+    latest = client.get("/api/operations/operating-model")
+    revisions = client.get("/api/operations/operating-model/revisions?limit=25")
+    reconciliations = client.get(
+        "/api/operations/operating-model/reconciliation-runs?limit=20"
+    )
+    assessments = client.get(
+        "/api/operations/operating-model/lifecycle-assessments"
+        "?resource_type=role_gap&limit=15"
+    )
+    obligations = client.get(
+        "/api/operations/operating-model/discovery-obligations"
+        "?status=owner_review&limit=10"
+    )
+    reconciled = client.post(
+        "/api/operations/operating-model/reconcile",
+        json={"dry_run": True},
+    )
+    retried = client.post(
+        "/api/operations/operating-model/discovery-obligations/discovery-1/retry",
+        json={"force": True},
+    )
+
+    assert latest.status_code == 200
+    assert revisions.json()["count"] == 1
+    assert reconciliations.json()["items"][0]["id"] == "reconcile-1"
+    assert assessments.json()["items"][0]["id"] == "assessment-1"
+    assert obligations.json()["items"][0]["id"] == "discovery-1"
+    assert reconciled.json()["status"] == "dry_run"
+    assert retried.json()["status"] == "retrying"
+    service.list_revisions.assert_awaited_once_with(limit=25)
+    service.list_reconciliation_runs.assert_awaited_once_with(limit=20)
+    service.list_lifecycle_assessments.assert_awaited_once_with(
+        resource_type="role_gap",
+        limit=15,
+    )
+    service.list_discovery_obligations.assert_awaited_once_with(
+        status="owner_review",
+        limit=10,
+    )
+    service.reconcile.assert_awaited_once_with(
+        dry_run=True,
+        actor="owner@example.com",
+    )
+    service.retry_discovery_obligation.assert_awaited_once_with(
+        "discovery-1",
+        force=True,
+        actor="owner@example.com",
+    )
+    assert authorization.await_count == 7
+
+
 def test_specific_outcome_assessment_is_owner_authorized(monkeypatch):
     app = FastAPI()
     app.include_router(operations_router, prefix="/api/operations")

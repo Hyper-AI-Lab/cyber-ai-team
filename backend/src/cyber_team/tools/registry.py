@@ -63,6 +63,7 @@ class ToolDefinition(BaseModel):
     description: str
     parameters: list[ToolParameter] = Field(default_factory=list)
     category: str = "general"
+    action_class: str | None = None
     requires_approval: bool = False
     risk_level: str = "low"
     side_effects: bool = False
@@ -70,6 +71,7 @@ class ToolDefinition(BaseModel):
     requires_configuration: bool = False
     configuration_keys: list[str] = Field(default_factory=list)
     readiness_reason: str | None = None
+    canary_profile: dict[str, Any] | None = None
     output_schema: dict[str, Any] = Field(default_factory=lambda: {"type": "object"})
 
     def input_schema(self) -> dict[str, Any]:
@@ -87,6 +89,7 @@ class ToolDefinition(BaseModel):
             "name": self.name,
             "description": self.description,
             "category": self.category,
+            "action_class": self.action_class or self.category,
             "requires_approval": self.requires_approval,
             "risk_level": self.risk_level,
             "state": self.executor_kind,
@@ -94,6 +97,7 @@ class ToolDefinition(BaseModel):
             "side_effects": self.side_effects,
             "executor_kind": self.executor_kind,
             "requires_configuration": self.requires_configuration,
+            "canary_profile": deepcopy(self.canary_profile),
             "parameters": [parameter.model_dump() for parameter in self.parameters],
             "input_schema": self.input_schema(),
             "output_schema": self.output_schema,
@@ -179,6 +183,7 @@ class ToolRegistry:
                 "executor_kind": "unavailable",
                 "requires_configuration": False,
                 "executable": False,
+                "action_class": None,
             }
 
         state = tool.executor_kind
@@ -225,6 +230,7 @@ class ToolRegistry:
             "executor_kind": tool.executor_kind,
             "requires_configuration": requires_configuration,
             "executable": executable,
+            "action_class": tool.action_class or tool.category,
         }
 
     def validate_params(
@@ -1114,6 +1120,11 @@ class ToolRegistry:
                 requires_approval=True,
                 risk_level="high",
                 side_effects=True,
+                canary_profile={
+                    "kind": "single_recipient_email",
+                    "subject_prefix": "[Cyber-Team Canary]",
+                    "max_body_length": 4000,
+                },
             ),
             self._tool_send_email,
         )
@@ -1799,6 +1810,16 @@ class ToolRegistry:
                 risk_level=risk_level,
                 side_effects=True,
                 requires_configuration=True,
+                canary_profile=(
+                    {
+                        "kind": "erpnext_synthetic_task",
+                        "subject_prefix": "[CYBERTEAM-CANARY]",
+                        "allowed_fields": ["subject", "description", "status"],
+                        "allowed_statuses": ["Open", "Completed", "Cancelled"],
+                    }
+                    if name == "task_create"
+                    else None
+                ),
             )
 
         self._register_manifest_tool(
@@ -2036,6 +2057,7 @@ class ToolRegistry:
         executor_kind: str = "live",
         requires_configuration: bool = False,
         readiness_reason: str | None = None,
+        canary_profile: dict[str, Any] | None = None,
     ) -> None:
         self.register(
             ToolDefinition(
@@ -2049,6 +2071,7 @@ class ToolRegistry:
                 executor_kind=executor_kind,
                 requires_configuration=requires_configuration,
                 readiness_reason=readiness_reason,
+                canary_profile=canary_profile,
             ),
             executor,
         )
@@ -2101,6 +2124,7 @@ class ToolRegistry:
         return {
             "action_class": supplied.get("action_class")
             or permanent_classes.get(tool.name)
+            or tool.action_class
             or tool.category,
             "actor": actor,
             "actor_type": actor_type,
