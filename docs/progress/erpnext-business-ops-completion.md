@@ -8352,3 +8352,24 @@
   - `backend/tests/test_autonomy_cycle.py::test_company_cycle_returns_bounded_temporal_payload`.
 - Next step:
   - Commit and build immutable `0.4.2`, scan/smoke it, promote backup-first, and verify a scheduled Temporal company cycle completes without payload-limit warnings.
+
+### 2026-09-03T23:33:50Z — STEP-344 — Promoted 0.4.2 and hardened discovery reconciliation idempotency
+- Files/services changed:
+  - Promoted staging Core, Worker, and UI to immutable release `0.4.2` at commit `769f982818ec15c9fbc45a811a04dc792dd73dbc` after creating a fresh PostgreSQL backup.
+  - Updated discovery-obligation reconciliation to preserve a terminal obligation for the same immutable company-model generation and to recover from true concurrent inserts through a database savepoint and winner lookup.
+  - Added a regression test for the live case where authoritative evidence resolved an obligation while its source model revision retained the original unknown.
+- Commands run:
+  - Ran backup-first staging promotion, authenticated smoke, public health/readiness checks, and inspected the first scheduled Temporal cycle on `0.4.2`.
+  - Ran `22` focused autonomy/lifecycle tests and focused Ruff checks.
+  - Ran the complete `scripts/quality-gate.sh` repository gate.
+- Result:
+  - Public staging reports version `0.4.2`, exact build SHA `769f982818ec15c9fbc45a811a04dc792dd73dbc`, and all dependency readiness checks healthy.
+  - The first scheduled cycle no longer crossed the Temporal payload boundary, but exposed a separate fail-closed uniqueness error for an already-resolved discovery generation. The database record proved the prior obligation was resolved by authoritative evidence and must not be recreated.
+  - The correction passes `500` backend tests, `34` frontend tests, Ruff, compileall, Alembic offline SQL, optimized frontend build/typecheck, Python and runtime Node dependency audits, Compose validation, secret scan, Google Cloud isolation, FOSS/resource policy, and diff hygiene.
+- Evidence:
+  - `dist/promotions/staging/0.4.2-20260903-231454.json`.
+  - `backups/staging/cyberteam-staging-0.4.2-20260903-231224.dump`.
+  - `backend/tests/test_operating_model_lifecycle.py::test_resolved_discovery_obligation_is_reused_for_same_model_generation`.
+  - Scheduled workflow `autonomous-company-cycle-scheduled-2026-09-03T23:15:00Z` and the resolved obligation key recorded in staging Worker/PostgreSQL evidence.
+- Next step:
+  - Commit the verified correction, build/scan/smoke immutable `0.4.3`, promote it backup-first, and prove a scheduled Temporal cycle completes without payload or discovery-idempotency failure before starting the strict soak.

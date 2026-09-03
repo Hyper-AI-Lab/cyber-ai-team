@@ -1338,6 +1338,7 @@ class OperatingModelLifecycleService:
                 for item in existing
                 if item.status not in {"resolved", "superseded"}
             }
+            existing_by_key = {item.idempotency_key: item for item in existing}
             contracts = [self._unknown_contract(item) for item in (model.unknowns or [])]
             contracts = [item for item in contracts if item["predicate"]]
             current_predicates = {item["predicate"] for item in contracts}
@@ -1365,23 +1366,48 @@ class OperatingModelLifecycleService:
                             "generation": model.id,
                         }
                     )
-                    item = DiscoveryObligation(
-                        id=f"discovery_{uuid.uuid4().hex}",
-                        company_namespace=namespace,
-                        predicate=contract["predicate"],
-                        question=contract["question"],
-                        priority=contract["priority"],
-                        status="pending",
-                        blocking=contract["blocking"],
-                        company_model_revision_id=model.id,
-                        source_types=source_types,
-                        max_attempts=max(1, settings.discovery_obligation_max_attempts),
-                        idempotency_key=key,
-                    )
-                    session.add(item)
-                    current_by_predicate[item.predicate] = item
-                    created += 1
-                await session.flush()
+                    item = existing_by_key.get(key)
+                    if item:
+                        # Model revisions are immutable. A terminal obligation for this
+                        # exact generation must stay terminal even if the revision's
+                        # original unknown list is now stale relative to newer claims.
+                        reused += 1
+                    else:
+                        candidate = DiscoveryObligation(
+                            id=f"discovery_{uuid.uuid4().hex}",
+                            company_namespace=namespace,
+                            predicate=contract["predicate"],
+                            question=contract["question"],
+                            priority=contract["priority"],
+                            status="pending",
+                            blocking=contract["blocking"],
+                            company_model_revision_id=model.id,
+                            source_types=source_types,
+                            max_attempts=max(1, settings.discovery_obligation_max_attempts),
+                            idempotency_key=key,
+                        )
+                        try:
+                            async with session.begin_nested():
+                                session.add(candidate)
+                                await session.flush()
+                            item = candidate
+                            existing_by_key[key] = item
+                            current_by_predicate[item.predicate] = item
+                            created += 1
+                        except IntegrityError:
+                            # Another reconciler committed the same immutable
+                            # generation while this transaction was in flight.
+                            item = (
+                                await session.execute(
+                                    select(DiscoveryObligation).where(
+                                        DiscoveryObligation.idempotency_key == key
+                                    )
+                                )
+                            ).scalar_one()
+                            existing_by_key[key] = item
+                            if item.status not in {"resolved", "superseded"}:
+                                current_by_predicate[item.predicate] = item
+                            reused += 1
                 items.append(self._discovery_obligation_payload(item))
             for item in existing:
                 if (

@@ -627,6 +627,29 @@ async def test_discovery_attempt_resolves_when_company_model_unknown_clears(
     assert intelligence.acquisitions == 1
 
 
+async def test_resolved_discovery_obligation_is_reused_for_same_model_generation(
+    operating_model_session,
+):
+    await seed_company(
+        operating_model_session,
+        description="A software company.",
+        unknowns=["legal_name"],
+    )
+    intelligence = FakeCompanyIntelligence(unresolved=[])
+    service = OperatingModelLifecycleService(company_intelligence_service=intelligence)
+
+    first = await service.reconcile_discovery_obligations()
+    second = await service.reconcile_discovery_obligations(run_attempts=False)
+
+    assert first["processing"]["items"][0]["status"] == "resolved"
+    assert second["created"] == 0
+    assert second["reused"] == 1
+    assert second["items"][0]["status"] == "resolved"
+    async with operating_model_session() as session:
+        obligations = (await session.execute(select(DiscoveryObligation))).scalars().all()
+    assert len(obligations) == 1
+
+
 async def test_discovery_exhaustion_creates_one_owner_attention_event(
     operating_model_session,
     monkeypatch,
