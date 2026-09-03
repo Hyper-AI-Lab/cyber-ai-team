@@ -254,6 +254,7 @@ async def test_embedding_uses_shared_hosted_credential_rotation(monkeypatch):
                 "credential_count": 5,
             }
         ),
+        quarantine=AsyncMock(),
         close=AsyncMock(),
     )
     service = MemoryService(credential_rotator=rotator)
@@ -263,6 +264,58 @@ async def test_embedding_uses_shared_hosted_credential_rotation(monkeypatch):
     assert result == [0.1] * memory_module.VECTOR_SIZE
     rotator.select.assert_awaited_once_with(provider="mistral", credential_count=5)
     assert embedding.await_args.kwargs["api_key"] == keys[3]
+
+
+@pytest.mark.asyncio
+async def test_embedding_quarantines_exhausted_slot_and_uses_next_key(monkeypatch):
+    keys = [f"embedding-key-{index}" for index in range(1, 6)]
+    monkeypatch.setattr(settings, "mistral_api_key", "")
+    for index, key in enumerate(keys, start=1):
+        monkeypatch.setattr(settings, f"mistral_api_key_{index}", key)
+
+    class CapacityError(Exception):
+        status_code = 402
+
+    embedding = AsyncMock(
+        side_effect=[
+            CapacityError("quota exhausted"),
+            SimpleNamespace(data=[{"embedding": [0.2] * memory_module.VECTOR_SIZE}]),
+        ]
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(aembedding=embedding),
+    )
+    rotator = SimpleNamespace(
+        select=AsyncMock(
+            side_effect=[
+                {
+                    "credential_index": 0,
+                    "credential_slot": 1,
+                    "credential_count": 5,
+                },
+                {
+                    "credential_index": 1,
+                    "credential_slot": 2,
+                    "credential_count": 5,
+                },
+            ]
+        ),
+        quarantine=AsyncMock(),
+        close=AsyncMock(),
+    )
+    service = MemoryService(credential_rotator=rotator)
+
+    result = await service._embed("Company operating evidence")
+
+    assert result == [0.2] * memory_module.VECTOR_SIZE
+    assert [call.kwargs["api_key"] for call in embedding.await_args_list] == keys[:2]
+    rotator.quarantine.assert_awaited_once_with(
+        provider="mistral",
+        credential_slot=1,
+        category="capacity_exhausted",
+    )
 
 
 @pytest.mark.asyncio

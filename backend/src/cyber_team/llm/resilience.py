@@ -2,6 +2,11 @@
 
 RETRYABLE_LLM_ERRORS = {"rate_limited", "timeout", "provider_unavailable"}
 LOCAL_FALLBACK_LLM_ERRORS = RETRYABLE_LLM_ERRORS | {"capacity_exhausted"}
+CREDENTIAL_FAILOVER_LLM_ERRORS = {
+    "authentication_error",
+    "capacity_exhausted",
+    "rate_limited",
+}
 
 
 def classify_llm_exception(exc: Exception) -> str:
@@ -55,3 +60,8 @@ def llm_error_is_retryable(category: str) -> bool:
 def llm_error_allows_local_fallback(category: str) -> bool:
     """Return whether a hosted failure may be served by the isolated local model."""
     return category in LOCAL_FALLBACK_LLM_ERRORS
+
+
+def llm_error_allows_credential_failover(category: str) -> bool:
+    """Return whether another independently configured credential may recover."""
+    return category in CREDENTIAL_FAILOVER_LLM_ERRORS

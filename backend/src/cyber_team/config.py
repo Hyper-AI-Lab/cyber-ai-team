@@ -201,6 +201,7 @@ class Settings(BaseSettings):
     llm_hosted_min_interval_seconds: float = 20.0
     llm_hosted_max_queue_wait_seconds: float = 300.0
     llm_hosted_credential_required_count: int = 1
+    llm_hosted_credential_quarantine_seconds: int = 900
     llm_recovery_probe_enabled: bool = True
     llm_recovery_probe_initial_delay_seconds: int = 60
     llm_recovery_probe_poll_seconds: int = 30
@@ -479,6 +480,10 @@ class Settings(BaseSettings):
         if not 1 <= self.llm_hosted_credential_required_count <= 5:
             raise RuntimeError(
                 "LLM_HOSTED_CREDENTIAL_REQUIRED_COUNT must be between 1 and 5"
+            )
+        if self.llm_hosted_credential_quarantine_seconds < 1:
+            raise RuntimeError(
+                "LLM_HOSTED_CREDENTIAL_QUARANTINE_SECONDS must be positive"
             )
 
     model_config = {"env_file": ".env", "extra": "ignore"}

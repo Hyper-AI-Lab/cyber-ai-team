@@ -13,7 +13,7 @@ from cyber_team.llm.gateway import (
 )
 
 
-def configure_mistral_pool(monkeypatch, keys: list[str], *, required_count: int = 5):
+def configure_mistral_pool(monkeypatch, keys: list[str], *, required_count: int = 1):
     monkeypatch.setattr(settings, "llm_provider", "mistral")
     monkeypatch.setattr(settings, "llm_api_key", "")
     monkeypatch.setattr(settings, "mistral_api_key", "")
@@ -27,6 +27,16 @@ def configure_mistral_pool(monkeypatch, keys: list[str], *, required_count: int 
     )
     monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", True)
     monkeypatch.setattr(settings, "llm_local_fallback_enabled", False)
+
+
+def configured_rotator():
+    rotator = MagicMock()
+    rotator.select = AsyncMock()
+    rotator.quarantine = AsyncMock()
+    rotator.sync_health = AsyncMock()
+    rotator.close = AsyncMock()
+    rotator.status.return_value = {"strategy": "redis_healthy_round_robin"}
+    return rotator
 
 
 def test_llm_history_is_bounded(monkeypatch):
@@ -109,7 +119,7 @@ async def test_validate_provider_reports_rejected_mistral_credentials(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_validate_provider_requires_and_validates_all_five_credentials(monkeypatch):
+async def test_validate_provider_validates_all_five_credentials(monkeypatch):
     keys = [f"pool-key-{index}" for index in range(1, 6)]
     configure_mistral_pool(monkeypatch, keys)
     seen_authorization = []
@@ -134,25 +144,39 @@ async def test_validate_provider_requires_and_validates_all_five_credentials(mon
 
     monkeypatch.setattr("cyber_team.llm.gateway.httpx.AsyncClient", FakeClient)
 
-    result = await LLMGateway().validate_provider(force=True)
+    rotator = configured_rotator()
+    result = await LLMGateway(credential_rotator=rotator).validate_provider(force=True)
 
     assert result["mode"] == "live"
     assert result["blocking"] is False
     assert result["credential_pool"] == {
-        "strategy": "redis_round_robin",
+        "strategy": "redis_healthy_round_robin",
         "configured_count": 5,
-        "required_count": 5,
+        "required_count": 1,
+        "minimum_healthy_count": 1,
         "complete": True,
         "validated_count": 5,
+        "healthy_count": 5,
         "healthy_slots": [1, 2, 3, 4, 5],
         "failed_slots": [],
+        "quarantined_slots": [],
+        "operational": True,
     }
+    rotator.sync_health.assert_awaited_once_with(
+        provider="mistral",
+        credential_count=5,
+        failed_slots={},
+    )
     assert seen_authorization == [f"Bearer {key}" for key in keys]
 
 
 @pytest.mark.asyncio
 async def test_validate_provider_blocks_incomplete_five_credential_pool(monkeypatch):
-    configure_mistral_pool(monkeypatch, [f"pool-key-{index}" for index in range(1, 5)])
+    configure_mistral_pool(
+        monkeypatch,
+        [f"pool-key-{index}" for index in range(1, 5)],
+        required_count=5,
+    )
 
     class UnexpectedClient:
         def __init__(self, timeout):
@@ -170,7 +194,7 @@ async def test_validate_provider_blocks_incomplete_five_credential_pool(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_validate_provider_blocks_when_one_pool_credential_has_no_capacity(
+async def test_validate_provider_degrades_when_one_pool_credential_has_no_capacity(
     monkeypatch,
 ):
     keys = [f"pool-key-{index}" for index in range(1, 6)]
@@ -196,16 +220,57 @@ async def test_validate_provider_blocks_when_one_pool_credential_has_no_capacity
 
     monkeypatch.setattr("cyber_team.llm.gateway.httpx.AsyncClient", FakeClient)
 
-    result = await LLMGateway().validate_provider(force=True)
+    rotator = configured_rotator()
+    result = await LLMGateway(credential_rotator=rotator).validate_provider(force=True)
+
+    assert result["status"] == "degraded"
+    assert result["blocking"] is False
+    assert result["credential_pool"]["healthy_slots"] == [1, 2, 4, 5]
+    assert result["credential_pool"]["failed_slots"] == [
+        {"slot": 3, "http_status": 402, "category": "capacity_exhausted"}
+    ]
+    assert result["credential_pool"]["operational"] is True
+    rotator.sync_health.assert_awaited_once_with(
+        provider="mistral",
+        credential_count=5,
+        failed_slots={3: "capacity_exhausted"},
+    )
+    serialized = repr(result)
+    assert all(key not in serialized for key in keys)
+
+
+@pytest.mark.asyncio
+async def test_validate_provider_blocks_when_every_pool_credential_is_exhausted(
+    monkeypatch,
+):
+    keys = [f"pool-key-{index}" for index in range(1, 6)]
+    configure_mistral_pool(monkeypatch, keys)
+
+    class FakeResponse:
+        status_code = 402
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, headers):
+            return FakeResponse()
+
+    monkeypatch.setattr("cyber_team.llm.gateway.httpx.AsyncClient", FakeClient)
+    rotator = configured_rotator()
+
+    result = await LLMGateway(credential_rotator=rotator).validate_provider(force=True)
 
     assert result["status"] == "capacity_exhausted"
     assert result["blocking"] is True
-    assert result["credential_pool"]["healthy_slots"] == [1, 2, 4, 5]
-    assert result["credential_pool"]["failed_slots"] == [
-        {"slot": 3, "http_status": 402}
-    ]
-    serialized = repr(result)
-    assert all(key not in serialized for key in keys)
+    assert result["credential_pool"]["healthy_count"] == 0
+    assert result["credential_pool"]["operational"] is False
 
 
 @pytest.mark.asyncio
@@ -331,7 +396,8 @@ async def test_invoke_distributes_requests_equally_across_five_credentials(monke
         ]
     )
     rotator.close = AsyncMock()
-    rotator.status.return_value = {"strategy": "redis_round_robin"}
+    rotator.quarantine = AsyncMock()
+    rotator.status.return_value = {"strategy": "redis_healthy_round_robin"}
     gateway = LLMGateway(hosted_pacer=pacer, credential_rotator=rotator)
 
     for index in range(10):
@@ -352,6 +418,54 @@ async def test_invoke_distributes_requests_equally_across_five_credentials(monke
     ]
     assert all(metadata["credential_count"] == 5 for metadata in seen_metadata)
     assert rotator.select.await_count == 10
+
+
+@pytest.mark.asyncio
+async def test_invoke_quarantines_exhausted_slot_and_uses_next_healthy_key(monkeypatch):
+    keys = [f"pool-key-{index}" for index in range(1, 6)]
+    configure_mistral_pool(monkeypatch, keys)
+    monkeypatch.setattr(settings, "llm_retry_attempts", 1)
+    monkeypatch.setattr(settings, "llm_retry_backoff_seconds", 0)
+    seen_keys = []
+
+    class CapacityError(Exception):
+        status_code = 402
+
+    async def fake_completion(**kwargs):
+        seen_keys.append(kwargs["api_key"])
+        if len(seen_keys) == 1:
+            raise CapacityError("quota exhausted")
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Recovered."))],
+            usage=SimpleNamespace(total_tokens=8),
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=fake_completion),
+    )
+    pacer = MagicMock()
+    pacer.acquire = AsyncMock()
+    pacer.close = AsyncMock()
+    pacer.status.return_value = {"enabled": True}
+    rotator = configured_rotator()
+    rotator.select.side_effect = [
+        {"credential_index": 0, "credential_slot": 1, "credential_count": 5},
+        {"credential_index": 1, "credential_slot": 2, "credential_count": 5},
+    ]
+    gateway = LLMGateway(hosted_pacer=pacer, credential_rotator=rotator)
+
+    result = await gateway.invoke("System", "Task", agent_id="ops")
+
+    assert result == "Recovered."
+    assert seen_keys == keys[:2]
+    rotator.quarantine.assert_awaited_once_with(
+        provider="mistral",
+        credential_slot=1,
+        category="capacity_exhausted",
+    )
+    assert gateway.runtime_status()["consecutive_failures"] == 0
 
 
 @pytest.mark.asyncio

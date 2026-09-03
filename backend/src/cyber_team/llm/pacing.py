@@ -31,6 +31,12 @@ class LLMCredentialCoordinationUnavailableError(ConnectionError):
     status_code = 503
 
 
+class LLMCredentialPoolExhaustedError(RuntimeError):
+    """Raised when every configured hosted credential is quarantined."""
+
+    status_code = 402
+
+
 _RESERVE_SLOT_SCRIPT = """
 local time_parts = redis.call('TIME')
 local now_ms = (tonumber(time_parts[1]) * 1000) + math.floor(tonumber(time_parts[2]) / 1000)
@@ -48,6 +54,22 @@ local reserved_until_ms = next_ms + interval_ms
 local ttl_ms = math.ceil(wait_ms + interval_ms + 60000)
 redis.call('SET', KEYS[1], reserved_until_ms, 'PX', ttl_ms)
 return {1, wait_ms}
+"""
+
+
+_SELECT_HEALTHY_CREDENTIAL_SCRIPT = """
+local sequence = tonumber(redis.call('INCR', KEYS[1]))
+local healthy = {}
+for index = 2, #KEYS do
+  if not redis.call('GET', KEYS[index]) then
+    table.insert(healthy, index - 1)
+  end
+end
+if #healthy == 0 then
+  return {-1, sequence, #KEYS - 1, 0}
+end
+local selected = healthy[((sequence - 1) % #healthy) + 1]
+return {selected, sequence, #KEYS - 1, #healthy}
 """
 
 
@@ -178,17 +200,17 @@ class HostedInferencePacer:
 
 
 class HostedCredentialRotator:
-    """Select hosted credentials through one process-independent round robin.
+    """Select healthy hosted credentials through one shared round robin.
 
-    Core, Worker, and embedding callers use the same Redis counter. Credential
-    values never enter Redis; only a monotonically increasing selection number
-    is shared.
+    Core, Worker, and embedding callers use the same Redis sequence and
+    quarantine markers. Credential values never enter Redis.
     """
 
     def __init__(self, *, redis_client: Any | None = None) -> None:
         self._redis = redis_client
         self._owns_redis = redis_client is None
         self._last_selection: dict[str, Any] | None = None
+        self._last_health_update: dict[str, Any] | None = None
 
     async def select(self, *, provider: str, credential_count: int) -> dict[str, Any]:
         count = int(credential_count)
@@ -199,11 +221,22 @@ class HostedCredentialRotator:
             self._last_selection = result
             return result
 
+        redis = self._redis_client()
+        keys = [self._coordination_key(provider)] + [
+            self._quarantine_key(provider, slot) for slot in range(1, count + 1)
+        ]
         try:
-            sequence = int(await self._redis_client().incr(self._coordination_key(provider)))
+            selected_slot, sequence, configured_count, healthy_count = [
+                int(value)
+                for value in await redis.eval(
+                    _SELECT_HEALTHY_CREDENTIAL_SCRIPT,
+                    len(keys),
+                    *keys,
+                )
+            ]
         except Exception as exc:
             self._last_selection = {
-                "strategy": "redis_round_robin",
+                "strategy": "redis_healthy_round_robin",
                 "outcome": "failed",
                 "category": "coordination_unavailable",
                 "credential_count": count,
@@ -213,15 +246,114 @@ class HostedCredentialRotator:
                 "Hosted LLM credential rotation coordination is unavailable."
             ) from exc
 
-        result = self._selection(index=(sequence - 1) % count, count=count)
+        if selected_slot < 1:
+            self._last_selection = {
+                "strategy": "redis_healthy_round_robin",
+                "outcome": "failed",
+                "category": "capacity_exhausted",
+                "credential_count": configured_count,
+                "healthy_count": healthy_count,
+                "at": utc_now().isoformat(),
+            }
+            raise LLMCredentialPoolExhaustedError(
+                "All configured hosted LLM credentials are quarantined."
+            )
+
+        result = self._selection(
+            index=selected_slot - 1,
+            count=configured_count,
+            healthy_count=healthy_count,
+            sequence=sequence,
+        )
         self._last_selection = result
         return result
 
+    async def quarantine(
+        self,
+        *,
+        provider: str,
+        credential_slot: int,
+        category: str,
+        cooldown_seconds: int | None = None,
+    ) -> None:
+        """Temporarily remove one credential slot without storing its value."""
+        slot = max(1, int(credential_slot))
+        cooldown = max(
+            1,
+            int(
+                settings.llm_hosted_credential_quarantine_seconds
+                if cooldown_seconds is None
+                else cooldown_seconds
+            ),
+        )
+        try:
+            await self._redis_client().set(
+                self._quarantine_key(provider, slot),
+                category,
+                ex=cooldown,
+            )
+        except Exception as exc:
+            raise LLMCredentialCoordinationUnavailableError(
+                "Hosted LLM credential quarantine coordination is unavailable."
+            ) from exc
+        self._last_health_update = {
+            "outcome": "quarantined",
+            "credential_slot": slot,
+            "category": category,
+            "cooldown_seconds": cooldown,
+            "at": utc_now().isoformat(),
+        }
+
+    async def sync_health(
+        self,
+        *,
+        provider: str,
+        credential_count: int,
+        failed_slots: dict[int, str],
+        cooldown_seconds: int | None = None,
+    ) -> None:
+        """Publish validation health so every process uses the same eligible pool."""
+        count = max(0, int(credential_count))
+        if count <= 1:
+            return
+        cooldown = max(
+            1,
+            int(
+                settings.llm_hosted_credential_quarantine_seconds
+                if cooldown_seconds is None
+                else cooldown_seconds
+            ),
+        )
+        redis = self._redis_client()
+        try:
+            pipeline = redis.pipeline(transaction=True)
+            for slot in range(1, count + 1):
+                key = self._quarantine_key(provider, slot)
+                category = failed_slots.get(slot)
+                if category:
+                    pipeline.set(key, category, ex=cooldown)
+                else:
+                    pipeline.delete(key)
+            await pipeline.execute()
+        except Exception as exc:
+            raise LLMCredentialCoordinationUnavailableError(
+                "Hosted LLM credential health coordination is unavailable."
+            ) from exc
+        self._last_health_update = {
+            "outcome": "synchronized",
+            "credential_count": count,
+            "healthy_count": count - len(failed_slots),
+            "quarantined_slots": sorted(failed_slots),
+            "cooldown_seconds": cooldown,
+            "at": utc_now().isoformat(),
+        }
+
     def status(self) -> dict[str, Any]:
         return {
-            "strategy": "redis_round_robin",
+            "strategy": "redis_healthy_round_robin",
             "coordination": "redis",
             "last_selection": self._last_selection,
+            "last_health_update": self._last_health_update,
         }
 
     async def close(self) -> None:
@@ -235,13 +367,21 @@ class HostedCredentialRotator:
         return self._redis
 
     @staticmethod
-    def _selection(*, index: int, count: int) -> dict[str, Any]:
+    def _selection(
+        *,
+        index: int,
+        count: int,
+        healthy_count: int | None = None,
+        sequence: int | None = None,
+    ) -> dict[str, Any]:
         return {
-            "strategy": "redis_round_robin",
+            "strategy": "redis_healthy_round_robin",
             "outcome": "selected",
             "credential_slot": index + 1,
             "credential_index": index,
             "credential_count": count,
+            "healthy_count": healthy_count if healthy_count is not None else count,
+            "sequence": sequence,
             "selected_at": utc_now().isoformat(),
         }
 
@@ -250,3 +390,9 @@ class HostedCredentialRotator:
         identity = provider.strip().lower()
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
         return f"cyberteam:llm:credential-round-robin:{digest}"
+
+    @staticmethod
+    def _quarantine_key(provider: str, credential_slot: int) -> str:
+        identity = provider.strip().lower()
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+        return f"cyberteam:llm:credential-quarantine:{digest}:{int(credential_slot)}"

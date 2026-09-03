@@ -8171,3 +8171,126 @@
   - `scripts/migration-rehearsal.sh` terminal result at `2026-09-03`.
 - Next step:
   - Commit the verified release candidate, build and scan immutable images, execute isolated Compose smoke, then promote backup-first to staging.
+
+### 2026-09-03T08:02:00Z — STEP-335 — Built and verified the immutable 0.4.0 release candidate
+- Files/services changed:
+  - Created the local immutable `cyber-team-core:0.4.0` and `cyber-team-ui:0.4.0` release images from commit `9848556395b61177a2f52172cd9a8a32599a436e`.
+  - Created the machine-readable release manifest at `dist/releases/0.4.0.json`.
+  - Reclaimed only obsolete, unreferenced Cyber-Team image tags while preserving the active `0.3.41` staging images and all persistent volumes.
+- Commands run:
+  - Ran `scripts/release-check.sh` with quality, migration rehearsal, image build, image scan, and isolated Compose smoke gates enabled.
+  - Inspected the resulting release manifest, image identities, active staging images, and filesystem capacity.
+- Result:
+  - Full quality verification passed again with `490` backend tests and `34` frontend tests, plus Ruff, compileall, typecheck/build, dependency audits, policy scans, and configuration checks.
+  - Both real PostgreSQL migration rehearsal paths passed through Alembic head `0022`.
+  - The isolated Compose stack became healthy, passed authenticated runtime smoke, and was removed cleanly without affecting staging.
+  - Trivy reported zero high or critical vulnerabilities for both release images.
+  - Release candidate `0.4.0` is verified and ready for promotion-policy validation.
+- Evidence:
+  - `dist/releases/0.4.0.json`.
+  - Local images `cyber-team-core:0.4.0` and `cyber-team-ui:0.4.0`.
+  - Release-check terminal result at `2026-09-03T08:00:25Z`.
+- Next step:
+  - Run staging promotion-policy dry-run, then execute the backup-first immutable staging promotion and live lifecycle acceptance.
+
+### 2026-09-03T08:04:06Z — STEP-336 — Passed staging promotion-policy dry-run
+- Files/services changed:
+  - No live services or data were changed; promotion ran in validation-only mode.
+- Commands run:
+  - Ran `RELEASE_VERSION=0.4.0 PROMOTE_DRY_RUN=1 ./scripts/promote-staging.sh`.
+- Result:
+  - Promotion policy accepted release `0.4.0`, commit `9848556395b61177a2f52172cd9a8a32599a436e`, the staging environment file, immutable image references, backup-first procedure, service list, and Compose smoke requirement.
+  - The validated execution will create a PostgreSQL backup before replacing the `core`, `worker`, and `ui` release services and will preserve ERPNext and all persistent volumes.
+- Evidence:
+  - `deploy/manifests/staging.json`.
+  - `dist/releases/0.4.0.json`.
+  - Dry-run terminal result at `2026-09-03T08:04:06Z`.
+- Next step:
+  - Execute the validated staging promotion and confirm the immutable version, database migration, authenticated smoke, and promotion evidence.
+
+### 2026-09-03T08:07:33Z — STEP-337 — Promoted immutable 0.4.0 to staging backup-first
+- Files/services changed:
+  - Created `backups/staging/cyberteam-staging-0.4.0-20260903-080423.dump` before replacing application services.
+  - Promoted staging `core`, `worker`, and `ui` to `cyber-team-core:0.4.0` and `cyber-team-ui:0.4.0` with build SHA `9848556395b61177a2f52172cd9a8a32599a436e`.
+  - Preserved the running PostgreSQL, Redis, Qdrant, Temporal, OPA, SearXNG, and ERPNext data services and their persistent volumes.
+- Commands run:
+  - Ran `RELEASE_VERSION=0.4.0 PROMOTE_DRY_RUN=0 ./scripts/promote-staging.sh`.
+  - The promotion executed PostgreSQL backup, immutable image inspection, Compose service replacement, and authenticated staging smoke.
+- Result:
+  - Staging application services started successfully and the core health check became healthy.
+  - Authenticated login, dashboard KPIs, integrations, one-time WebSocket ticket, and tool readiness checks passed through `https://cyberteam.hyperailab.com`.
+  - The smoke-created email approval was verified in the queue and rejected without replaying a live external side effect.
+  - Promotion completed successfully with a durable promotion record.
+- Evidence:
+  - `backups/staging/cyberteam-staging-0.4.0-20260903-080423.dump`.
+  - `dist/promotions/staging/0.4.0-20260903-080733.json`.
+  - `dist/releases/0.4.0.json`.
+- Next step:
+  - Validate live version/migration state, run operating-model dry-run and safe shadow reconciliation, then execute the remaining operational acceptance gates.
+
+### 2026-09-03T08:16:07Z — STEP-338 — Validated live 0.4.0 and identified a fail-closed hosted-LLM capacity blocker
+- Files/services changed:
+  - No application code or company data was changed.
+  - Removed only obsolete `0.3.37` through `0.3.40` Cyber-Team image tags after promotion; retained deployed `0.4.0`, previous rollback `0.3.41`, and all persistent volumes.
+- Commands run:
+  - Verified public `/health`, deployed image references, container health, and `alembic current` inside staging core.
+  - Read the new operating-model, revision, reconciliation, and discovery APIs with owner authentication.
+  - Ran one dry-run reconciliation and attempted the first owner-triggered company cycle.
+  - Validated each configured Mistral credential slot independently against the provider models endpoint without printing or persisting credential values.
+- Result:
+  - Public health reports version `0.4.0`, build SHA `9848556395b61177a2f52172cd9a8a32599a436e`, and staging environment; Core is healthy and database migration is at `0022_operating_model_lifecycle_v4 (head)`.
+  - The pre-synthesis lifecycle state is explicit: latest model is `not_created` and dry-run reconciliation returns `blocked` with no decisions instead of inventing a desired model.
+  - The company cycle failed closed before synthesis because the five-key hosted-LLM pool requires every slot: slots 2–5 returned HTTP `200`, while slot 1 returned HTTP `402` capacity exhausted.
+  - No operating-model revision, domain transition, external mutation, or fake-success record was created by the blocked cycle.
+- Evidence:
+  - `https://cyberteam.hyperailab.com/health` at `2026-09-03T08:16:07Z`.
+  - Staging Core/Worker logs for the scheduled and owner-triggered cycle.
+  - Mistral slot validation summary: `slot_1=402`, `slot_2=200`, `slot_3=200`, `slot_4=200`, `slot_5=200`; credential values were not emitted.
+- Next step:
+  - Continue non-LLM operational gates while the owner replaces or restores capacity for `MISTRAL_API_KEY_1`; then recreate Core/Worker and run synthesis, Observer review, and shadow reconciliation.
+
+### 2026-09-03T08:46:20Z — STEP-339 — Passed business workflow, restore, and conservative load gates
+- Files/services changed:
+  - Created fresh machine-readable evidence under `dist/business-workflows`, `dist/restore-drills/staging`, `dist/erpnext/backups`, `dist/erpnext/restore-drills`, and `dist/load-tests`.
+  - Created a fresh ERPNext staging backup under `backups/erpnext/staging/20260903T082754Z`.
+  - Used temporary PostgreSQL, Qdrant, and ERPNext restore targets and removed them after validation; live staging data was not replaced or mutated by the restore drills.
+- Commands run:
+  - Ran `scripts/business-workflow-smoke.py` against deployed staging.
+  - Ran `scripts/staging-restore-drill.sh` against the `0.4.0` pre-promotion backup.
+  - Ran `scripts/erpnext-backup.sh` followed by `scripts/erpnext-restore-drill.sh` against the fresh ERPNext artifacts.
+  - Ran the Docker-based k6 owner-console gate with five virtual users for five minutes.
+- Result:
+  - Business workflow smoke passed ERPNext readiness, company-context dry-run, role-backlog summary, owner-attention dry-run, and invalid-approval rejection; its temporary approval was cleaned up.
+  - PostgreSQL restored successfully at the pre-promotion `0021` revision, matching the backup point; the separately verified migration rehearsal proves `0021` through head `0022`. Qdrant snapshot checksum and restored point-count envelope matched.
+  - ERPNext backup completed, the database/files restored into an isolated temporary site, migration/API/integration-user checks passed, and the temporary site was dropped.
+  - k6 completed `1,133` iterations with failure rate `0`, HTTP 5xx rate `0`, checks rate `1.0`, and overall p95 `193.19 ms`; every endpoint p95 remained below the `750 ms` limit.
+- Evidence:
+  - `dist/business-workflows/business-workflow-smoke-20260903T081754Z.json`.
+  - `dist/restore-drills/staging/staging-restore-drill-20260903T081811Z.json`.
+  - `dist/erpnext/backups/erpnext-backup-20260903T082754Z.json`.
+  - `dist/erpnext/restore-drills/erpnext-restore-drill-20260903T082841Z.json`.
+  - `dist/load-tests/load-smoke-20260903T084115Z.json`.
+- Next step:
+  - Restore the required five-key hosted-LLM pool, run live synthesis/Observer/shadow reconciliation and bounded external acceptance, then begin the strict uninterrupted 24-hour `0.4.0` autonomy soak.
+
+### 2026-09-03T12:57:40Z — STEP-340 — Hardened five-key hosted inference for quota-aware failover
+- Files/services changed:
+  - Added shared Redis healthy-slot round-robin selection, secret-free failure quarantine, validation-driven recovery, and all-slots-exhausted handling for hosted LLM credentials.
+  - Extended both LiteLLM completions and Mistral embeddings to quarantine rejected, rate-limited, or capacity-exhausted slots and retry through remaining healthy credentials.
+  - Reinterpreted `LLM_HOSTED_CREDENTIAL_REQUIRED_COUNT` as the minimum healthy pool size, set the staging/default minimum to one, and added a configurable 900-second quarantine window.
+  - Updated environment examples and the hosted-capacity runbook; no credential value, fingerprint, or provider response body is stored in Redis, readiness, logs, or tests.
+- Commands run:
+  - Ran focused Ruff, compileall, and `60` failover/configuration/memory tests.
+  - Ran the complete `scripts/quality-gate.sh` repository gate.
+- Result:
+  - Healthy credentials remain equally distributed through one process-independent sequence; failed slots are skipped by Core, Worker, and embeddings and automatically rejoin after cooldown or successful validation.
+  - Partial pool exhaustion is explicit `degraded` but non-blocking while at least one configured credential is healthy; total exhaustion remains fail-closed.
+  - Full verification passed: `498` backend tests, `34` frontend tests, Ruff, compileall, optimized frontend build/typecheck, Alembic offline SQL, Python/runtime Node dependency audits, Compose configuration, syntax checks, secret scan, Google Cloud isolation, FOSS/resource policy, and diff hygiene.
+  - Running staging remained on immutable `0.4.0`; no live service or company record was changed during implementation verification.
+- Evidence:
+  - `backend/tests/test_llm_pacing.py` healthy-slot, quarantine, recovery, and exhaustion coverage.
+  - `backend/tests/test_llm_gateway.py` partial-degradation and runtime completion failover coverage.
+  - `backend/tests/test_memory_service.py` embedding failover coverage.
+  - `docs/runbooks/hosted-llm-capacity.md` operator contract.
+- Next step:
+  - Commit the verified hotfix, build/scan/smoke immutable `0.4.1`, promote it backup-first to staging, and prove live operation with one exhausted key and four healthy keys before resuming operating-model synthesis.

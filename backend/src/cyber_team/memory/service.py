@@ -22,6 +22,10 @@ from cyber_team.config import settings
 from cyber_team.db import async_session
 from cyber_team.db.models import MemoryEntry, MemoryTrace
 from cyber_team.llm.pacing import HostedCredentialRotator
+from cyber_team.llm.resilience import (
+    classify_llm_exception,
+    llm_error_allows_credential_failover,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -626,22 +630,35 @@ class MemoryService:
 
     async def _embed(self, text: str) -> list[float]:
         """Generate embedding using Mistral embed model."""
-        try:
-            import litellm
+        import litellm
 
-            api_keys = settings.mistral_effective_api_keys
-            selection = await self._credential_rotator.select(
-                provider="mistral",
-                credential_count=len(api_keys),
-            )
-            response = await litellm.aembedding(
-                model="mistral/mistral-embed",
-                input=[text],
-                api_key=api_keys[int(selection["credential_index"])],
-            )
-            return response.data[0]["embedding"]
-        except Exception as exc:
-            raise RuntimeError("Embedding provider unavailable") from exc
+        api_keys = settings.mistral_effective_api_keys
+        attempts = max(1, len(api_keys))
+        last_error: Exception | None = None
+        for _ in range(attempts):
+            selection: dict | None = None
+            try:
+                selection = await self._credential_rotator.select(
+                    provider="mistral",
+                    credential_count=len(api_keys),
+                )
+                response = await litellm.aembedding(
+                    model="mistral/mistral-embed",
+                    input=[text],
+                    api_key=api_keys[int(selection["credential_index"])],
+                )
+                return response.data[0]["embedding"]
+            except Exception as exc:  # noqa: BLE001 - try the remaining healthy pool.
+                last_error = exc
+                category = classify_llm_exception(exc)
+                if not selection or not llm_error_allows_credential_failover(category):
+                    break
+                await self._credential_rotator.quarantine(
+                    provider="mistral",
+                    credential_slot=int(selection["credential_slot"]),
+                    category=category,
+                )
+        raise RuntimeError("Embedding provider unavailable") from last_error
 
     @staticmethod
     def _parse_expires_at(value) -> datetime | None:

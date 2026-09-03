@@ -15,6 +15,7 @@ from cyber_team.config import settings
 from cyber_team.llm.pacing import HostedCredentialRotator, HostedInferencePacer
 from cyber_team.llm.resilience import (
     classify_llm_exception,
+    llm_error_allows_credential_failover,
     llm_error_allows_local_fallback,
     llm_error_is_retryable,
 )
@@ -148,7 +149,11 @@ class LLMGateway:
 
         # Replaying the same deterministic local prompt after a CPU timeout only
         # consumes the full timeout again. Hosted transient failures retain retries.
-        attempts = 1 if route["local"] else max(1, settings.llm_retry_attempts)
+        attempts = (
+            1
+            if route["local"]
+            else max(1, settings.llm_retry_attempts, len(route["api_keys"]))
+        )
         last_error: Exception | None = None
         for attempt in range(attempts):
             credential_selection: dict | None = None
@@ -215,7 +220,31 @@ class LLMGateway:
             except Exception as exc:
                 last_error = exc
                 category = classify_llm_exception(exc)
-                if attempt >= attempts - 1 or not llm_error_is_retryable(category):
+                credential_failover = bool(
+                    not route["local"]
+                    and len(route["api_keys"]) > 1
+                    and credential_selection
+                    and llm_error_allows_credential_failover(category)
+                )
+                if credential_failover:
+                    try:
+                        await self._credential_rotator.quarantine(
+                            provider=route["provider"],
+                            credential_slot=int(credential_selection["credential_slot"]),
+                            category=category,
+                        )
+                    except Exception as coordination_error:
+                        self._record_provider_failure(
+                            "provider_unavailable",
+                            route={**route, **credential_selection},
+                        )
+                        raise coordination_error from exc
+
+                should_retry = (
+                    attempt < attempts - 1
+                    and (llm_error_is_retryable(category) or credential_failover)
+                )
+                if not should_retry:
                     self._record_provider_failure(
                         category,
                         route={
@@ -249,7 +278,8 @@ class LLMGateway:
                     raise
                 backoff = max(0.0, settings.llm_retry_backoff_seconds) * (2**attempt)
                 logger.warning(
-                    "Retrying LLM invoke: agent=%s category=%s attempt=%s/%s",
+                    "Retrying LLM invoke with eligible credential: "
+                    "agent=%s category=%s attempt=%s/%s",
                     agent_id,
                     category,
                     attempt + 1,
@@ -406,7 +436,8 @@ class LLMGateway:
                 "status": "configuration_required",
                 "blocking": True,
                 "detail": (
-                    f"Hosted LLM credential pool requires {required_count} distinct keys; "
+                    f"Hosted LLM credential pool requires at least {required_count} "
+                    "distinct healthy keys; "
                     f"{len(route['api_keys'])} are configured."
                 ),
                 "hosted": True,
@@ -452,36 +483,71 @@ class LLMGateway:
         credentials = route["api_keys"] or ([""] if route["local"] else [])
         pool = self._credential_pool_status(route)
         try:
-            responses = []
+            responses: list[tuple[int, int | None, str | None]] = []
             async with httpx.AsyncClient(timeout=10) as client:
                 for index, api_key in enumerate(credentials):
                     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-                    response = await client.get(route["models_url"], headers=headers)
-                    responses.append((index + 1, int(response.status_code)))
-            healthy_slots = [slot for slot, status_code in responses if status_code == 200]
+                    try:
+                        response = await client.get(route["models_url"], headers=headers)
+                        status_code = int(response.status_code)
+                        category = self._validation_failure_category(status_code)
+                    except Exception as exc:  # noqa: BLE001 - retain per-slot failover.
+                        status_code = getattr(exc, "status_code", None)
+                        status_code = int(status_code) if status_code is not None else None
+                        category = classify_llm_exception(exc)
+                    responses.append((index + 1, status_code, category))
+            healthy_slots = [
+                slot for slot, status_code, _ in responses if status_code == 200
+            ]
             failed_slots = [
-                {"slot": slot, "http_status": status_code}
-                for slot, status_code in responses
+                {
+                    "slot": slot,
+                    "http_status": status_code,
+                    "category": category or "provider_error",
+                }
+                for slot, status_code, category in responses
                 if status_code != 200
             ]
+            if not route["local"] and len(credentials) > 1:
+                await self._credential_rotator.sync_health(
+                    provider=route["provider"],
+                    credential_count=len(credentials),
+                    failed_slots={
+                        int(item["slot"]): str(item["category"])
+                        for item in failed_slots
+                    },
+                )
+            minimum_healthy = self._required_credential_count(route)
+            operational = len(healthy_slots) >= minimum_healthy
             pool = {
                 **pool,
                 "validated_count": len(healthy_slots),
+                "healthy_count": len(healthy_slots),
                 "healthy_slots": healthy_slots,
                 "failed_slots": failed_slots,
+                "quarantined_slots": [item["slot"] for item in failed_slots],
+                "operational": operational,
             }
-            if responses and not failed_slots:
+            if responses and operational:
                 return {
                     "provider": route["provider"],
                     "model": route["model"],
                     "configured": True,
                     "mode": "live",
-                    "status": "live",
+                    "status": "live" if not failed_slots else "degraded",
                     "blocking": False,
                     "detail": (
                         "Local open-model inference is reachable."
                         if route["local"]
-                        else "Hosted LLM credentials and zero-spend policy validated."
+                        else (
+                            "Hosted LLM credentials and zero-spend policy validated."
+                            if not failed_slots
+                            else (
+                                f"Hosted LLM is operational with {len(healthy_slots)} of "
+                                f"{len(credentials)} credential slots; failed slots are "
+                                "quarantined and periodically revalidated."
+                            )
+                        )
                     ),
                     "hosted": not route["local"],
                     "zero_cost_confirmed": (
@@ -490,7 +556,11 @@ class LLMGateway:
                     "credential_pool": pool,
                     "last_checked_at": now.isoformat(),
                 }
-            rejected = [item for item in failed_slots if item["http_status"] in {401, 403}]
+            rejected = [
+                item
+                for item in failed_slots
+                if item["category"] == "authentication_error"
+            ]
             if rejected:
                 return {
                     "provider": route["provider"],
@@ -506,7 +576,9 @@ class LLMGateway:
                     "credential_pool": pool,
                     "last_checked_at": now.isoformat(),
                 }
-            capacity = [item for item in failed_slots if item["http_status"] == 402]
+            capacity = [
+                item for item in failed_slots if item["category"] == "capacity_exhausted"
+            ]
             status = "capacity_exhausted" if capacity else "unavailable"
             return {
                 "provider": route["provider"],
@@ -668,11 +740,30 @@ class LLMGateway:
         configured = len(route.get("api_keys") or [])
         required = self._required_credential_count(route)
         return {
-            "strategy": "single" if route.get("local") else "redis_round_robin",
+            "strategy": (
+                "single" if route.get("local") else "redis_healthy_round_robin"
+            ),
             "configured_count": configured,
             "required_count": required,
+            "minimum_healthy_count": required,
             "complete": configured >= required,
         }
+
+    @staticmethod
+    def _validation_failure_category(status_code: int) -> str | None:
+        if status_code == 200:
+            return None
+        if status_code in {401, 403}:
+            return "authentication_error"
+        if status_code == 402:
+            return "capacity_exhausted"
+        if status_code == 429:
+            return "rate_limited"
+        if status_code in {408, 504}:
+            return "timeout"
+        if status_code >= 500:
+            return "provider_unavailable"
+        return "provider_error"
 
     def set_capability_checker(self, checker) -> None:
         self._capability_checker = checker

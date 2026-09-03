@@ -119,6 +119,13 @@ def test_production_runtime_config_rejects_invalid_credential_pool_size(required
         settings.validate_runtime_config()
 
 
+def test_production_runtime_config_rejects_invalid_credential_quarantine():
+    settings = production_settings(llm_hosted_credential_quarantine_seconds=0)
+
+    with pytest.raises(RuntimeError, match="LLM_HOSTED_CREDENTIAL_QUARANTINE_SECONDS"):
+        settings.validate_runtime_config()
+
+
 def test_connection_urls_escape_reserved_characters():
     settings = Settings(
         postgres_user="cyber/team",
