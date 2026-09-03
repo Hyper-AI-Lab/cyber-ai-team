@@ -26,6 +26,52 @@ class AutonomousCompanyCycleService:
     """Run the complete idempotent evidence-to-outcome operating cycle."""
 
     CYCLE_VERSION = "autonomous-company-cycle-v4"
+    _SUMMARY_FIELDS = (
+        "id",
+        "run_id",
+        "status",
+        "reason",
+        "detail",
+        "company_namespace",
+        "revision",
+        "source_hash",
+        "confidence",
+        "provenance_coverage",
+        "refreshed",
+        "provider",
+        "passed",
+        "total",
+        "created",
+        "updated",
+        "reused",
+        "superseded",
+        "activated",
+        "dry_run",
+        "operating_model_revision_id",
+        "assessment_count",
+        "processed",
+        "examined",
+        "reconciled",
+        "coverage",
+        "active_agents",
+        "agents",
+        "permanent_gates",
+        "created_at",
+        "completed_at",
+        "expires_at",
+    )
+    _REFERENCE_FIELDS = (
+        "id",
+        "status",
+        "revision",
+        "source_hash",
+        "confidence",
+        "provenance_coverage",
+        "observer_review_id",
+        "created_at",
+        "activated_at",
+        "reused",
+    )
 
     def __init__(
         self,
@@ -113,18 +159,20 @@ class AutonomousCompanyCycleService:
             "event_ids": list(dict.fromkeys(event_ids or []))[:200],
             "started_at": started_at.isoformat(),
             "completed_at": utc_now().isoformat(),
-            "model_capability_qualification": capability_qualification,
-            "acquisition": acquisition,
-            "discovery": discovery,
-            "public_research": research,
-            "strategy": strategy,
-            "operating_model": operating_model,
-            "reconciliation": reconciliation,
-            "role_mandate_convergence": convergence,
-            "discovery_obligations": discovery_obligations,
-            "backlog_reconciliation": backlog_reconciliation,
-            "mandates": mandates,
-            "routing": routing,
+            "model_capability_qualification": self._stage_summary(
+                capability_qualification
+            ),
+            "acquisition": self._stage_summary(acquisition),
+            "discovery": self._stage_summary(discovery),
+            "public_research": self._stage_summary(research),
+            "strategy": self._stage_summary(strategy),
+            "operating_model": self._stage_summary(operating_model),
+            "reconciliation": self._stage_summary(reconciliation),
+            "role_mandate_convergence": self._stage_summary(convergence),
+            "discovery_obligations": self._stage_summary(discovery_obligations),
+            "backlog_reconciliation": self._stage_summary(backlog_reconciliation),
+            "mandates": self._stage_summary(mandates),
+            "routing": self._stage_summary(routing),
             "domain_work": {
                 "agents": domain_work["agents"],
                 "processed": domain_work["processed"],
@@ -133,8 +181,8 @@ class AutonomousCompanyCycleService:
                 "assessed": outcomes["assessed"],
                 "remediation": outcomes["remediation"],
             },
-            "policies": policies,
-            "policy_qualification": policy_qualification,
+            "policies": self._stage_summary(policies),
+            "policy_qualification": self._stage_summary(policy_qualification),
         }
         if self._audit:
             await self._audit.record_control_evidence(
@@ -145,6 +193,109 @@ class AutonomousCompanyCycleService:
                 evidence=result,
             )
         return result
+
+    @classmethod
+    def _stage_summary(cls, payload: Any) -> dict[str, Any]:
+        """Return a stable activity/API envelope without replaying persisted evidence."""
+        if not isinstance(payload, dict):
+            return {"status": "invalid_result", "result_type": type(payload).__name__}
+
+        summary: dict[str, Any] = {}
+        for field in cls._SUMMARY_FIELDS:
+            value = payload.get(field)
+            if value is None or isinstance(value, (dict, list, tuple, set)):
+                continue
+            summary[field] = value
+
+        for field in ("counts", "remediation"):
+            value = payload.get(field)
+            if isinstance(value, dict):
+                summary[field] = cls._bounded_scalars(value)
+
+        for field in (
+            "approval_ids",
+            "agent_ids",
+            "created_plan_ids",
+            "invalidated_approval_ids",
+            "role_gap_ids",
+        ):
+            value = payload.get(field)
+            if isinstance(value, list):
+                summary[field] = [str(item)[:240] for item in value[:100]]
+                summary[f"{field}_count"] = len(value)
+
+        errors = payload.get("errors")
+        if isinstance(errors, list):
+            summary["errors"] = [cls._error_summary(item) for item in errors[:20]]
+            summary["error_count"] = len(errors)
+
+        for field in ("model", "observer_review", "review"):
+            value = payload.get(field)
+            if isinstance(value, dict):
+                summary[field] = cls._record_reference(value)
+
+        for field in ("items", "queries", "assessments", "decisions"):
+            value = payload.get(field)
+            if isinstance(value, list):
+                summary[f"{field}_count"] = len(value)
+                summary[f"{field}_status_counts"] = cls._status_counts(value)
+
+        if "status" not in summary:
+            summary["status"] = str(payload.get("status") or "completed")[:80]
+        return summary
+
+    @staticmethod
+    def _bounded_scalars(payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            str(key)[:120]: value
+            for key, value in list(payload.items())[:100]
+            if value is None or isinstance(value, (str, int, float, bool))
+        }
+
+    @classmethod
+    def _record_reference(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        reference = {
+            field: payload[field]
+            for field in cls._REFERENCE_FIELDS
+            if field in payload
+            and (
+                payload[field] is None
+                or isinstance(payload[field], (str, int, float, bool))
+            )
+        }
+        domain_keys = payload.get("domain_keys")
+        if isinstance(domain_keys, list):
+            reference["domain_keys"] = [str(item)[:120] for item in domain_keys[:25]]
+            reference["domain_count"] = len(domain_keys)
+        model = payload.get("model")
+        if isinstance(model, dict):
+            for field in ("name", "business_description"):
+                value = model.get(field)
+                if isinstance(value, str):
+                    reference[field] = value[:500]
+        return reference
+
+    @staticmethod
+    def _status_counts(items: list[Any]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in items:
+            status = (
+                str(item.get("status") or "unknown")
+                if isinstance(item, dict)
+                else "unknown"
+            )
+            counts[status] = counts.get(status, 0) + 1
+        return dict(sorted(counts.items()))
+
+    @staticmethod
+    def _error_summary(error: Any) -> Any:
+        if not isinstance(error, dict):
+            return str(error)[:500]
+        return {
+            str(key)[:120]: value[:500] if isinstance(value, str) else value
+            for key, value in list(error.items())[:20]
+            if value is None or isinstance(value, (str, int, float, bool))
+        }
 
 
 class TemporalAutonomyController:

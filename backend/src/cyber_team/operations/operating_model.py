@@ -1009,7 +1009,7 @@ class OperatingModelLifecycleService:
         namespace = company_namespace or settings.company_namespace
         now = utc_now()
         counts: dict[str, int] = defaultdict(int)
-        assessments: list[dict[str, Any]] = []
+        assessment_count = 0
         invalidated_approvals: list[str] = []
         async with async_session() as session:
             model = (
@@ -1093,7 +1093,7 @@ class OperatingModelLifecycleService:
                     "lifecycle_reason": reason,
                     "operating_model_revision_id": model.id,
                 }
-                item = await self._record_lifecycle_assessment(
+                await self._record_lifecycle_assessment(
                     session,
                     existing_assessments,
                     namespace=namespace,
@@ -1104,7 +1104,7 @@ class OperatingModelLifecycleService:
                     reason=reason,
                     metadata={"domain_key": domain, "requested_tools": gap.requested_tools or []},
                 )
-                assessments.append(item)
+                assessment_count += 1
                 counts[status] += 1
 
             for request in outsourcing:
@@ -1128,7 +1128,7 @@ class OperatingModelLifecycleService:
                     "lifecycle_reason": reason,
                     "operating_model_revision_id": model.id,
                 }
-                item = await self._record_lifecycle_assessment(
+                await self._record_lifecycle_assessment(
                     session,
                     existing_assessments,
                     namespace=namespace,
@@ -1139,7 +1139,7 @@ class OperatingModelLifecycleService:
                     reason=reason,
                     metadata={"domain_key": domain},
                 )
-                assessments.append(item)
+                assessment_count += 1
                 counts[status] += 1
 
             for work in work_items:
@@ -1169,7 +1169,7 @@ class OperatingModelLifecycleService:
                 else:
                     status = "current"
                     reason = "Work remains current under the desired operating model."
-                item = await self._record_lifecycle_assessment(
+                await self._record_lifecycle_assessment(
                     session,
                     existing_assessments,
                     namespace=namespace,
@@ -1180,7 +1180,7 @@ class OperatingModelLifecycleService:
                     reason=reason,
                     metadata={"domain_key": domain, "work_status": work.status},
                 )
-                assessments.append(item)
+                assessment_count += 1
                 counts[status] += 1
 
             for approval in approvals:
@@ -1217,7 +1217,7 @@ class OperatingModelLifecycleService:
                 else:
                     status = "owner_review"
                     reason = "Current approval still requires an owner decision."
-                item = await self._record_lifecycle_assessment(
+                await self._record_lifecycle_assessment(
                     session,
                     existing_assessments,
                     namespace=namespace,
@@ -1228,7 +1228,7 @@ class OperatingModelLifecycleService:
                     reason=reason,
                     metadata={"domain_key": domain, "source_revision": source_revision},
                 )
-                assessments.append(item)
+                assessment_count += 1
                 counts[status] += 1
             await session.commit()
 
@@ -1237,7 +1237,7 @@ class OperatingModelLifecycleService:
             "operating_model_revision_id": model.id,
             "counts": dict(sorted(counts.items())),
             "invalidated_approval_ids": sorted(invalidated_approvals),
-            "assessments": assessments,
+            "assessment_count": assessment_count,
         }
         if self._audit:
             await self._audit.record_control_evidence(

@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -90,6 +91,93 @@ async def test_company_cycle_runs_evidence_to_outcome_sequence():
         max_cases_per_class=settings.operating_model_policy_cases_per_cycle,
     )
     audit.record_control_evidence.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_company_cycle_returns_bounded_temporal_payload():
+    intelligence = AsyncMock()
+    intelligence.acquire_available_evidence.return_value = {
+        "status": "completed",
+        "counts": {"imap": 20},
+    }
+    intelligence.discover_company_model.return_value = {
+        "status": "active",
+        "id": "model-1",
+        "model": {"business_description": "x" * 100_000},
+    }
+    intelligence.research_model_unknowns.return_value = {
+        "status": "completed",
+        "queries": [{"status": "processed", "payload": "x" * 10_000}] * 100,
+    }
+    strategy = AsyncMock()
+    strategy.run_strategy_cycle.return_value = {"status": "completed"}
+    work = AsyncMock()
+    work.ensure_active_agent_mandates.return_value = {"status": "completed"}
+    work.route_pending_events.return_value = {"status": "completed", "processed": 2}
+    work.run_all_domain_loops.return_value = {"agents": 3, "processed": 2}
+    outcomes = AsyncMock()
+    outcomes.assess_terminal_work.return_value = {
+        "assessed": 2,
+        "remediation": {"created": 0},
+    }
+    policy = AsyncMock()
+    policy.ensure_default_policies.return_value = {"status": "completed"}
+    policy.qualify_registered_action_classes.return_value = {
+        "status": "completed",
+        "items": [{"status": "qualified", "payload": "x" * 10_000}] * 100,
+    }
+    capabilities = AsyncMock()
+    capabilities.ensure_fresh.return_value = {"status": "ready", "refreshed": False}
+    operating_model = AsyncMock()
+    operating_model.synthesize_and_review.return_value = {
+        "status": "completed",
+        "model": {
+            "id": "operating-model-1",
+            "status": "active",
+            "domain_keys": [f"domain-{index}" for index in range(100)],
+            "summary": {"evidence": "x" * 1_000_000},
+        },
+    }
+    operating_model.reconcile.return_value = {"status": "completed"}
+    operating_model.converge_roles_and_mandates.return_value = {
+        "status": "completed"
+    }
+    operating_model.reconcile_discovery_obligations.return_value = {
+        "status": "completed",
+        "items": [{"status": "pending", "payload": "x" * 10_000}] * 100,
+    }
+    operating_model.reconcile_backlogs.return_value = {
+        "status": "completed",
+        "counts": {"resolved": 35_000},
+        "assessments": [
+            {"status": "resolved", "payload": "x" * 1_000}
+            for _ in range(35_000)
+        ],
+    }
+    tools = MagicMock()
+    tools.list_tool_contracts.return_value = []
+    service = AutonomousCompanyCycleService(
+        intelligence_service=intelligence,
+        strategy_service=strategy,
+        work_portfolio_service=work,
+        outcome_learning_service=outcomes,
+        action_policy_service=policy,
+        model_capability_service=capabilities,
+        operating_model_service=operating_model,
+        tool_registry=tools,
+    )
+
+    result = await service.run(trigger="test")
+
+    encoded = json.dumps(result, default=str).encode()
+    assert len(encoded) < 512 * 1024
+    assert result["backlog_reconciliation"] == {
+        "status": "completed",
+        "counts": {"resolved": 35_000},
+        "assessments_count": 35_000,
+        "assessments_status_counts": {"resolved": 35_000},
+    }
+    assert result["operating_model"]["model"]["domain_count"] == 100
 
 
 class ExistingHandle:

@@ -8294,3 +8294,61 @@
   - `docs/runbooks/hosted-llm-capacity.md` operator contract.
 - Next step:
   - Commit the verified hotfix, build/scan/smoke immutable `0.4.1`, promote it backup-first to staging, and prove live operation with one exhausted key and four healthy keys before resuming operating-model synthesis.
+
+### 2026-09-03T13:40:40Z — STEP-341 — Verified immutable 0.4.1 release artifacts
+- Files/services changed:
+  - Committed the failover implementation as `537fde79e91086a7dd883454bf4ea432fe7444b0`.
+  - Built immutable `cyber-team-core:0.4.1` and `cyber-team-ui:0.4.1` images and recorded `dist/releases/0.4.1.json`.
+  - Removed only disposable frontend dependencies, build output, temporary audit environment, obsolete `0.3.41` image tags, and unreferenced BuildKit cache; preserved active `0.4.0`, rollback data, backups, containers, and all volumes.
+- Commands run:
+  - Ran the strict release quality and PostgreSQL migration gates, isolated Compose smoke, Docker builds with the exact commit SHA/public staging endpoints, Trivy image scans, and promotion-policy dry-run.
+- Result:
+  - Independent release verification passed `498` backend tests, `34` frontend tests, both real PostgreSQL migration rehearsals, all repository policy/security checks, and authenticated disposable Compose smoke.
+  - Trivy found zero high or critical vulnerabilities in both `0.4.1` images.
+  - An initial duplicate UI packaging pass reached `ENOSPC` after all tests and smoke had passed; staging was not changed. Disposable caches were reclaimed, the UI was rebuilt successfully with the exact SHA, both final images were rescanned, and promotion policy accepted the complete release evidence.
+  - Staging remains healthy on `0.4.0` pending the backup-first promotion.
+- Evidence:
+  - `dist/releases/0.4.1.json`.
+  - Local images `cyber-team-core:0.4.1` and `cyber-team-ui:0.4.1`.
+  - Promotion dry-run result at `2026-09-03T13:40:05Z`.
+- Next step:
+  - Promote `0.4.1` backup-first, run authenticated staging smoke, and validate partial-pool operation and failover against the live five-slot configuration.
+
+### 2026-09-03T14:01:47Z — STEP-342 — Promoted 0.4.1 and proved partial-pool inference
+- Files/services changed:
+  - Created the backup-first staging artifact `backups/staging/cyberteam-staging-0.4.1-20260903-134104.dump`.
+  - Promoted staging Core, Worker, and UI to immutable release `0.4.1` at commit `537fde79e91086a7dd883454bf4ea432fe7444b0`; preserved all data services and persistent volumes.
+  - Recorded the promotion at `dist/promotions/staging/0.4.1-20260903-134322.json`.
+- Commands run:
+  - Ran staging promotion with authenticated smoke, public health/readiness checks, hosted-provider validation, and a live autonomous company cycle.
+- Result:
+  - Public health reports `0.4.1` and the exact build SHA; dependency readiness and authenticated owner-console smoke pass.
+  - Hosted inference reports four healthy slots and one capacity-exhausted slot, remains operational and non-blocking, and distributed all five model-capability tasks successfully through the healthy pool without exposing credential values.
+  - The autonomous company cycle completed and recorded success, but Temporal rejected its `18,300,487`-byte activity result because it exceeded the `4,194,304`-byte gRPC message limit. The oversized result was traced to `35,202` persisted backlog assessment payloads being repeated across the activity boundary.
+- Evidence:
+  - `dist/releases/0.4.1.json`.
+  - `dist/promotions/staging/0.4.1-20260903-134322.json`.
+  - Staging audit evidence `autonomy.company_cycle` at `2026-09-03T14:00:38Z`.
+  - Temporal Worker warning `TMPRL1103`, payload size `18,300,487` bytes.
+- Next step:
+  - Bound the cycle result contract, retain detailed evidence in owning tables, align the Qdrant client with the deployed server, and release the correction.
+
+### 2026-09-03T22:36:52Z — STEP-343 — Bounded durable cycle results and aligned Qdrant compatibility
+- Files/services changed:
+  - Added a compact, stable autonomous-cycle result envelope containing status, counts, bounded identifiers, record references, and error summaries instead of complete persisted evidence trees.
+  - Removed lifecycle assessment payload materialization from backlog-reconciliation responses while retaining every durable assessment in PostgreSQL and through its dedicated query API.
+  - Pinned `qdrant-client>=1.17.0,<1.19.0`; the resolved client is `1.18.0`, compatible with deployed Qdrant `1.17.1`.
+  - Added a regression fixture containing `35,000` assessments and multi-megabyte nested evidence, with a hard assertion that the returned cycle result remains below Temporal's `512 KiB` warning threshold.
+- Commands run:
+  - Ran focused Ruff and `21` autonomy/lifecycle tests.
+  - Ran the complete repository quality gate with dependency restoration from the pinned lockfiles.
+- Result:
+  - Focused tests pass and the oversized-result regression proves bounded output.
+  - Full verification passes with `499` backend tests and `34` frontend tests, Ruff, compileall, Alembic offline SQL, optimized frontend build/typecheck, Python and Node dependency audits, Compose validation, secret scan, Google Cloud isolation, FOSS/resource policy, and diff hygiene.
+  - No running service, database record, credential, or owner-authored Compose change was altered by this implementation step.
+- Evidence:
+  - `backend/src/cyber_team/operations/autonomy_cycle.py::AutonomousCompanyCycleService._stage_summary`.
+  - `backend/src/cyber_team/operations/operating_model.py::OperatingModelLifecycleService.reconcile_backlogs`.
+  - `backend/tests/test_autonomy_cycle.py::test_company_cycle_returns_bounded_temporal_payload`.
+- Next step:
+  - Commit and build immutable `0.4.2`, scan/smoke it, promote backup-first, and verify a scheduled Temporal company cycle completes without payload-limit warnings.
