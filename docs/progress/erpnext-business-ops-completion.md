@@ -8373,3 +8373,45 @@
   - Scheduled workflow `autonomous-company-cycle-scheduled-2026-09-03T23:15:00Z` and the resolved obligation key recorded in staging Worker/PostgreSQL evidence.
 - Next step:
   - Commit the verified correction, build/scan/smoke immutable `0.4.3`, promote it backup-first, and prove a scheduled Temporal cycle completes without payload or discovery-idempotency failure before starting the strict soak.
+
+### 2026-09-07T22:59:06Z — STEP-345 — Promoted 0.4.3 and proved scheduled lifecycle recovery
+- Files/services changed:
+  - Built and verified immutable `cyber-team-core:0.4.3` and `cyber-team-ui:0.4.3` images at commit `18b582286f0b8a31dffa32f7d8d3b8491d506294`.
+  - Created `backups/staging/cyberteam-staging-0.4.3-20260907-223319.dump`, then promoted staging Core, Worker, and UI to `0.4.3`; PostgreSQL, Redis, Qdrant, Temporal, OPA, ERPNext, SearXNG, and all persistent volumes were preserved.
+  - Recorded release and promotion evidence under `dist/releases/0.4.3.json` and `dist/promotions/staging/0.4.3-20260907-223552.json`.
+- Commands run:
+  - Ran the full release quality gate, both real PostgreSQL migration rehearsal paths through Alembic head `0022`, isolated authenticated Compose smoke, exact-SHA Docker builds, Trivy scans, promotion-policy dry-run, and backup-first staging promotion.
+  - Verified public `/health` and `/ready`, inspected the natural `22:45 UTC` Temporal schedule execution, queried compact cycle audit evidence, and checked Worker logs for uniqueness and payload-limit failures.
+- Result:
+  - Public staging reports version `0.4.3`, exact build SHA `18b582286f0b8a31dffa32f7d8d3b8491d506294`, and all dependency readiness checks healthy; authenticated login/dashboard/integration/WebSocket/tool-readiness smoke passed.
+  - Scheduled workflow `autonomous-company-cycle-scheduled-2026-09-07T22:45:00Z` completed successfully. It reused four immutable-generation discovery obligations, created one new obligation, reconciled fourteen desired domains, preserved mandates for all twenty-nine active agents, dispositioned all pending business events, and returned a `4,616`-byte audit evidence envelope with no `uq_discovery_obligations_key`, `TMPRL1103`, or `ResourceExhausted` failure.
+  - Hosted model qualification failed closed because completion requests exhausted all currently eligible Mistral slots; the cycle still completed its deterministic control-plane stages and blocked strategy advisory rather than inventing output. The five-key integration probe reports slots 2–5 model-list healthy and slot 1 capacity-exhausted, while live completion qualification reports five failed capability cases.
+  - Readiness exposed a separate lifecycle accounting defect: terminal `resolved` discovery obligations are omitted from the disposition set, so unknowns with completed evidence resolution are incorrectly reported as undispositioned.
+  - During an earlier pre-promotion isolated-smoke rehearsal, `compose-smoke.sh` sourced the staging environment after explicit caller overrides and caused cleanup to target the staging Compose project. Application services were immediately restored on `0.4.2`; no persistent volume or company data was removed. The final isolated smoke used a separately namespaced environment and passed. This environment-precedence hazard remains scheduled for immediate hardening.
+- Evidence:
+  - `dist/releases/0.4.3.json`.
+  - `dist/promotions/staging/0.4.3-20260907-223552.json`.
+  - `backups/staging/cyberteam-staging-0.4.3-20260907-223319.dump`.
+  - Temporal run `01a07e0b-d69e-7011-a4e9-5c259a35f19f` and `autonomy.company_cycle` audit evidence at `2026-09-07T22:49:03Z`.
+- Next step:
+  - Count terminal discovery resolutions as durable dispositions, preserve explicit smoke-harness environment overrides, add regressions, rerun the full release gate, and promote the resulting immutable correction before beginning the strict soak. The soak remains gated on fresh passing hosted-model qualifications.
+
+### 2026-09-07T23:16:32Z — STEP-346 — Hardened readiness disposition and isolated-smoke safety
+- Files/services changed:
+  - Updated autonomous-company readiness so `resolved` and `superseded` discovery obligations remain recognized as durable dispositions while only nonterminal obligations contribute active work and owner blockers.
+  - Updated `scripts/compose-smoke.sh` to preserve explicitly inherited environment values after loading credentials from an env file, matching Docker Compose precedence and preventing an isolated test project from silently becoming staging.
+  - Added regressions for terminal discovery disposition and smoke-harness environment precedence. No running service, database record, credential, or persistent volume was changed.
+- Commands run:
+  - Ran focused Ruff and `31` lifecycle/readiness/smoke-harness tests.
+  - Ran containerized ShellCheck, Bash syntax validation, and diff hygiene.
+  - Ran the complete `scripts/quality-gate.sh` repository gate and both real PostgreSQL paths in `scripts/migration-rehearsal.sh`.
+- Result:
+  - Focused validation passed, including a hostile env file that attempts to replace the caller's Compose project, API endpoint, startup mode, and cleanup mode; the caller's isolated values remain authoritative while non-overridden owner credentials still load from the file.
+  - Full verification passed with `502` backend tests and `34` frontend tests, Ruff, compileall, optimized frontend build/typecheck, Alembic offline SQL, Python and runtime Node dependency audits, Compose validation, secret scan, Google Cloud isolation, FOSS/resource policy, and diff hygiene.
+  - Legacy pre-Alembic and representative seeded `0001` PostgreSQL migration rehearsals both reached head `0022` successfully.
+- Evidence:
+  - `backend/tests/test_autonomous_company_readiness.py::test_resolved_discovery_obligation_is_a_terminal_disposition`.
+  - `backend/tests/test_compose_smoke_shell.py::test_compose_smoke_preserves_explicit_environment_overrides`.
+  - Complete quality-gate and migration-rehearsal terminal results at `2026-09-07T23:16:32Z`.
+- Next step:
+  - Commit the verified hardening, build/scan/smoke immutable `0.4.4`, promote it backup-first, and verify readiness no longer reports resolved company-model unknowns as undispositioned. Start the strict soak only after all five cognitive capability contracts have fresh passing inference evidence.

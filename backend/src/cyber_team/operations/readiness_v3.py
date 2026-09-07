@@ -710,7 +710,11 @@ class AutonomousCompanyReadinessService:
         model_unknowns = {
             self._canonical_unknown(item) for item in (model.unknowns or [])
         } if model else set()
-        disposed_unknowns = {item.predicate for item in active_obligations}
+        # A terminal obligation is still a durable disposition. Resolved and
+        # superseded records explain why discovery stopped; excluding them makes
+        # an immutable older model look undispositioned after newer evidence has
+        # already closed the unknown.
+        disposed_unknowns = {item.predicate for item in discovery_obligations}
         undispositioned_unknowns = sorted(model_unknowns - disposed_unknowns)
         discovery_blocking = bool(owner_blockers or undispositioned_unknowns)
         discovery_section = {

@@ -474,6 +474,57 @@ async def test_company_unknown_without_discovery_disposition_is_blocking(
 
 
 @pytest.mark.asyncio
+async def test_resolved_discovery_obligation_is_a_terminal_disposition(
+    readiness_session_factory,
+):
+    now = utc_now()
+    async with readiness_session_factory() as session:
+        model = CompanyModelRevision(
+            id="model-resolved-unknown",
+            company_namespace="company:test",
+            revision=1,
+            status="active",
+            model={},
+            claim_ids=[],
+            unknowns=["business_description"],
+            disputes=[],
+            provenance_coverage=0.8,
+            confidence=0.8,
+            source_hash="model-resolved-unknown-hash",
+            activated_at=now,
+        )
+        session.add(model)
+        session.add(
+            DiscoveryObligation(
+                id="discovery-resolved",
+                company_namespace="company:test",
+                predicate="business_description",
+                question="What does the company do?",
+                priority="high",
+                status="resolved",
+                blocking=True,
+                company_model_revision_id=model.id,
+                source_types=["repository"],
+                attempted_source_ids=["source-repository"],
+                attempts=1,
+                max_attempts=3,
+                resolution={"reason": "Authoritative evidence resolved the unknown."},
+                idempotency_key="discovery-resolved",
+                resolved_at=now,
+            )
+        )
+        await session.commit()
+
+    result = await AutonomousCompanyReadinessService(llm_gateway=FakeLLM()).summary()
+
+    discovery = result["sections"]["discovery_obligations"]
+    assert discovery["status"] == "ready"
+    assert discovery["blocking"] is False
+    assert discovery["active"] == 0
+    assert discovery["undispositioned_unknowns"] == []
+
+
+@pytest.mark.asyncio
 async def test_exhausted_blocking_discovery_obligation_requires_owner_review(
     readiness_session_factory,
 ):

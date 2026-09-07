@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Docker Compose gives inherited shell values precedence over --env-file values.
+# Preserve that contract when loading credentials for the Python smoke client.
+declare -A inherited_env_values=()
+while IFS= read -r name; do
+  inherited_env_values["$name"]="${!name}"
+done < <(compgen -e)
+
 COMPOSE_SMOKE_SKIP_UP="${COMPOSE_SMOKE_SKIP_UP:-0}"
 COMPOSE_SMOKE_BUILD="${COMPOSE_SMOKE_BUILD:-1}"
 COMPOSE_SMOKE_CLEANUP="${COMPOSE_SMOKE_CLEANUP:-0}"
@@ -17,10 +24,24 @@ if [ ! -f "$COMPOSE_SMOKE_ENV_FILE" ] && [ "$COMPOSE_SMOKE_ENV_FILE" = "$ROOT_DI
 fi
 
 if [ -f "$COMPOSE_SMOKE_ENV_FILE" ]; then
+  declare -a inherited_override_names=()
+  while IFS= read -r name; do
+    if [[ ${inherited_env_values[$name]+present} ]]; then
+      inherited_override_names+=("$name")
+    fi
+  done < <(
+    sed -nE \
+      's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/p' \
+      "$COMPOSE_SMOKE_ENV_FILE"
+  )
   set -a
   # shellcheck disable=SC1090
   . "$COMPOSE_SMOKE_ENV_FILE"
   set +a
+  for name in "${inherited_override_names[@]}"; do
+    printf -v "$name" '%s' "${inherited_env_values[$name]}"
+    export "${name?}"
+  done
 fi
 
 cleanup() {
