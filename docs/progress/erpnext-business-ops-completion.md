@@ -8484,3 +8484,22 @@
 - Next step:
   - Commit the concurrent validation correction, build and verify immutable `0.4.7`, rerun isolated Compose smoke, promote only after it passes, and complete a live Temporal autonomy-cycle proof before public push and strict-soak reassessment.
 - Timestamp correction appended at `2026-09-08T23:14:55Z`: the STEP-349 execution entry was recorded at this UTC time (`2026-09-09T01:14:55+02:00` local); the rounded header must not be treated as exact evidence time.
+
+### 2026-09-08T23:53:40Z — STEP-350 — Patched newly disclosed frontend runtime vulnerabilities
+- Files/services changed:
+  - Updated Next.js and its matching ESLint configuration from `15.5.22` to the fixed compatible patch `15.5.25`.
+  - Updated the enforced `sharp` runtime override from `0.35.3` to `0.35.4` and regenerated `frontend/package-lock.json`.
+  - No running service or persistent data was changed; staging remained on `0.4.5`.
+- Commands run:
+  - Re-ran the full release gate after the provider-pool fix; stopped at the production Node audit when npm's refreshed advisory database identified the new issues.
+  - Queried npm package metadata and the machine-readable audit report to confirm affected and fixed ranges.
+  - Ran `npm ci`, production dependency audit, all `34` frontend tests, and the optimized production build/typecheck using the staging public API and WebSocket URLs.
+- Result:
+  - The gate's backend portion passed with `505` tests, Ruff, compileall, Alembic offline SQL through `0022`, and a clean Python dependency audit.
+  - The pre-update audit correctly rejected Next.js `<15.5.24` for `GHSA-p293-qw3h-jr36` and `GHSA-2xp9-vwfh-vxw4`, plus sharp `<0.35.4` for `GHSA-rgj7-g3m4-5g8c`.
+  - The updated production dependency graph reports zero vulnerabilities, and the Next.js `15.5.25` build plus all frontend tests pass.
+- Evidence:
+  - `frontend/package.json` and `frontend/package-lock.json`.
+  - npm audit advisory ranges recorded by the release gate at `2026-09-08T23:35Z`.
+- Next step:
+  - Commit the dependency hardening, run the complete release gate from the final commit, then build, scan, isolated-smoke, backup-first promote, and live-prove the resulting immutable candidate.
