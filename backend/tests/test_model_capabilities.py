@@ -288,6 +288,35 @@ async def test_ensure_fresh_does_not_repeat_provider_calls_for_fresh_suite(
 
 
 @pytest.mark.asyncio
+async def test_ensure_fresh_degrades_without_aborting_when_provider_is_unavailable(
+    capability_session_factory,
+):
+    gateway = FakeGateway()
+    gateway.validate_provider = AsyncMock(
+        return_value={
+            "provider": "llama_cpp",
+            "model": "local/test-model",
+            "mode": "unavailable",
+            "blocking": True,
+            "detail": "No completion-capable credential is available.",
+        }
+    )
+    service = ModelCapabilityService(llm_gateway=gateway)
+
+    result = await service.ensure_fresh()
+
+    assert result["status"] == "not_qualified"
+    assert result["blocking"] is True
+    assert result["refreshed"] is False
+    assert result["refresh_attempted"] is True
+    assert set(result["refreshed_tasks"]) == set(CAPABILITY_CASES)
+    assert result["evaluation_run_id"] is None
+    assert result["refresh_error"] == "ModelCapabilityNotQualifiedError"
+    assert "No completion-capable credential" in result["refresh_error_detail"]
+    assert gateway.calls == []
+
+
+@pytest.mark.asyncio
 async def test_ensure_fresh_renews_full_suite_inside_refresh_window(
     capability_session_factory,
     monkeypatch,

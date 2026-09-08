@@ -8415,3 +8415,28 @@
   - Complete quality-gate and migration-rehearsal terminal results at `2026-09-07T23:16:32Z`.
 - Next step:
   - Commit the verified hardening, build/scan/smoke immutable `0.4.4`, promote it backup-first, and verify readiness no longer reports resolved company-model unknowns as undispositioned. Start the strict soak only after all five cognitive capability contracts have fresh passing inference evidence.
+
+### 2026-09-08T13:44:20Z — STEP-347 — Promoted 0.4.4 and isolated model-capability cycle resilience
+- Files/services changed:
+  - Built and promoted immutable `cyber-team-core:0.4.4` and `cyber-team-ui:0.4.4` at commit `5f816e9afc50b8f736888bb7e052bd96b11b4112` after a fresh PostgreSQL staging backup.
+  - Preserved PostgreSQL, Redis, Qdrant, Temporal, OPA, ERPNext, SearXNG, and all persistent volumes; restarted Temporal and the Worker after diagnosing an interrupted pre-promotion scheduled execution.
+  - Added a bounded failure result to model-capability refresh so exhausted hosted inference remains fail-closed for cognitive work without aborting deterministic evidence, policy, mandate, and backlog reconciliation.
+  - Added a regression proving an unavailable completion provider returns explicit `not_qualified` evidence and performs no model call.
+- Commands run:
+  - Ran the full `0.4.4` release gate, two PostgreSQL migration rehearsals, exact-SHA Docker builds, Trivy scans, and an isolated Compose smoke under project `cyberteam-release-044`.
+  - Ran backup-first staging promotion, public health/readiness validation, authenticated live Compose smoke, Temporal schedule/worker inspection, and uniquely identified post-deploy company cycles.
+  - Ran `15` focused model-capability and autonomy-cycle tests, focused Ruff, and backend compileall for the resilience correction.
+- Result:
+  - Release verification passed with `502` backend tests, `34` frontend tests, all static/build/audit/security checks, real migration rehearsal, image scans, and isolated smoke.
+  - Public staging reports version `0.4.4`, exact build SHA `5f816e9afc50b8f736888bb7e052bd96b11b4112`, dependency readiness `ready`, and authenticated owner-console smoke success.
+  - Autonomous-company readiness now reports no undispositioned unknowns; all fourteen desired/effective domains have specifications, agents, mandates, and objectives.
+  - Post-restart workflow `autonomous-company-cycle-release-044-post-temporal-20260908T051842Z` completed its deterministic stages. A later scheduled cycle exposed a separate resilience defect: concurrent completion-capability exhaustion caused `ensure_fresh` to raise and abort the whole cycle. The local correction preserves the model-capability blocker while allowing deterministic stages to continue.
+  - Strict autonomy soak has not started: hosted Mistral completion qualification remains externally blocked and newly acquired signals still require bounded reconciliation attempts.
+- Evidence:
+  - `dist/releases/0.4.4.json`.
+  - `dist/promotions/staging/0.4.4-20260908-045012.json`.
+  - `backups/staging/cyberteam-staging-0.4.4-20260908-043807.dump`.
+  - Temporal workflow `autonomous-company-cycle-release-044-post-temporal-20260908T051842Z` and failed scheduled workflow `autonomous-company-cycle-scheduled-2026-09-08T05:30:00Z`.
+  - `backend/src/cyber_team/operations/model_cap.py::ModelCapabilityService.ensure_fresh` and `backend/tests/test_model_capabilities.py::test_ensure_fresh_degrades_without_aborting_when_provider_is_unavailable`.
+- Next step:
+  - Commit the resilience correction, build/scan/smoke immutable `0.4.5`, promote it backup-first, and prove a completion-capability outage no longer prevents a scheduled autonomous company cycle from completing deterministic reconciliation.

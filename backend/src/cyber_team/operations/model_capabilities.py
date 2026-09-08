@@ -335,14 +335,31 @@ class ModelCapabilityService:
             tasks = self._refresh_tasks(summary)
             if not tasks:
                 return {**summary, "refreshed": False}
-            result = await self.evaluate(
-                tasks=tasks,
-                actor=actor,
-            )
+            try:
+                result = await self.evaluate(
+                    tasks=tasks,
+                    actor=actor,
+                )
+            except ModelCapabilityNotQualifiedError as exc:
+                # Provider validation can fail after another concurrent cycle has
+                # quarantined exhausted credentials. Cognitive work must remain
+                # fail-closed, but the deterministic company cycle still needs to
+                # reconcile evidence, mandates, policies, and backlogs.
+                unavailable = await self.summary()
+                return {
+                    **unavailable,
+                    "refreshed": False,
+                    "refresh_attempted": True,
+                    "refreshed_tasks": tasks,
+                    "evaluation_run_id": None,
+                    "refresh_error": type(exc).__name__,
+                    "refresh_error_detail": str(exc)[:500],
+                }
             refreshed = await self.summary()
             return {
                 **refreshed,
                 "refreshed": True,
+                "refresh_attempted": True,
                 "refreshed_tasks": tasks,
                 "evaluation_run_id": result["run_id"],
             }
