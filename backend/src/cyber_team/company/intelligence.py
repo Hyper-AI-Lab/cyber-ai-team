@@ -1776,12 +1776,30 @@ class CompanyIntelligenceService:
             if field in researchable
         ][: max(0, min(settings.company_research_queries_per_cycle, 5))]
         created = 0
+        failures = 0
         results = []
         for query in queries:
-            result = await self.research(
-                query,
-                company_namespace=model_revision.get("company_namespace"),
-            )
+            try:
+                result = await self.research(
+                    query,
+                    company_namespace=model_revision.get("company_namespace"),
+                )
+            except (httpx.HTTPError, json.JSONDecodeError) as exc:
+                failures += 1
+                await self._mark_source_error(
+                    str(model_revision.get("company_namespace") or settings.company_namespace),
+                    "public_research",
+                    exc,
+                )
+                results.append(
+                    {
+                        "query": query,
+                        "status": "failed",
+                        "signal_id": None,
+                        "error": type(exc).__name__,
+                    }
+                )
+                continue
             created += int(not result.get("duplicate", False))
             results.append(
                 {
@@ -1791,9 +1809,10 @@ class CompanyIntelligenceService:
                 }
             )
         return {
-            "status": "completed",
+            "status": "degraded" if failures else "completed",
             "queries": results,
             "created": created,
+            "failed": failures,
         }
 
     async def _upsert_claim(

@@ -8440,3 +8440,25 @@
   - `backend/src/cyber_team/operations/model_cap.py::ModelCapabilityService.ensure_fresh` and `backend/tests/test_model_capabilities.py::test_ensure_fresh_degrades_without_aborting_when_provider_is_unavailable`.
 - Next step:
   - Commit the resilience correction, build/scan/smoke immutable `0.4.5`, promote it backup-first, and prove a completion-capability outage no longer prevents a scheduled autonomous company cycle from completing deterministic reconciliation.
+
+### 2026-09-08T14:46:29Z — STEP-348 — Promoted 0.4.5 and bounded public-research source failures
+- Files/services changed:
+  - Built, scanned, isolated-smoked, and promoted immutable `cyber-team-core:0.4.5` and `cyber-team-ui:0.4.5` at commit `0e53a7f3f83669726aa672983964d344c84dcfd1` after a fresh PostgreSQL backup.
+  - Updated bounded company-model research so expected SearXNG HTTP and response-decoding failures become per-query `degraded` evidence, preserve successful sibling queries, and update durable source error state instead of aborting the entire autonomy cycle.
+  - Added regressions for a total SearXNG read timeout and a partial-success research batch.
+- Commands run:
+  - Ran the full `0.4.5` release gate, two real PostgreSQL migration rehearsals, exact-SHA image builds, Trivy scans, disposable project `cyberteam-release-045` Compose smoke, promotion dry-run, and backup-first staging promotion with live authenticated smoke.
+  - Started uniquely identified Temporal workflow `autonomous-company-cycle-release-045-20260908T1436Z`, inspected Worker failure evidence and PostgreSQL audit/control records, then ran focused Ruff, compileall, and `30` company-intelligence/autonomy-cycle tests for the adapter correction.
+- Result:
+  - Release verification passed with `503` backend tests, `34` frontend tests, both migration rehearsals, all repository policy/security checks, and zero Trivy findings in both production images.
+  - Public staging reports version `0.4.5`, exact build SHA `0e53a7f3f83669726aa672983964d344c84dcfd1`, dependency readiness `ready`, and successful owner-console smoke.
+  - The live Temporal proof confirmed the model-capability correction: after all hosted completion slots failed qualification, the cycle continued through evidence acquisition, claim disposition, strategy blocking, operating-model synthesis, and Observer review. It then exposed a separate uncaught `httpx.ReadTimeout` from bounded SearXNG research.
+  - The local adapter correction passes all focused checks and records the source outage without fabricating research results or discarding successful queries.
+- Evidence:
+  - `dist/releases/0.4.5.json`.
+  - `dist/promotions/staging/0.4.5-20260908-143433.json`.
+  - `backups/staging/cyberteam-staging-0.4.5-20260908-143019.dump`.
+  - `backend/src/cyber_team/operations/model_capabilities.py::ModelCapabilityService.ensure_fresh` corrects the path typo in STEP-347.
+  - `backend/src/cyber_team/company/intelligence.py::CompanyIntelligenceService.research_model_unknowns` and the two `test_public_research_*` regressions.
+- Next step:
+  - Commit the research-adapter correction, build/scan/smoke immutable `0.4.6`, promote it backup-first, and prove the same live completion-capacity plus SearXNG-degradation scenario closes its Temporal workflow successfully.

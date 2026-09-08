@@ -4,6 +4,7 @@ from base64 import b64encode
 from datetime import timedelta
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from sqlalchemy import event, select
 from sqlalchemy.dialects import postgresql
@@ -118,6 +119,65 @@ def test_pending_signal_query_claims_rows_without_waiting():
 
     assert "FOR UPDATE SKIP LOCKED" in compiled
     assert query._limit_clause.value == 200
+
+
+@pytest.mark.asyncio
+async def test_public_research_timeout_degrades_without_aborting_cycle(monkeypatch):
+    monkeypatch.setattr(settings, "searxng_enabled", True)
+    service = CompanyIntelligenceService()
+    service.research = AsyncMock(side_effect=httpx.ReadTimeout("research timed out"))
+    service._mark_source_error = AsyncMock()
+
+    result = await service.research_model_unknowns(
+        {
+            "company_namespace": "company:test",
+            "model": {"legal_name": "Hyper AI Lab"},
+            "unknowns": ["business_description"],
+        }
+    )
+
+    assert result == {
+        "status": "degraded",
+        "queries": [
+            {
+                "query": '"Hyper AI Lab" business activities and company description',
+                "status": "failed",
+                "signal_id": None,
+                "error": "ReadTimeout",
+            }
+        ],
+        "created": 0,
+        "failed": 1,
+    }
+    service._mark_source_error.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_public_research_keeps_successes_when_later_query_fails(monkeypatch):
+    monkeypatch.setattr(settings, "searxng_enabled", True)
+    service = CompanyIntelligenceService()
+    service.research = AsyncMock(
+        side_effect=[
+            {"id": "signal-1", "status": "created", "duplicate": False},
+            httpx.ReadTimeout("research timed out"),
+        ]
+    )
+    service._mark_source_error = AsyncMock()
+
+    result = await service.research_model_unknowns(
+        {
+            "company_namespace": "company:test",
+            "model": {"legal_name": "Hyper AI Lab"},
+            "unknowns": ["offerings", "customer_segments"],
+        }
+    )
+
+    assert result["status"] == "degraded"
+    assert result["created"] == 1
+    assert result["failed"] == 1
+    assert result["queries"][0]["signal_id"] == "signal-1"
+    assert result["queries"][1]["error"] == "ReadTimeout"
+    service._mark_source_error.assert_awaited_once()
 
 
 @pytest.mark.asyncio
