@@ -483,9 +483,11 @@ class LLMGateway:
         credentials = route["api_keys"] or ([""] if route["local"] else [])
         pool = self._credential_pool_status(route)
         try:
-            responses: list[tuple[int, int | None, str | None]] = []
             async with httpx.AsyncClient(timeout=10) as client:
-                for index, api_key in enumerate(credentials):
+                async def validate_credential(
+                    index: int,
+                    api_key: str,
+                ) -> tuple[int, int | None, str | None]:
                     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
                     try:
                         response = await client.get(route["models_url"], headers=headers)
@@ -495,7 +497,14 @@ class LLMGateway:
                         status_code = getattr(exc, "status_code", None)
                         status_code = int(status_code) if status_code is not None else None
                         category = classify_llm_exception(exc)
-                    responses.append((index + 1, status_code, category))
+                    return index + 1, status_code, category
+
+                responses = await asyncio.gather(
+                    *(
+                        validate_credential(index, api_key)
+                        for index, api_key in enumerate(credentials)
+                    )
+                )
             healthy_slots = [
                 slot for slot, status_code, _ in responses if status_code == 200
             ]

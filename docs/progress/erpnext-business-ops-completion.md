@@ -8462,3 +8462,25 @@
   - `backend/src/cyber_team/company/intelligence.py::CompanyIntelligenceService.research_model_unknowns` and the two `test_public_research_*` regressions.
 - Next step:
   - Commit the research-adapter correction, build/scan/smoke immutable `0.4.6`, promote it backup-first, and prove the same live completion-capacity plus SearXNG-degradation scenario closes its Temporal workflow successfully.
+
+### 2026-09-09T00:00:00Z — STEP-349 — Rejected 0.4.6 after isolated provider-pool latency failure
+- Files/services changed:
+  - Built immutable `cyber-team-core:0.4.6` and `cyber-team-ui:0.4.6` at commit `5942e5db8362f9819156ca447f7b107ba7ff107e`; the candidate was not promoted and staging remained on `0.4.5`.
+  - Updated hosted LLM provider validation so all configured credential slots are probed concurrently under the existing per-request timeout while preserving deterministic slot ordering, health synchronization, quarantine state, and redacted status output.
+  - Added a regression proving all five configured Mistral credential probes execute concurrently.
+- Commands run:
+  - Ran the full `0.4.6` release gate, both real PostgreSQL migration rehearsals, exact-SHA Docker builds, and Trivy scans.
+  - Ran isolated Compose smoke under disposable project `cyberteam-release-046`, observed its integration-status timeout, removed only that project's containers and volumes, and left the live staging project untouched.
+  - Ran `66` focused LLM gateway, integration-route, company-intelligence, and model-capability tests plus focused Ruff and compileall.
+- Result:
+  - The release gate passed with `505` backend tests, `34` frontend tests, all migration, build, audit, policy, security, and diff checks, and zero image-scan findings.
+  - The isolated smoke reached healthy API/UI, owner login, and dashboard reads, then correctly rejected promotion when `/api/integrations/status` exceeded the smoke client's `15`-second timeout.
+  - Root cause was latency amplification in `LLMGateway._validate_route`: five provider probes, each with a ten-second timeout, ran sequentially. The correction bounds pool validation by the slowest individual probe rather than the sum of all probes and passes all focused regressions.
+  - No live service, persistent data, credential, or owner-authored `docker-compose.yml` change was modified by the rejected candidate.
+- Evidence:
+  - `dist/releases/0.4.6.json` records the rejected candidate and its successful pre-smoke checks.
+  - `backend/src/cyber_team/llm/gateway.py::LLMGateway._validate_route`.
+  - `backend/tests/test_llm_gateway.py::test_validate_provider_validates_all_five_credentials`.
+- Next step:
+  - Commit the concurrent validation correction, build and verify immutable `0.4.7`, rerun isolated Compose smoke, promote only after it passes, and complete a live Temporal autonomy-cycle proof before public push and strict-soak reassessment.
+- Timestamp correction appended at `2026-09-08T23:14:55Z`: the STEP-349 execution entry was recorded at this UTC time (`2026-09-09T01:14:55+02:00` local); the rounded header must not be treated as exact evidence time.

@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -123,6 +124,8 @@ async def test_validate_provider_validates_all_five_credentials(monkeypatch):
     keys = [f"pool-key-{index}" for index in range(1, 6)]
     configure_mistral_pool(monkeypatch, keys)
     seen_authorization = []
+    active_requests = 0
+    max_active_requests = 0
 
     class FakeResponse:
         status_code = 200
@@ -138,8 +141,13 @@ async def test_validate_provider_validates_all_five_credentials(monkeypatch):
             return None
 
         async def get(self, url, headers):
+            nonlocal active_requests, max_active_requests
             assert url == "https://api.mistral.ai/v1/models"
             seen_authorization.append(headers["Authorization"])
+            active_requests += 1
+            max_active_requests = max(max_active_requests, active_requests)
+            await asyncio.sleep(0)
+            active_requests -= 1
             return FakeResponse()
 
     monkeypatch.setattr("cyber_team.llm.gateway.httpx.AsyncClient", FakeClient)
@@ -168,6 +176,7 @@ async def test_validate_provider_validates_all_five_credentials(monkeypatch):
         failed_slots={},
     )
     assert seen_authorization == [f"Bearer {key}" for key in keys]
+    assert max_active_requests == 5
 
 
 @pytest.mark.asyncio
