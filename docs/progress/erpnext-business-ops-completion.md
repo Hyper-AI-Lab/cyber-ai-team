@@ -8572,3 +8572,27 @@
   - Focused verification: `1 passed`, Ruff clean, Bash syntax valid, and `git diff --check` clean.
 - Next step:
   - Commit the container-prefix isolation correction, build and verify immutable `0.4.10`, pass an exact isolated Compose smoke, promote backup-first, verify live Temporal scheduling and readiness, then push and require green GitHub CI.
+
+### 2026-09-09T12:48:43Z — STEP-354 — Promoted 0.4.10 and isolated the remaining inference-capacity blocker
+- Files/services changed:
+  - Built, scanned, isolated-smoked, and backup-first promoted immutable `cyber-team-core:0.4.10` and `cyber-team-ui:0.4.10` at commit `29b68e6dbf117b56a825403ba1777e81dd0204cb`.
+  - No database schema or persistent control data was destructively changed; the release reused the additive schema through Alembic revision `0022`.
+- Commands run:
+  - Ran the complete `0.4.10` release gate with `507` backend tests, `34` frontend tests, Ruff, compileall, Alembic offline SQL, both real PostgreSQL migration rehearsals, production dependency audits, Compose/security/GCP/FOSS checks, exact-SHA Docker builds, and Trivy scans.
+  - Passed exact-image Compose smoke under disposable project `cyberteam-release-0410`; all containers and its network used the isolated prefix, and all labeled volumes were removed afterward.
+  - Ran promotion dry-run, created PostgreSQL backup `backups/staging/cyberteam-staging-0.4.10-20260909-071657.dump`, promoted staging, and passed the public authenticated smoke.
+  - Triggered explicit live model-capability evaluation `modelcaprun_8ee9aae1e0524c13af67d74bb35a0344` and inspected public health, dependency readiness, autonomy readiness, Temporal membership, and the latest scheduled reconciliation.
+- Result:
+  - Public staging reports version `0.4.10`, exact build SHA `29b68e6dbf117b56a825403ba1777e81dd0204cb`, and dependency readiness `ready` for PostgreSQL, Redis, Qdrant, Temporal, and OPA.
+  - The live Temporal lifecycle controller is `ready`; a scheduled reconciliation completed at `2026-09-09T12:45:06.990764Z` with 14 effective domains and no missing specifications, agents, mandates, or objectives.
+  - Company signals and business events are fully dispositioned, all `35,272` terminal work items have outcome assessments, and the low-trust readiness correction no longer masks canonical operations.
+  - Both production images have zero Trivy findings; Python and production Node dependency audits have zero known vulnerabilities.
+  - The only blocking readiness condition is external Mistral completion capacity. Requalification recorded zero of five contracts passed: the first three failed `capacity_exhausted` and the final two failed closed after the circuit breaker opened. Provider model-list checks alone are therefore not treated as inference proof.
+- Evidence:
+  - `dist/releases/0.4.10.json`.
+  - `dist/promotions/staging/0.4.10-20260909-072014.json`.
+  - `backups/staging/cyberteam-staging-0.4.10-20260909-071657.dump`.
+  - Model capability run `modelcaprun_8ee9aae1e0524c13af67d74bb35a0344`.
+  - Operating-model reconciliation `reconcile_5a9c09a3bf8e4b3e9cfafbfa785eb99b`.
+- Next step:
+  - Commit this release evidence, push the complete release chain to `Hyper-AI-Lab/cyber-ai-team`, require green GitHub push/manual CI, then obtain at least one credential with actual chat-completion capacity, rerun qualification, and start a fresh uninterrupted strict 24-hour autonomy soak.
