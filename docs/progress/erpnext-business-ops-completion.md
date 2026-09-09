@@ -8526,3 +8526,29 @@
   - `backend/tests/test_integration_routes.py::test_integration_status_bounds_slow_provider_validation`.
 - Next step:
   - Commit the route-level hardening, build and scan immutable `0.4.8`, pass isolated Compose smoke, then perform backup-first staging promotion and a live Temporal autonomy-cycle proof before public push and strict-soak reassessment.
+
+### 2026-09-09T06:25:23Z — STEP-352 — Promoted 0.4.8, proved cycle resilience, and isolated smoke networks
+- Files/services changed:
+  - Built, scanned, isolated-smoked, and backup-first promoted immutable `cyber-team-core:0.4.8` and `cyber-team-ui:0.4.8` at commit `59ed984b2b54db95ad528e88f7600b7e48206916`.
+  - Updated `scripts/compose-smoke.sh` so an inherited isolated `COMPOSE_PROJECT_NAME` derives a matching private `CYBERTEAM_NETWORK_NAME` unless the caller explicitly supplies a network.
+  - Updated autonomous-company readiness so stale low-trust evidence retries remain visible as `advisory_degraded` without masking canonical operation readiness; stale trusted signals and undispositioned processed signals remain blocking.
+  - Recreated only the wedged `cyberteam-autonomous-company-cycle-v3` Temporal schedule from the declarative controller and restarted the API after its state returned `ready`.
+- Commands run:
+  - Ran the complete `0.4.8` release gate with `507` backend tests, `34` frontend tests, Ruff, compileall, Alembic offline SQL, both PostgreSQL migration rehearsals, production dependency audits, Compose/security/GCP/FOSS checks, exact-SHA image builds, and Trivy scans.
+  - Passed disposable Compose smoke under project `cyberteam-release-048`, ran promotion dry-run, created PostgreSQL backup `backups/staging/cyberteam-staging-0.4.8-20260909-054431.dump`, promoted staging, and passed the public authenticated smoke.
+  - Ran live Temporal workflow `autonomous-company-cycle-release-048-20260909T054911Z` and inspected its terminal result, audit evidence, model capability evidence, provider pool state, schedule APIs, and Temporal membership.
+  - Ran `14` focused readiness/smoke-shell tests, Ruff, compileall, shell syntax, and diff hygiene; repeated smoke under `cyberteam-release-048-isolation` and removed only its containers, network, and labeled volumes.
+- Result:
+  - Public staging reports `0.4.8`, exact build SHA `59ed984b2b54db95ad528e88f7600b7e48206916`, and dependency readiness `ready`.
+  - The live autonomy cycle completed every deterministic stage despite hosted completion-capacity exhaustion: evidence acquisition, model-capability recording, operating-model synthesis, Observer agreement, all domain policy checks, role/mandate convergence, discovery reconciliation, company-context planning, policy qualification, backlog reconciliation, and control evidence.
+  - Investigation found earlier disposable release stacks had inherited `cyberteam-staging-network`; their Temporal servers briefly joined the live persistence-backed membership ring, leaving a wedged schedule after teardown. The schedule was replaced without deleting workflow history, and the controller now returns `ready`.
+  - The corrected smoke created `cyberteam-release-048-isolation-network`; after cleanup, live Temporal membership had only `172.21.0.8` with a fresh heartbeat, proving no new cross-stack member was introduced.
+  - Remaining strict-soak blocker is external cognitive capacity: all five task-level model capability contracts recorded fail-closed `capacity_exhausted` or `circuit_open` evidence. Four slots answer model-list validation, but none completed inference during qualification.
+- Evidence:
+  - `dist/releases/0.4.8.json` and `dist/promotions/staging/0.4.8-20260909-054820.json`.
+  - Temporal workflow `autonomous-company-cycle-release-048-20260909T054911Z`, run `01a084b6-8f84-785a-85b7-430fb6fba62b`, completed at `2026-09-09T05:53:22.143482Z`.
+  - `scripts/compose-smoke.sh` and `backend/tests/test_compose_smoke_shell.py`.
+  - `backend/src/cyber_team/operations/readiness_v3.py` and `backend/tests/test_autonomous_company_readiness.py`.
+  - Temporal server membership diagnostics aligned with the upstream 20-second bootstrap liveness behavior documented in `temporalio/temporal#11108`.
+- Next step:
+  - Commit the smoke-isolation and readiness corrections, build/verify immutable `0.4.9`, deploy it backup-first, push the complete release chain publicly, require green GitHub CI, then rerun model capability qualification when at least one hosted credential has real completion capacity before starting the strict 24-hour soak.

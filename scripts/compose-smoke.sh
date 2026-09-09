@@ -44,6 +44,13 @@ if [ -f "$COMPOSE_SMOKE_ENV_FILE" ]; then
   done
 fi
 
+# A caller-provided project name denotes an isolated smoke stack. Do not let a
+# network name loaded from a staging env file attach that stack to live services.
+if [[ ${inherited_env_values[COMPOSE_PROJECT_NAME]+present} ]] \
+  && [[ ! ${inherited_env_values[CYBERTEAM_NETWORK_NAME]+present} ]]; then
+  export CYBERTEAM_NETWORK_NAME="${COMPOSE_PROJECT_NAME}-network"
+fi
+
 cleanup() {
   if [ "$COMPOSE_SMOKE_CLEANUP" = "1" ]; then
     docker compose --env-file "$COMPOSE_SMOKE_ENV_FILE" down --remove-orphans

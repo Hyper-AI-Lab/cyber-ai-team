@@ -155,6 +155,11 @@ async def test_stale_claim_extraction_failure_is_an_explicit_blocker(
     assert extraction["status"] == "stale_failed"
     assert extraction["blocking"] is True
     assert extraction["stale_failed"] == 1
+    signals = result["sections"]["company_signals"]
+    assert signals["status"] == "stale_pending"
+    assert signals["blocking"] is True
+    assert signals["required_stale_pending"] == 1
+    assert signals["advisory_stale_pending"] == 0
 
 
 @pytest.mark.asyncio
@@ -204,6 +209,11 @@ async def test_stale_low_trust_extraction_is_visible_but_not_a_global_blocker(
     assert extraction["status"] == "advisory_degraded"
     assert extraction["blocking"] is False
     assert extraction["advisory_stale_failed"] == 1
+    signals = result["sections"]["company_signals"]
+    assert signals["status"] == "advisory_degraded"
+    assert signals["blocking"] is False
+    assert signals["required_stale_pending"] == 0
+    assert signals["advisory_stale_pending"] == 1
 
 
 @pytest.mark.asyncio

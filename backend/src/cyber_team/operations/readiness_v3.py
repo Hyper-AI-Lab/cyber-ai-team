@@ -38,6 +38,12 @@ from cyber_team.db.models import (
 class AutonomousCompanyReadinessService:
     """Explain autonomy readiness without hiding unknown or transitional state."""
 
+    REQUIRED_SIGNAL_TRUST_CLASSES = {
+        "owner_locked",
+        "canonical",
+        "authenticated",
+        "internal",
+    }
     CRITICAL_MODEL_FIELDS = {
         "business_description",
         "offerings",
@@ -92,7 +98,7 @@ class AutonomousCompanyReadinessService:
                             CompanySignal.status == "pending",
                             CompanySignal.claim_extraction_status == "failed",
                             CompanySignal.trust_class.in_(
-                                {"owner_locked", "canonical", "authenticated", "internal"}
+                                self.REQUIRED_SIGNAL_TRUST_CLASSES
                             ),
                             CompanySignal.received_at <= extraction_stale_before,
                         )
@@ -106,7 +112,7 @@ class AutonomousCompanyReadinessService:
                             CompanySignal.status == "pending",
                             CompanySignal.claim_extraction_status == "failed",
                             CompanySignal.trust_class.notin_(
-                                {"owner_locked", "canonical", "authenticated", "internal"}
+                                self.REQUIRED_SIGNAL_TRUST_CLASSES
                             ),
                             CompanySignal.received_at <= extraction_stale_before,
                         )
@@ -144,6 +150,23 @@ class AutonomousCompanyReadinessService:
                         )
                     )
                 ).scalar_one()
+            )
+            required_stale_pending_signals = int(
+                (
+                    await session.execute(
+                        select(func.count(CompanySignal.id)).where(
+                            CompanySignal.status == "pending",
+                            CompanySignal.trust_class.in_(
+                                self.REQUIRED_SIGNAL_TRUST_CLASSES
+                            ),
+                            CompanySignal.received_at <= extraction_stale_before,
+                        )
+                    )
+                ).scalar_one()
+            )
+            advisory_stale_pending_signals = max(
+                0,
+                stale_pending_signals - required_stale_pending_signals,
             )
             undispositioned_processed_signals = int(
                 (
@@ -388,14 +411,16 @@ class AutonomousCompanyReadinessService:
         }
         source_freshness = self._source_freshness(sources)
         signal_plane_blocking = bool(
-            stale_pending_signals or undispositioned_processed_signals
+            required_stale_pending_signals or undispositioned_processed_signals
         )
         signal_plane = {
             "status": (
                 "undispositioned"
                 if undispositioned_processed_signals
                 else "stale_pending"
-                if stale_pending_signals
+                if required_stale_pending_signals
+                else "advisory_degraded"
+                if advisory_stale_pending_signals
                 else "processing"
                 if signal_counts.get("pending", 0)
                 else "ready"
@@ -404,6 +429,8 @@ class AutonomousCompanyReadinessService:
             "counts": signal_counts,
             "disposition_counts": signal_disposition_counts,
             "stale_pending": stale_pending_signals,
+            "required_stale_pending": required_stale_pending_signals,
+            "advisory_stale_pending": advisory_stale_pending_signals,
             "undispositioned_processed": undispositioned_processed_signals,
             "processing_window_seconds": max(
                 1, settings.business_event_readiness_stale_after_seconds
@@ -411,8 +438,10 @@ class AutonomousCompanyReadinessService:
             "detail": (
                 "Processed company signals are missing a terminal disposition."
                 if undispositioned_processed_signals
-                else "Company signals exceeded the evidence-processing window."
-                if stale_pending_signals
+                else "Trusted company signals exceeded the evidence-processing window."
+                if required_stale_pending_signals
+                else "Low-trust evidence is retrying without blocking canonical operations."
+                if advisory_stale_pending_signals
                 else "Company signals are being processed within the allowed window."
                 if signal_counts.get("pending", 0)
                 else "Every company signal has a finite recorded disposition."
