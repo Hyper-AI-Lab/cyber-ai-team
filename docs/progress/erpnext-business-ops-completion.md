@@ -8596,3 +8596,19 @@
   - Operating-model reconciliation `reconcile_5a9c09a3bf8e4b3e9cfafbfa785eb99b`.
 - Next step:
   - Commit this release evidence, push the complete release chain to `Hyper-AI-Lab/cyber-ai-team`, require green GitHub push/manual CI, then obtain at least one credential with actual chat-completion capacity, rerun qualification, and start a fresh uninterrupted strict 24-hour autonomy soak.
+
+### 2026-09-09T12:56:46Z — STEP-355 — Published the release chain and passed GitHub push/manual CI
+- Files/services changed:
+  - Pushed the complete 13-commit lifecycle/release chain from `50c549c` through release-evidence commit `1dc2b8f8f9d0ad4ba03c2a59464cb5dba7b2eed8` to public repository `Hyper-AI-Lab/cyber-ai-team` on `main`.
+  - No staging runtime, database, credential, or owner-authored local Compose change was modified during CI verification.
+- Commands run:
+  - Pushed `main`, watched GitHub push CI run `34353297979` to completion, triggered the full `workflow_dispatch` path, and watched manual CI run `34353658789` to completion.
+- Result:
+  - Push CI passed backend, frontend, real PostgreSQL migration upgrade/rehearsal, dependency audits, Compose validation, secret scan, GCP isolation, FOSS resource policy, and diff hygiene.
+  - Manual CI passed all six jobs, including the conditional Docker Compose smoke, exact-SHA image build/Trivy scan, and Prometheus/alert-rule observability checks.
+  - The same conditional jobs used by scheduled CI are green on the current commit; the next natural cron event remains the authoritative scheduled-event confirmation.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/34353297979`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/34353658789`.
+- Next step:
+  - Push this final evidence-only commit, confirm the public remote matches local `HEAD`, then obtain at least one Mistral credential with actual chat-completion capacity before rerunning qualification and beginning a new strict uninterrupted 24-hour autonomy soak.
