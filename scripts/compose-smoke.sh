@@ -50,6 +50,10 @@ if [[ ${inherited_env_values[COMPOSE_PROJECT_NAME]+present} ]] \
   && [[ ! ${inherited_env_values[CYBERTEAM_NETWORK_NAME]+present} ]]; then
   export CYBERTEAM_NETWORK_NAME="${COMPOSE_PROJECT_NAME}-network"
 fi
+if [[ ${inherited_env_values[COMPOSE_PROJECT_NAME]+present} ]] \
+  && [[ ! ${inherited_env_values[CYBERTEAM_CONTAINER_PREFIX]+present} ]]; then
+  export CYBERTEAM_CONTAINER_PREFIX="${COMPOSE_PROJECT_NAME}"
+fi
 
 cleanup() {
   if [ "$COMPOSE_SMOKE_CLEANUP" = "1" ]; then

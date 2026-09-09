@@ -8552,3 +8552,23 @@
   - Temporal server membership diagnostics aligned with the upstream 20-second bootstrap liveness behavior documented in `temporalio/temporal#11108`.
 - Next step:
   - Commit the smoke-isolation and readiness corrections, build/verify immutable `0.4.9`, deploy it backup-first, push the complete release chain publicly, require green GitHub CI, then rerun model capability qualification when at least one hosted credential has real completion capacity before starting the strict 24-hour soak.
+
+### 2026-09-09T06:54:11Z — STEP-353 — Rejected 0.4.9 after container-prefix isolation check
+- Files/services changed:
+  - Built and scanned immutable `cyber-team-core:0.4.9` and `cyber-team-ui:0.4.9` at commit `fa75bb525a63b94999687fba3a56c5b2c04b56be`; the candidate was not promoted and staging remained on `0.4.8`.
+  - Extended `scripts/compose-smoke.sh` so an inherited isolated `COMPOSE_PROJECT_NAME` derives both a private network name and a private container prefix unless either value is explicitly supplied by the caller.
+  - Extended the smoke-shell regression to cover an unsafe staging container prefix, automatic isolated-prefix derivation, and explicit caller override preservation.
+- Commands run:
+  - Ran the complete `0.4.9` release gate with `507` backend tests, `34` frontend tests, Ruff, compileall, Alembic offline SQL, both real PostgreSQL migration rehearsals, production dependency audits, Compose/security/GCP/FOSS checks, exact-SHA image builds, and Trivy scans.
+  - Started disposable smoke project `cyberteam-release-049`; Compose created its private network and labeled volumes, then correctly stopped before startup when the staging env's fixed `cyberteam-staging-*` container names collided with live containers.
+  - Removed only the disposable project's labeled volumes and ran the focused smoke-shell test, Ruff, Bash syntax check, and diff hygiene.
+- Result:
+  - All pre-smoke release checks passed, but `0.4.9` was correctly withheld because its exact runtime smoke did not complete.
+  - No live container, network, persistent volume, data, or credential was changed by the rejected candidate.
+  - Isolated smoke stacks now derive both `CYBERTEAM_NETWORK_NAME=${COMPOSE_PROJECT_NAME}-network` and `CYBERTEAM_CONTAINER_PREFIX=${COMPOSE_PROJECT_NAME}`, closing the remaining staging-env collision path while preserving explicit operator overrides.
+- Evidence:
+  - `dist/releases/0.4.9.json` records successful quality, migration, build, and image-scan checks with `compose_smoke=0`.
+  - `scripts/compose-smoke.sh` and `backend/tests/test_compose_smoke_shell.py`.
+  - Focused verification: `1 passed`, Ruff clean, Bash syntax valid, and `git diff --check` clean.
+- Next step:
+  - Commit the container-prefix isolation correction, build and verify immutable `0.4.10`, pass an exact isolated Compose smoke, promote backup-first, verify live Temporal scheduling and readiness, then push and require green GitHub CI.

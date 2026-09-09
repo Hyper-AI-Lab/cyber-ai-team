@@ -11,6 +11,7 @@ def test_compose_smoke_preserves_explicit_environment_overrides(tmp_path):
             [
                 "COMPOSE_PROJECT_NAME=unsafe-staging-project",
                 "CYBERTEAM_NETWORK_NAME=unsafe-staging-network",
+                "CYBERTEAM_CONTAINER_PREFIX=unsafe-staging-prefix",
                 "COMPOSE_SMOKE_SKIP_UP=0",
                 "COMPOSE_SMOKE_CLEANUP=1",
                 "API_BASE=https://wrong.example.test",
@@ -25,6 +26,7 @@ def test_compose_smoke_preserves_explicit_environment_overrides(tmp_path):
     fake_python.write_text(
         "#!/bin/sh\n"
         "printf '%s\\n' \"$COMPOSE_PROJECT_NAME\" \"$CYBERTEAM_NETWORK_NAME\" "
+        "\"$CYBERTEAM_CONTAINER_PREFIX\" "
         "\"$API_BASE\" \"$OWNER_EMAIL\" "
         "> \"$CAPTURE_PATH\"\n",
         encoding="utf-8",
@@ -55,11 +57,13 @@ def test_compose_smoke_preserves_explicit_environment_overrides(tmp_path):
     assert capture_path.read_text(encoding="utf-8").splitlines() == [
         "isolated-smoke-project",
         "isolated-smoke-project-network",
+        "isolated-smoke-project",
         "https://isolated.example.test",
         "owner-from-file@example.test",
     ]
 
     env["CYBERTEAM_NETWORK_NAME"] = "explicit-smoke-network"
+    env["CYBERTEAM_CONTAINER_PREFIX"] = "explicit-smoke-prefix"
     subprocess.run(
         ["bash", str(root / "scripts" / "compose-smoke.sh")],
         cwd=root,
@@ -68,6 +72,6 @@ def test_compose_smoke_preserves_explicit_environment_overrides(tmp_path):
         capture_output=True,
         text=True,
     )
-    assert capture_path.read_text(encoding="utf-8").splitlines()[1] == (
-        "explicit-smoke-network"
-    )
+    captured = capture_path.read_text(encoding="utf-8").splitlines()
+    assert captured[1] == "explicit-smoke-network"
+    assert captured[2] == "explicit-smoke-prefix"
