@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock
 
 from fastapi import FastAPI
@@ -5,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from cyber_team.api.routes.integrations import router as integrations_router
 from cyber_team.api.security import Principal, get_current_principal
+from cyber_team.config import settings
 
 
 def test_integration_status_route_returns_comms_status(monkeypatch):
@@ -50,6 +52,142 @@ def test_integration_status_route_returns_comms_status(monkeypatch):
     body = response.json()
     assert body["communications"][0]["channel"] == "email"
     assert body["communications"][0]["mode"] == "simulated"
+
+
+def test_integration_status_validates_independent_providers_concurrently(monkeypatch):
+    app = FastAPI()
+    app.include_router(integrations_router, prefix="/api/integrations")
+    state = {"started": set(), "event": None}
+
+    async def rendezvous(provider):
+        if state["event"] is None:
+            state["event"] = asyncio.Event()
+        state["started"].add(provider)
+        if len(state["started"]) == 2:
+            state["event"].set()
+        await asyncio.wait_for(state["event"].wait(), timeout=0.5)
+
+    class FakeERPNext:
+        configured = True
+
+        async def validate(self):
+            await rendezvous("erpnext")
+            return {
+                "provider": "erpnext",
+                "configured": True,
+                "mode": "live",
+                "status": "ready",
+                "detail": "ERPNext ready.",
+            }
+
+        def integration_status(self, validation):
+            return validation
+
+    class FakeLLMGateway:
+        async def validate_provider(self):
+            await rendezvous("mistral")
+            return {
+                "provider": "mistral",
+                "configured": True,
+                "mode": "live",
+                "status": "live",
+                "detail": "Mistral ready.",
+            }
+
+    app.state.comms_gateway = type(
+        "FakeCommsGateway",
+        (),
+        {
+            "integration_status": lambda _self: [],
+            "last_validation_result": lambda _self: None,
+        },
+    )()
+    app.state.erpnext = FakeERPNext()
+    app.state.llm_gateway = FakeLLMGateway()
+
+    async def mock_get_current_principal():
+        return Principal(
+            subject="owner",
+            email="owner@example.com",
+            role="owner",
+            token_type="access",
+        )
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.integrations.require_authorization",
+        mock_require_authorization,
+    )
+
+    response = TestClient(app).get("/api/integrations/status")
+
+    assert response.status_code == 200
+    assert state["started"] == {"erpnext", "mistral"}
+    assert response.json()["erpnext"]["mode"] == "live"
+    assert response.json()["llm"]["mode"] == "live"
+
+
+def test_integration_status_bounds_slow_provider_validation(monkeypatch):
+    app = FastAPI()
+    app.include_router(integrations_router, prefix="/api/integrations")
+    monkeypatch.setattr(settings, "integration_status_validation_timeout_seconds", 0.1)
+    monkeypatch.setattr(settings, "required_communication_providers", "erpnext")
+    monkeypatch.setattr(settings, "require_live_tool_executors", True)
+
+    class SlowERPNext:
+        configured = True
+
+        async def validate(self):
+            await asyncio.sleep(5)
+            raise AssertionError("bounded validation must cancel a stalled provider")
+
+        def integration_status(self, validation):
+            return {
+                "provider": "erpnext",
+                "configured": True,
+                "mode": "validation_failed",
+                "status": "validation_failed",
+                "detail": validation["detail"],
+                "last_validation_result": validation,
+            }
+
+    app.state.comms_gateway = type(
+        "FakeCommsGateway",
+        (),
+        {
+            "integration_status": lambda _self: [],
+            "last_validation_result": lambda _self: None,
+        },
+    )()
+    app.state.erpnext = SlowERPNext()
+
+    async def mock_get_current_principal():
+        return Principal(
+            subject="owner",
+            email="owner@example.com",
+            role="owner",
+            token_type="access",
+        )
+
+    async def mock_require_authorization(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.integrations.require_authorization",
+        mock_require_authorization,
+    )
+
+    response = TestClient(app).get("/api/integrations/status")
+
+    assert response.status_code == 200
+    erpnext = response.json()["erpnext"]
+    assert erpnext["mode"] == "validation_failed"
+    assert erpnext["last_validation_result"]["status"] == "validation_timeout"
+    assert erpnext["blocking"] is True
 
 
 def test_validate_integration_route_records_control_evidence(monkeypatch):

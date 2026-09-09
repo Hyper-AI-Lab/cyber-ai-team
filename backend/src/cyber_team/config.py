@@ -250,6 +250,7 @@ class Settings(BaseSettings):
     # ERPNext
     erpnext_url: str = "http://localhost:8100"
     erpnext_validation_ttl_seconds: int = 300
+    integration_status_validation_timeout_seconds: float = 12.0
     erpnext_site_name: str = "erpnext.hyperailab.com"
     erpnext_edge_domain: str = "erpnext.hyperailab.com"
     erpnext_published_port: int = 18100

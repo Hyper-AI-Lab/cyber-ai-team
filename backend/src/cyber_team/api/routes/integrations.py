@@ -1,5 +1,8 @@
 """Integration status routes."""
 
+import asyncio
+from collections.abc import Awaitable
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
@@ -13,6 +16,40 @@ router = APIRouter()
 
 class IntegrationValidationRequest(BaseModel):
     provider: str = Field(default="smtp", min_length=1, max_length=64)
+
+
+async def _bounded_status_validation(
+    provider: str,
+    validation: Awaitable[dict],
+    *,
+    configured: bool,
+) -> dict:
+    timeout = max(0.1, settings.integration_status_validation_timeout_seconds)
+    try:
+        return await asyncio.wait_for(validation, timeout=timeout)
+    except TimeoutError:
+        return {
+            "provider": provider,
+            "configured": configured,
+            "mode": "validation_timeout",
+            "status": "validation_timeout",
+            "blocking": True,
+            "detail": (
+                f"{provider} status validation exceeded the bounded "
+                f"{timeout:g}-second deadline."
+            ),
+            "checked_at": utc_now().isoformat() + "+00:00",
+        }
+    except Exception as exc:  # noqa: BLE001 - status reads must fail closed.
+        return {
+            "provider": provider,
+            "configured": configured,
+            "mode": "validation_failed",
+            "status": "validation_failed",
+            "blocking": True,
+            "detail": f"{provider} status validation failed: {type(exc).__name__}.",
+            "checked_at": utc_now().isoformat() + "+00:00",
+        }
 
 
 def _required_provider_names() -> set[str]:
@@ -75,10 +112,35 @@ async def integration_status(
         "erpnext_last_validation_result",
         None,
     )
+    llm_gateway = getattr(request.app.state, "llm_gateway", None)
+    validations: list[tuple[str, Awaitable[dict], bool]] = []
+    if erpnext and hasattr(erpnext, "validate"):
+        validations.append(("erpnext", erpnext.validate(), bool(erpnext.configured)))
+    if llm_gateway and hasattr(llm_gateway, "validate_provider"):
+        llm_configured = bool(
+            settings.llm_effective_api_keys or settings.llm_local_fallback_enabled
+        )
+        validations.append(("mistral", llm_gateway.validate_provider(), llm_configured))
+    validation_results = dict(
+        zip(
+            (provider for provider, _, _ in validations),
+            await asyncio.gather(
+                *(
+                    _bounded_status_validation(
+                        provider,
+                        validation,
+                        configured=configured,
+                    )
+                    for provider, validation, configured in validations
+                )
+            ),
+            strict=True,
+        )
+    )
     erpnext_status = None
     if erpnext:
-        if hasattr(erpnext, "validate"):
-            erpnext_last_validation = await erpnext.validate()
+        if "erpnext" in validation_results:
+            erpnext_last_validation = validation_results["erpnext"]
             request.app.state.erpnext_last_validation_result = erpnext_last_validation
         erpnext_status = _annotate_provider_status(
             erpnext.integration_status(erpnext_last_validation)
@@ -109,9 +171,8 @@ async def integration_status(
     provider_items = [*communications]
     if erpnext_status:
         provider_items.append(erpnext_status)
-    llm_gateway = getattr(request.app.state, "llm_gateway", None)
     if llm_gateway and hasattr(llm_gateway, "validate_provider"):
-        llm_status = await llm_gateway.validate_provider()
+        llm_status = validation_results["mistral"]
         provider_items.append(
             {
                 **llm_status,

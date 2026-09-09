@@ -8503,3 +8503,26 @@
   - npm audit advisory ranges recorded by the release gate at `2026-09-08T23:35Z`.
 - Next step:
   - Commit the dependency hardening, run the complete release gate from the final commit, then build, scan, isolated-smoke, backup-first promote, and live-prove the resulting immutable candidate.
+
+### 2026-09-09T00:49:17Z — STEP-351 — Bounded integration-status validation after rejected 0.4.7 smoke
+- Files/services changed:
+  - Rejected immutable `0.4.7` after its isolated Compose smoke again exceeded the 15-second client deadline while reading `/api/integrations/status`; live staging remained on `0.4.5` and was not modified.
+  - Updated the integrations status route to validate independent ERPNext and Mistral providers concurrently and apply a configurable, fail-closed per-provider deadline.
+  - Added `INTEGRATION_STATUS_VALIDATION_TIMEOUT_SECONDS=12` to application configuration and all tracked environment examples.
+  - Added regressions for concurrent provider validation and cancellation/reporting of a stalled provider.
+- Commands run:
+  - Ran the complete final-SHA `0.4.7` release gate, including `505` backend tests, Ruff, compileall, Alembic offline SQL, both real PostgreSQL migration rehearsals, `34` frontend tests, production dependency audits, Compose/security/GCP/FOSS checks, exact-SHA image builds, and Trivy scans.
+  - Ran isolated Compose smoke under disposable project `cyberteam-release-047`, observed the bounded client failure, and removed only that project's containers and labeled volumes.
+  - Ran `33` focused integration-route and LLM-gateway tests plus focused Ruff and compileall after the route correction.
+- Result:
+  - All release-gate and image-scan checks passed, but the exact candidate was correctly withheld because the isolated runtime smoke failed.
+  - The remaining latency amplification was at the API boundary: ERPNext and LLM health checks were awaited serially even after LLM credential probes had been parallelized.
+  - Status reads now complete within the configured provider deadline and return explicit blocking `validation_timeout` or `validation_failed` states rather than hanging or reporting success.
+  - Explicit owner-triggered provider validation remains unchanged, and no credential values are exposed in timeout or exception details.
+- Evidence:
+  - `dist/releases/0.4.7.json` records the rejected candidate's successful pre-smoke checks.
+  - `backend/src/cyber_team/api/routes/integrations.py::_bounded_status_validation` and `integration_status`.
+  - `backend/tests/test_integration_routes.py::test_integration_status_validates_independent_providers_concurrently`.
+  - `backend/tests/test_integration_routes.py::test_integration_status_bounds_slow_provider_validation`.
+- Next step:
+  - Commit the route-level hardening, build and scan immutable `0.4.8`, pass isolated Compose smoke, then perform backup-first staging promotion and a live Temporal autonomy-cycle proof before public push and strict-soak reassessment.
