@@ -195,6 +195,8 @@ class LLMGateway:
                 }
                 if self._supports_temperature(route=route, model=model):
                     request["temperature"] = temperature
+                if self._supports_reasoning_effort(route=route, model=model):
+                    request["reasoning_effort"] = settings.llm_openai_reasoning_effort
                 if api_key:
                     request["api_key"] = api_key
                 if route["api_base"]:
@@ -787,10 +789,14 @@ class LLMGateway:
 
     @classmethod
     def _supports_temperature(cls, *, route: dict, model: str) -> bool:
+        return not cls._supports_reasoning_effort(route=route, model=model)
+
+    @classmethod
+    def _supports_reasoning_effort(cls, *, route: dict, model: str) -> bool:
         if route.get("provider") != "openai":
-            return True
+            return False
         model_id = cls._provider_model_id(model).lower()
-        return not (
+        return (
             model_id == "gpt-5"
             or model_id.startswith("gpt-5-")
             or model_id.startswith("gpt-5-mini")

@@ -67,6 +67,7 @@ To select the owner-authorized OpenAI route instead, use one project-scoped key:
 OPENAI_API_KEY=
 LLM_PROVIDER=openai
 LLM_DEFAULT_MODEL=openai/gpt-5-nano
+LLM_OPENAI_REASONING_EFFORT=minimal
 LLM_EXTERNAL_PROVIDER_OWNER_AUTHORIZED=true
 LLM_EXTERNAL_ZERO_COST_CONFIRMED=false
 LLM_HOSTED_CREDENTIAL_REQUIRED_COUNT=1
@@ -76,9 +77,11 @@ LLM_HOSTED_CREDENTIAL_REQUIRED_COUNT=1
 Set an account/project budget in the OpenAI platform before activation. The runtime
 authorization switch records intent but is not a substitute for a provider-side hard
 budget. Cyber-Team validates the specific model route and runs its cognitive capability
-suite before the model can serve protected autonomy tasks. The API key must remain only
-in the ignored environment file and must never be committed, logged, or entered in the
-owner console.
+suite before the model can serve protected autonomy tasks. GPT-5 requests use the
+configured low reasoning effort so bounded structured-output budgets retain space for
+the visible JSON result; raise it only after capability evaluations prove the larger
+reasoning budget is beneficial. The API key must remain only in the ignored environment
+file and must never be committed, logged, or entered in the owner console.
 OpenAI documents the model's supported endpoints, structured-output support, and
 rate-tier requirements on the
 [GPT-5 nano model page](https://developers.openai.com/api/docs/models/gpt-5-nano).

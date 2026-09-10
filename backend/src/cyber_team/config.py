@@ -1,5 +1,6 @@
 """Cyber-Team configuration via environment variables."""
 
+from typing import Literal
 from urllib.parse import quote
 
 from pydantic_settings import BaseSettings
@@ -119,6 +120,9 @@ class Settings(BaseSettings):
     litellm_log: str = "INFO"
     llm_provider: str = "mistral"
     llm_default_model: str = "mistral/mistral-medium-3-5"
+    llm_openai_reasoning_effort: Literal["minimal", "low", "medium", "high"] = (
+        "minimal"
+    )
     llm_fast_model: str = ""
     llm_critic_model: str = ""
     llm_api_base: str = ""

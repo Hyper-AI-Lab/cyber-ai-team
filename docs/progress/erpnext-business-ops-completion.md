@@ -8648,3 +8648,24 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/34473890628`.
 - Next step:
   - After `OPENAI_API_KEY` is populated in the ignored staging environment, validate the key without disclosing it and continue the immutable release, backup-first staging promotion, capability proof, and soak sequence.
+
+### 2026-09-10T21:25:08Z — STEP-358 — Rejected the initial GPT-5 nano qualification and corrected its reasoning budget
+- Files/services changed:
+  - Validated the owner-provided OpenAI key without printing or persisting it outside the ignored staging environment, then built, scanned, isolated-smoked, backup-first promoted, and authenticated-smoked immutable staging release `0.4.11` at commit `9317d0ebb37f438f0145174aa4b05c0bfcc115c1`.
+  - Added an explicit `LLM_OPENAI_REASONING_EFFORT=minimal` setting for GPT-5-family requests, omitted sampling temperature for those requests, and documented the bounded structured-output behavior in the hosted inference runbook and environment examples.
+  - Staging remained fail-closed after the unsuccessful qualification; no protected autonomous action or external side effect was allowed to use the unqualified route.
+- Commands run:
+  - Ran the complete `0.4.11` release gate, exact-image Compose smoke, promotion dry-run, backup-first promotion, public health/readiness checks, and all five live model-capability contracts.
+  - Reproduced the failure directly through LiteLLM: the default request consumed all `128` completion tokens as reasoning and returned an empty visible response; the same schema-constrained request with `reasoning_effort=minimal` returned valid JSON and `finish_reason=stop`.
+  - Ran focused gateway/configuration tests (`46 passed`), a live schema-constrained OpenAI request through the corrected source (`STRUCTURED_OK=True`), and the complete repository quality gate with Ruff, `516` backend tests, compileall, Alembic offline SQL through `0022`, dependency audits, Next.js build/typecheck, `34` frontend tests, Compose validation, operations syntax checks, secret scan, Google Cloud isolation, FOSS/resource policy, and diff hygiene.
+- Result:
+  - OpenAI authentication and ordinary text completion are valid, but capability run `modelcaprun_bf468ffa9cb2462d98ac0c7a63e5ef7f` correctly recorded `0/5` because the original bounded structured requests left no visible-output budget.
+  - The correction is proven against the live API and the complete quality gate passes. Release `0.4.11` is therefore treated as a safe but cognitively unqualified intermediate release and will be superseded by corrected immutable release `0.4.12`; no soak was started from `0.4.11`.
+- Evidence:
+  - `dist/releases/0.4.11.json`.
+  - `dist/promotions/staging/0.4.11-20260910-132335.json`.
+  - `backups/staging/cyberteam-staging-0.4.11-20260910-131804.dump`.
+  - Model capability run `modelcaprun_bf468ffa9cb2462d98ac0c7a63e5ef7f`.
+  - `backend/src/cyber_team/llm/gateway.py`, `backend/src/cyber_team/config.py`, `backend/tests/test_llm_gateway.py`, and `docs/runbooks/hosted-llm-capacity.md`.
+- Next step:
+  - Commit and publish the reasoning-budget correction, build and promote immutable `0.4.12`, require all five live capability contracts to pass, prove the Governor/Temporal path, and only then start a fresh strict 24-hour autonomy soak.

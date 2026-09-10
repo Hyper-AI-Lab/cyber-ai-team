@@ -114,6 +114,7 @@ def test_openai_provider_uses_only_openai_or_explicit_generic_key():
         "generic-openai-key",
     ]
     assert "mistral-key" not in settings.llm_effective_api_keys
+    assert settings.llm_openai_reasoning_effort == "minimal"
 
 
 def test_metered_openai_requires_explicit_owner_authorization():

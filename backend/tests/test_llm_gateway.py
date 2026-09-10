@@ -35,6 +35,7 @@ def configure_openai(monkeypatch, *, authorized: bool = True):
     monkeypatch.setattr(settings, "llm_default_model", "openai/gpt-5-nano")
     monkeypatch.setattr(settings, "openai_api_key", "openai-test-key")
     monkeypatch.setattr(settings, "llm_api_key", "")
+    monkeypatch.setattr(settings, "llm_openai_reasoning_effort", "minimal")
     monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", False)
     monkeypatch.setattr(
         settings,
@@ -200,6 +201,7 @@ async def test_gpt_5_nano_omits_unsupported_temperature(monkeypatch):
     assert seen["model"] == "openai/gpt-5-nano"
     assert seen["api_key"] == "openai-test-key"
     assert seen["max_tokens"] == 128
+    assert seen["reasoning_effort"] == "minimal"
     assert "temperature" not in seen
 
 
@@ -933,6 +935,7 @@ async def test_hosted_invoke_uses_strict_json_schema_response_format(monkeypatch
             "schema": schema,
         },
     }
+    assert "reasoning_effort" not in seen
 
 
 @pytest.mark.asyncio
