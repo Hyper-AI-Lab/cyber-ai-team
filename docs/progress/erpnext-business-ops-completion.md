@@ -8633,3 +8633,18 @@
   - Official model capability and pricing reference: `https://developers.openai.com/api/docs/models/gpt-5-nano`.
 - Next step:
   - The owner adds `OPENAI_API_KEY` to `deploy/environments/staging.env` and configures an OpenAI platform budget. Then validate actual chat-completion capacity, build and verify the next immutable release, deploy backup-first, rerun five capability contracts plus live Governor/Temporal proofs, and begin a fresh strict 24-hour autonomy soak.
+
+### 2026-09-10T11:58:52Z — STEP-357 — Published and independently verified the OpenAI provider implementation
+- Files/services changed:
+  - Committed the provider implementation and its append-only evidence as `4cfb48d` and pushed `main` to public repository `Hyper-AI-Lab/cyber-ai-team`.
+  - No staging runtime, database, credential, or pre-existing local Compose change was modified during publication.
+- Commands run:
+  - Pushed `main` and watched GitHub Actions push CI run `34473890628` through completion.
+- Result:
+  - GitHub CI passed Frontend, Backend, Compose/Secrets/Diff Hygiene, Alembic offline SQL, real PostgreSQL upgrade and migration rehearsal, dependency audits, secret scanning, Google Cloud isolation, and FOSS/resource-policy validation.
+  - The public repository now contains the complete OpenAI routing change. Staging activation remains intentionally blocked only on the owner-provided API credential and provider-side spend guard.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/commit/4cfb48d`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/34473890628`.
+- Next step:
+  - After `OPENAI_API_KEY` is populated in the ignored staging environment, validate the key without disclosing it and continue the immutable release, backup-first staging promotion, capability proof, and soak sequence.
