@@ -99,6 +99,14 @@
     {"match": "jookies/jasmin", "license": "Apache-2.0", "purpose": "optional SMS gateway"}
   ],
   "hosted_service_exceptions": {
+    "openai_api": {
+      "status": "owner_authorized_metered_inference_only",
+      "data_sharing_risk": "configured provider receives prompts and model inputs",
+      "automatic_paid_usage": true,
+      "automatic_paid_activation": false,
+      "activation_guard": "LLM_EXTERNAL_PROVIDER_OWNER_AUTHORIZED",
+      "provider_side_budget_required": true
+    },
     "langchain-mistralai": {
       "status": "optional_zero_spend_only",
       "data_sharing_risk": "configured provider receives prompts",

@@ -11,6 +11,9 @@ creating a burst against an organization-wide hosted-provider limit.
 - `LLM_HOSTED_MIN_INTERVAL_SECONDS=20` sets the minimum start-to-start interval.
 - `LLM_HOSTED_MAX_QUEUE_WAIT_SECONDS=300` bounds queued wait time.
 - `MISTRAL_API_KEY_1` through `MISTRAL_API_KEY_5` define the credential pool.
+- `OPENAI_API_KEY` holds the single active OpenAI project key when OpenAI is selected.
+- `LLM_EXTERNAL_PROVIDER_OWNER_AUTHORIZED=true` explicitly authorizes a metered
+  hosted-inference exception. It does not authorize other paid services.
 - `LLM_HOSTED_CREDENTIAL_REQUIRED_COUNT=1` sets the minimum healthy pool size.
 - `LLM_HOSTED_CREDENTIAL_QUARANTINE_SECONDS=900` controls failed-slot cooldown.
 - `LLM_RECOVERY_PROBE_ENABLED=true` enables read-only recovery evidence.
@@ -57,6 +60,28 @@ MISTRAL_API_KEY_5=
 LLM_HOSTED_CREDENTIAL_REQUIRED_COUNT=1
 LLM_HOSTED_CREDENTIAL_QUARANTINE_SECONDS=900
 ```
+
+To select the owner-authorized OpenAI route instead, use one project-scoped key:
+
+```dotenv
+OPENAI_API_KEY=
+LLM_PROVIDER=openai
+LLM_DEFAULT_MODEL=openai/gpt-5-nano
+LLM_EXTERNAL_PROVIDER_OWNER_AUTHORIZED=true
+LLM_EXTERNAL_ZERO_COST_CONFIRMED=false
+LLM_HOSTED_CREDENTIAL_REQUIRED_COUNT=1
+```
+
+`gpt-5-nano` is a metered proprietary API model, not a FOSS or free-tier model.
+Set an account/project budget in the OpenAI platform before activation. The runtime
+authorization switch records intent but is not a substitute for a provider-side hard
+budget. Cyber-Team validates the specific model route and runs its cognitive capability
+suite before the model can serve protected autonomy tasks. The API key must remain only
+in the ignored environment file and must never be committed, logged, or entered in the
+owner console.
+OpenAI documents the model's supported endpoints, structured-output support, and
+rate-tier requirements on the
+[GPT-5 nano model page](https://developers.openai.com/api/docs/models/gpt-5-nano).
 
 All keys must be credentials the owner is authorized to use. Multiple keys in one
 Mistral workspace may share the same workspace quota, so rotation improves fair use

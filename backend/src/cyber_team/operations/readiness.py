@@ -553,12 +553,18 @@ class ProductionReadinessEvidenceService:
                 "email",
             ),
             self._secret("MISTRAL_API_KEY", settings.mistral_api_key, False, "llm"),
+            self._secret(
+                "OPENAI_API_KEY",
+                settings.openai_api_key,
+                settings.llm_provider_name == "openai",
+                "llm",
+            ),
             *[
                 self._secret(
                     f"MISTRAL_API_KEY_{index}",
                     value,
                     (
-                        settings.llm_provider.strip().lower() == "mistral"
+                        settings.llm_provider_name == "mistral"
                         and not settings.llm_provider_is_local
                         and (
                             settings.llm_hosted_credential_required_count > 1

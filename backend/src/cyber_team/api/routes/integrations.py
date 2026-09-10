@@ -120,7 +120,7 @@ async def integration_status(
         llm_configured = bool(
             settings.llm_effective_api_keys or settings.llm_local_fallback_enabled
         )
-        validations.append(("mistral", llm_gateway.validate_provider(), llm_configured))
+        validations.append(("llm", llm_gateway.validate_provider(), llm_configured))
     validation_results = dict(
         zip(
             (provider for provider, _, _ in validations),
@@ -172,7 +172,7 @@ async def integration_status(
     if erpnext_status:
         provider_items.append(erpnext_status)
     if llm_gateway and hasattr(llm_gateway, "validate_provider"):
-        llm_status = validation_results["mistral"]
+        llm_status = validation_results["llm"]
         provider_items.append(
             {
                 **llm_status,
@@ -183,7 +183,7 @@ async def integration_status(
         )
     else:
         llm_status = {
-            "provider": "mistral",
+            "provider": settings.llm_provider_name,
             "configured": False,
             "mode": "configuration_required",
             "status": "configuration_required",
@@ -265,13 +265,13 @@ async def validate_integration(
                 "results": [result_item],
             }
         request.app.state.erpnext_last_validation_result = result
-    elif provider in {"mistral", "llm", "mistral_llm"}:
+    elif provider in {"mistral", "mistral_llm", "openai", "openai_llm", "llm"}:
         llm_gateway = getattr(request.app.state, "llm_gateway", None)
         if llm_gateway and hasattr(llm_gateway, "validate_provider"):
             validation = await llm_gateway.validate_provider(force=True)
         else:
             validation = {
-                "provider": "mistral",
+                "provider": settings.llm_provider_name,
                 "configured": False,
                 "mode": "configuration_required",
                 "status": "configuration_required",
@@ -281,11 +281,13 @@ async def validate_integration(
         result = {
             "status": "ready" if validation.get("mode") == "live" else "failed",
             "checked_at": checked_at,
-            "provider": "mistral",
+            "provider": str(validation.get("provider") or settings.llm_provider_name),
             "results": [
                 {
                     **validation,
-                    "provider": "mistral",
+                    "provider": str(
+                        validation.get("provider") or settings.llm_provider_name
+                    ),
                     "status": validation.get("status") or validation.get("mode"),
                 }
             ],

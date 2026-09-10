@@ -21,6 +21,8 @@ def classify_llm_exception(exc: Exception) -> str:
             "insufficient credit",
             "payment required",
             "quota exhausted",
+            "insufficient_quota",
+            "exceeded your current quota",
         )
     ):
         return "capacity_exhausted"

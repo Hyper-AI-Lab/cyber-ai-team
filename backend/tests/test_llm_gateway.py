@@ -30,6 +30,20 @@ def configure_mistral_pool(monkeypatch, keys: list[str], *, required_count: int 
     monkeypatch.setattr(settings, "llm_local_fallback_enabled", False)
 
 
+def configure_openai(monkeypatch, *, authorized: bool = True):
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(settings, "llm_default_model", "openai/gpt-5-nano")
+    monkeypatch.setattr(settings, "openai_api_key", "openai-test-key")
+    monkeypatch.setattr(settings, "llm_api_key", "")
+    monkeypatch.setattr(settings, "llm_external_zero_cost_confirmed", False)
+    monkeypatch.setattr(
+        settings,
+        "llm_external_provider_owner_authorized",
+        authorized,
+    )
+    monkeypatch.setattr(settings, "llm_local_fallback_enabled", False)
+
+
 def configured_rotator():
     rotator = MagicMock()
     rotator.select = AsyncMock()
@@ -88,6 +102,105 @@ async def test_validate_provider_reports_live_mistral(monkeypatch):
 
     assert result["mode"] == "live"
     assert result["blocking"] is False
+
+
+@pytest.mark.asyncio
+async def test_validate_provider_reports_owner_authorized_openai(monkeypatch):
+    configure_openai(monkeypatch)
+
+    class FakeResponse:
+        status_code = 200
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, headers):
+            assert url == "https://api.openai.com/v1/models/gpt-5-nano"
+            assert headers["Authorization"] == "Bearer openai-test-key"
+            return FakeResponse()
+
+    monkeypatch.setattr("cyber_team.llm.gateway.httpx.AsyncClient", FakeClient)
+
+    result = await LLMGateway().validate_provider(force=True)
+
+    assert result["provider"] == "openai"
+    assert result["model"] == "openai/gpt-5-nano"
+    assert result["mode"] == "live"
+    assert result["blocking"] is False
+    assert result["metered_provider"] is True
+    assert result["owner_authorized"] is True
+    assert result["zero_cost_confirmed"] is False
+    assert result["resource_policy_exception"] == (
+        "owner_authorized_hosted_inference"
+    )
+    assert "openai-test-key" not in repr(result)
+
+
+def test_openai_provider_uses_safe_model_default_when_setting_is_empty(monkeypatch):
+    configure_openai(monkeypatch)
+    monkeypatch.setattr(settings, "llm_default_model", "")
+
+    route = LLMGateway().effective_route_identity()
+
+    assert route == {
+        "provider": "openai",
+        "model": "openai/gpt-5-nano",
+        "local": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_openai_is_blocked_without_explicit_owner_authorization(monkeypatch):
+    configure_openai(monkeypatch, authorized=False)
+    gateway = LLMGateway()
+
+    result = await gateway.validate_provider(force=True)
+
+    assert result["status"] == "owner_authorization_required"
+    assert result["blocking"] is True
+    with pytest.raises(RuntimeError, match="Metered OpenAI inference"):
+        await gateway.invoke("System", "Task", agent_id="ops")
+
+
+@pytest.mark.asyncio
+async def test_gpt_5_nano_omits_unsupported_temperature(monkeypatch):
+    configure_openai(monkeypatch)
+    monkeypatch.setattr(settings, "llm_retry_attempts", 1)
+    seen = {}
+
+    async def fake_completion(**kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Done."))],
+            usage=SimpleNamespace(total_tokens=8),
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(api_key=None, acompletion=fake_completion),
+    )
+
+    result = await LLMGateway().invoke(
+        "System",
+        "Task",
+        agent_id="ops",
+        temperature=0.2,
+        max_tokens=128,
+    )
+
+    assert result == "Done."
+    assert seen["model"] == "openai/gpt-5-nano"
+    assert seen["api_key"] == "openai-test-key"
+    assert seen["max_tokens"] == 128
+    assert "temperature" not in seen
 
 
 @pytest.mark.asyncio

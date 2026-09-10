@@ -404,6 +404,22 @@ def test_secret_inventory_requires_each_configured_mistral_pool_slot(monkeypatch
     assert all(item.required and item.configured for item in pool_checks)
 
 
+def test_secret_inventory_requires_openai_key_for_openai_provider(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(settings, "openai_api_key", "openai-test-key")
+
+    inventory = ProductionReadinessEvidenceService(
+        audit_service=FakeAudit()
+    )._secret_inventory()
+    openai = next(item for item in inventory if item.name == "OPENAI_API_KEY")
+    mistral = next(item for item in inventory if item.name == "MISTRAL_API_KEY")
+
+    assert openai.required is True
+    assert openai.configured is True
+    assert openai.placeholder is False
+    assert mistral.required is False
+
+
 @pytest.mark.asyncio
 async def test_alert_evidence_is_not_evicted_by_unrelated_audit_volume(
     tmp_path,

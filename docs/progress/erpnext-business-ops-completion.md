@@ -8612,3 +8612,24 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/34353658789`.
 - Next step:
   - Push this final evidence-only commit, confirm the public remote matches local `HEAD`, then obtain at least one Mistral credential with actual chat-completion capacity before rerunning qualification and beginning a new strict uninterrupted 24-hour autonomy soak.
+
+### 2026-09-10T11:54:06Z — STEP-356 — Added owner-authorized OpenAI GPT-5 nano inference routing
+- Files/services changed:
+  - Added provider-aware OpenAI configuration, credential selection, hosted validation, resilience classification, readiness inventory, integration reporting, and runtime routing for `openai/gpt-5-nano` while retaining the existing Mistral and local-provider paths.
+  - Updated inbound email triage to use the active generic LLM route instead of silently requiring Mistral credentials.
+  - Added an explicit, narrowly scoped resource-policy exception for owner-authorized metered OpenAI inference; automatic paid-plan activation remains prohibited and provider-side budget enforcement is required.
+  - Updated public environment examples, architecture, README, and hosted-capacity runbook without storing an API key. Prepared the ignored staging environment with an empty `OPENAI_API_KEY` slot and OpenAI routing settings; staging was not restarted or deployed without a credential.
+- Commands run:
+  - Ran focused provider/configuration/readiness/email/resource-policy tests (`90 passed`) and the complete repository quality gate.
+  - The complete gate ran Ruff, `516` backend tests, compileall, Alembic offline SQL through revision `0022`, Python dependency audit, Next.js production build and typecheck, `34` frontend tests, Node runtime audit, Compose validation, operations syntax checks, secret scan, Google Cloud isolation, FOSS/resource policy, and diff hygiene.
+- Result:
+  - The complete quality gate passed. OpenAI keys are selected only when the configured provider is OpenAI, are redacted from validation evidence, and never fall through to old Mistral keys.
+  - GPT-5-family requests omit unsupported sampling parameters, use Chat Completions-compatible token limits, and report quota exhaustion through the existing fail-closed resilience path.
+  - Staging remains on the previously verified `0.4.10` release until the owner places an API key in the ignored environment and a new immutable release is built and promoted.
+- Evidence:
+  - `backend/src/cyber_team/config.py`, `backend/src/cyber_team/llm/gateway.py`, `backend/src/cyber_team/llm/resilience.py`, `backend/src/cyber_team/comms/email_triage.py`.
+  - `backend/tests/test_runtime_config.py`, `backend/tests/test_llm_gateway.py`, `backend/tests/test_inbound_email.py`, `backend/tests/test_readiness_evidence.py`, `backend/tests/test_executive_company_os.py`.
+  - `config/foss-resource-inventory.json`, `scripts/resource-policy-check.py`, and `docs/runbooks/hosted-llm-capacity.md`.
+  - Official model capability and pricing reference: `https://developers.openai.com/api/docs/models/gpt-5-nano`.
+- Next step:
+  - The owner adds `OPENAI_API_KEY` to `deploy/environments/staging.env` and configures an OpenAI platform budget. Then validate actual chat-completion capacity, build and verify the next immutable release, deploy backup-first, rerun five capability contracts plus live Governor/Temporal proofs, and begin a fresh strict 24-hour autonomy soak.

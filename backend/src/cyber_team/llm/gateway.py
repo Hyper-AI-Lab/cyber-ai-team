@@ -42,10 +42,13 @@ class LLMGateway:
         hosted_pacer: HostedInferencePacer | None = None,
         credential_rotator: HostedCredentialRotator | None = None,
     ):
-        self._provider = settings.llm_provider.strip() or "mistral"
-        self._default_model = settings.llm_default_model.strip() or (
-            "mistral/mistral-medium-3-5"
+        self._provider = settings.llm_provider_name
+        fallback_model = (
+            "openai/gpt-5-nano"
+            if self._provider == "openai"
+            else "mistral/mistral-medium-3-5"
         )
+        self._default_model = settings.llm_default_model.strip() or fallback_model
         self._conversation_history: OrderedDict[str, list[dict]] = OrderedDict()
         self._max_conversations = max(1, settings.llm_history_max_conversations)
         self._max_messages = max(2, settings.llm_history_max_messages)
@@ -93,6 +96,11 @@ class LLMGateway:
                 route = self._local_route()
                 model = route["model"]
             else:
+                if settings.llm_provider_is_metered:
+                    raise RuntimeError(
+                        "Metered OpenAI inference is blocked until the owner explicitly "
+                        "authorizes the hosted-provider exception."
+                    )
                 raise RuntimeError(
                     "External LLM inference is blocked by the zero-spend policy. "
                     "Confirm a zero-cost provider or enable the local fallback."
@@ -178,7 +186,6 @@ class LLMGateway:
                 request = {
                     "model": model,
                     "messages": messages,
-                    "temperature": temperature,
                     "max_tokens": max_tokens,
                     "metadata": {
                         **metadata,
@@ -186,6 +193,8 @@ class LLMGateway:
                         "credential_count": credential_selection["credential_count"],
                     },
                 }
+                if self._supports_temperature(route=route, model=model):
+                    request["temperature"] = temperature
                 if api_key:
                     request["api_key"] = api_key
                 if route["api_base"]:
@@ -400,25 +409,35 @@ class LLMGateway:
             return self._merge_runtime_status(self._last_validation_result, now)
 
         route = self._primary_route(self._default_model)
-        zero_cost_blocked = not route["local"] and not settings.llm_external_inference_allowed
-        if zero_cost_blocked and settings.llm_local_fallback_enabled:
+        policy_blocked = (
+            not route["local"] and not settings.llm_external_inference_allowed
+        )
+        if policy_blocked and settings.llm_local_fallback_enabled:
             route = self._local_route()
-            zero_cost_blocked = False
+            policy_blocked = False
 
-        if zero_cost_blocked:
+        if policy_blocked:
+            metered = settings.llm_provider_is_metered
             result = {
                 "provider": route["provider"],
                 "model": route["model"],
                 "configured": bool(route["api_keys"]),
                 "mode": "configuration_required",
-                "status": "zero_cost_confirmation_required",
+                "status": (
+                    "owner_authorization_required"
+                    if metered
+                    else "zero_cost_confirmation_required"
+                ),
                 "blocking": True,
                 "detail": (
-                    "Hosted inference is blocked until zero-cost use is explicitly "
-                    "confirmed or a positive owner-approved spend limit is configured."
+                    "Metered OpenAI inference is blocked until the owner explicitly "
+                    "authorizes this hosted-provider exception."
+                    if metered
+                    else "Hosted inference is blocked until zero-cost use is explicitly "
+                    "confirmed or an owner-authorized spend limit is configured."
                 ),
                 "hosted": True,
-                "zero_cost_confirmed": False,
+                **self._external_policy_status(),
                 "credential_pool": self._credential_pool_status(route),
                 "last_checked_at": now.isoformat(),
             }
@@ -549,7 +568,7 @@ class LLMGateway:
                         "Local open-model inference is reachable."
                         if route["local"]
                         else (
-                            "Hosted LLM credentials and zero-spend policy validated."
+                            self._hosted_validation_detail()
                             if not failed_slots
                             else (
                                 f"Hosted LLM is operational with {len(healthy_slots)} of "
@@ -559,8 +578,10 @@ class LLMGateway:
                         )
                     ),
                     "hosted": not route["local"],
-                    "zero_cost_confirmed": (
-                        True if route["local"] else settings.llm_external_zero_cost_confirmed
+                    **(
+                        {"zero_cost_confirmed": True}
+                        if route["local"]
+                        else self._external_policy_status()
                     ),
                     "credential_pool": pool,
                     "last_checked_at": now.isoformat(),
@@ -708,11 +729,13 @@ class LLMGateway:
         api_base = settings.llm_api_base.strip()
         if local and not api_base:
             api_base = settings.llm_local_api_base.strip()
-        models_url = (
-            f"{api_base.rstrip('/')}/models"
-            if api_base
-            else "https://api.mistral.ai/v1/models"
-        )
+        if api_base:
+            models_url = f"{api_base.rstrip('/')}/models"
+        elif self._provider == "openai":
+            model_id = self._provider_model_id(model)
+            models_url = f"https://api.openai.com/v1/models/{model_id}"
+        else:
+            models_url = "https://api.mistral.ai/v1/models"
         api_keys = settings.llm_effective_api_keys
         if local and not api_keys:
             api_keys = [""]
@@ -757,6 +780,45 @@ class LLMGateway:
             "minimum_healthy_count": required,
             "complete": configured >= required,
         }
+
+    @staticmethod
+    def _provider_model_id(model: str) -> str:
+        return model.split("/", 1)[1] if "/" in model else model
+
+    @classmethod
+    def _supports_temperature(cls, *, route: dict, model: str) -> bool:
+        if route.get("provider") != "openai":
+            return True
+        model_id = cls._provider_model_id(model).lower()
+        return not (
+            model_id == "gpt-5"
+            or model_id.startswith("gpt-5-")
+            or model_id.startswith("gpt-5-mini")
+            or model_id.startswith("gpt-5-nano")
+        )
+
+    @staticmethod
+    def _external_policy_status() -> dict:
+        return {
+            "zero_cost_confirmed": settings.llm_external_zero_cost_confirmed,
+            "metered_provider": settings.llm_provider_is_metered,
+            "owner_authorized": settings.llm_external_provider_owner_authorized,
+            "configured_spend_limit_usd": settings.llm_external_spend_limit_usd,
+            "resource_policy_exception": (
+                "owner_authorized_hosted_inference"
+                if settings.llm_provider_is_metered
+                else None
+            ),
+        }
+
+    @staticmethod
+    def _hosted_validation_detail() -> str:
+        if settings.llm_provider_is_metered:
+            return (
+                "Hosted OpenAI credential and explicit owner-authorized inference "
+                "exception validated."
+            )
+        return "Hosted LLM credentials and zero-spend policy validated."
 
     @staticmethod
     def _validation_failure_category(status_code: int) -> str | None:

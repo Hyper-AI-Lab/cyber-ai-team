@@ -93,6 +93,12 @@ cp .env.example .env
 # Edit .env. At minimum set owner credentials and your LLM provider key.
 ```
 
+Hosted OpenAI inference is an explicit metered exception to the FOSS-first resource
+policy. It requires `OPENAI_API_KEY`, `LLM_PROVIDER=openai`,
+`LLM_DEFAULT_MODEL=openai/gpt-5-nano`, and
+`LLM_EXTERNAL_PROVIDER_OWNER_AUTHORIZED=true`; keep provider-side billing limits in
+place. See [Hosted LLM Capacity](docs/runbooks/hosted-llm-capacity.md).
+
 For production-like operation, replace all default secrets, set `OWNER_PASSWORD_HASH`, configure exact CORS origins, keep external side effects approval-gated, and validate integrations before enabling them.
 
 ### 2. Start

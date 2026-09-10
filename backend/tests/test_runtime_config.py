@@ -100,6 +100,38 @@ def test_mistral_legacy_key_remains_single_key_fallback():
     assert settings.mistral_effective_api_keys == ["legacy-key"]
 
 
+def test_openai_provider_uses_only_openai_or_explicit_generic_key():
+    settings = Settings(
+        llm_provider="openai",
+        openai_api_key="openai-key",
+        llm_api_key="generic-openai-key",
+        mistral_api_key="mistral-key",
+    )
+
+    assert settings.llm_provider_name == "openai"
+    assert settings.llm_effective_api_keys == [
+        "openai-key",
+        "generic-openai-key",
+    ]
+    assert "mistral-key" not in settings.llm_effective_api_keys
+
+
+def test_metered_openai_requires_explicit_owner_authorization():
+    blocked = Settings(
+        llm_provider="openai",
+        openai_api_key="openai-key",
+        llm_external_zero_cost_confirmed=True,
+    )
+    allowed = Settings(
+        llm_provider="openai",
+        openai_api_key="openai-key",
+        llm_external_provider_owner_authorized=True,
+    )
+
+    assert blocked.llm_external_inference_allowed is False
+    assert allowed.llm_external_inference_allowed is True
+
+
 def test_owner_notification_recipient_is_independent_with_login_fallback():
     separate = Settings(
         owner_email="login@example.com",

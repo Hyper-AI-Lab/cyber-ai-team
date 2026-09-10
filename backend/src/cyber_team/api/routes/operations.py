@@ -2898,7 +2898,7 @@ async def operations_readiness(
         }
     else:
         llm_status = {
-            "provider": "mistral",
+            "provider": settings.llm_provider_name,
             "configured": False,
             "mode": "configuration_required",
             "status": "configuration_required",

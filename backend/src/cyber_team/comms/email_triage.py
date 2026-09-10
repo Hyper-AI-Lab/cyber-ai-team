@@ -93,7 +93,9 @@ class EmailTriageService:
 
     async def _classify(self, message: dict[str, Any]) -> dict[str, Any]:
         heuristic = self._heuristic_classify(message)
-        if not self._llm or not settings.mistral_effective_api_keys:
+        if not self._llm or not (
+            settings.llm_effective_api_keys or settings.llm_local_fallback_enabled
+        ):
             return heuristic
 
         try:
@@ -154,7 +156,9 @@ class EmailTriageService:
         body = fallback_body
         source = "template"
 
-        if self._llm and settings.mistral_effective_api_keys:
+        if self._llm and (
+            settings.llm_effective_api_keys or settings.llm_local_fallback_enabled
+        ):
             try:
                 body = await self._llm.invoke(
                     system_prompt=(

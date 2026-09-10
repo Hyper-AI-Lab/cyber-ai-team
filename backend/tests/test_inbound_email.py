@@ -14,6 +14,42 @@ from cyber_team.config import settings
 
 
 @pytest.mark.asyncio
+async def test_email_triage_uses_active_openai_gateway(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(settings, "openai_api_key", "openai-test-key")
+    monkeypatch.setattr(settings, "llm_api_key", "")
+    llm = SimpleNamespace(
+        invoke_json=AsyncMock(
+            return_value={
+                "category": "sales",
+                "priority": "medium",
+                "owner_role": "sales_agent",
+                "summary": "A prospective customer requested product information.",
+                "recommended_next_step": "Prepare an owner-reviewed response.",
+                "signals": ["product inquiry"],
+            }
+        )
+    )
+    service = EmailTriageService(
+        inbound_email_service=SimpleNamespace(),
+        tool_registry=SimpleNamespace(),
+        llm_gateway=llm,
+    )
+
+    result = await service._classify(
+        {
+            "from_address": "prospect@example.com",
+            "subject": "Product question",
+            "text_body": "Could you share product details?",
+        }
+    )
+
+    assert result["classification_source"] == "llm"
+    assert result["category"] == "sales"
+    llm.invoke_json.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_validate_imap_reports_configuration_required(monkeypatch):
     monkeypatch.setattr(settings, "inbound_email_enabled", False)
     monkeypatch.setattr(settings, "imap_host", "")

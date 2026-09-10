@@ -505,7 +505,7 @@ class MemoryStewardService:
                 "trace_ids": [trace["id"] for trace in grouped],
                 "evidence": {
                     "dedupe_key": f"llm_provider_errors:{category}",
-                    "provider": "mistral",
+                    "provider": settings.llm_provider_name,
                     "category": category,
                     "affected_agent_ids": agent_ids,
                     "occurrence_count": len(grouped),

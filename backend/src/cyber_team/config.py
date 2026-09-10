@@ -108,13 +108,14 @@ class Settings(BaseSettings):
     memory_steward_auto_apply_safe_actions: bool = True
     memory_steward_request_action_approvals: bool = True
 
-    # Mistral / LLM
+    # Hosted / local LLM routing
     mistral_api_key: str = ""
     mistral_api_key_1: str = ""
     mistral_api_key_2: str = ""
     mistral_api_key_3: str = ""
     mistral_api_key_4: str = ""
     mistral_api_key_5: str = ""
+    openai_api_key: str = ""
     litellm_log: str = "INFO"
     llm_provider: str = "mistral"
     llm_default_model: str = "mistral/mistral-medium-3-5"
@@ -123,6 +124,7 @@ class Settings(BaseSettings):
     llm_api_base: str = ""
     llm_api_key: str = ""
     llm_external_zero_cost_confirmed: bool = False
+    llm_external_provider_owner_authorized: bool = False
     llm_external_spend_limit_usd: float = 0.0
     llm_local_fallback_enabled: bool = False
     llm_local_api_base: str = "http://llama-cpp:8080/v1"
@@ -412,9 +414,14 @@ class Settings(BaseSettings):
     def llm_effective_api_keys(self) -> list[str]:
         if self.llm_provider_is_local:
             return [self.llm_api_key.strip()] if self.llm_api_key.strip() else []
+        if self.llm_provider_name == "openai":
+            candidates = [self.openai_api_key.strip(), self.llm_api_key.strip()]
+            return list(dict.fromkeys(key for key in candidates if key))
         if self.llm_api_key.strip():
             return [self.llm_api_key.strip()]
-        return self.mistral_effective_api_keys
+        if self.llm_provider_name == "mistral":
+            return self.mistral_effective_api_keys
+        return []
 
     @property
     def mistral_effective_api_keys(self) -> list[str]:
@@ -425,12 +432,25 @@ class Settings(BaseSettings):
 
     @property
     def llm_provider_is_local(self) -> bool:
-        return self.llm_provider.strip().lower() in {
+        return self.llm_provider_name in {
             "local",
             "llama_cpp",
-            "llama-cpp",
             "openai_compatible_local",
         }
+
+    @property
+    def llm_provider_name(self) -> str:
+        provider = self.llm_provider.strip().lower().replace("-", "_")
+        aliases = {
+            "mistral_ai": "mistral",
+            "open_ai": "openai",
+            "llamacpp": "llama_cpp",
+        }
+        return aliases.get(provider, provider or "mistral")
+
+    @property
+    def llm_provider_is_metered(self) -> bool:
+        return self.llm_provider_name == "openai"
 
     @property
     def model_capability_required_task_items(self) -> list[str]:
@@ -442,10 +462,15 @@ class Settings(BaseSettings):
 
     @property
     def llm_external_inference_allowed(self) -> bool:
+        if self.llm_provider_is_metered:
+            return self.llm_external_provider_owner_authorized
         return (
             self.llm_provider_is_local
             or self.llm_external_zero_cost_confirmed
-            or self.llm_external_spend_limit_usd > 0
+            or (
+                self.llm_external_provider_owner_authorized
+                and self.llm_external_spend_limit_usd > 0
+            )
         )
 
     def validate_runtime_config(self) -> None:
@@ -466,6 +491,10 @@ class Settings(BaseSettings):
             "REQUIRE_LIVE_TOOL_EXECUTORS": not self.require_live_tool_executors,
             "LLM_HOSTED_PACING_ENABLED": not self.llm_hosted_pacing_enabled,
             "LLM_RECOVERY_PROBE_ENABLED": not self.llm_recovery_probe_enabled,
+            "LLM_EXTERNAL_PROVIDER_OWNER_AUTHORIZED": (
+                self.llm_provider_is_metered
+                and not self.llm_external_provider_owner_authorized
+            ),
         }
         invalid = [name for name, is_invalid in insecure_values.items() if is_invalid]
         if invalid:

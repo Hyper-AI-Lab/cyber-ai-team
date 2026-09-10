@@ -1451,6 +1451,41 @@ class ExecutiveCompanyOSService:
                         ),
                     }
                 )
+        hosted_inference_exception = None
+        if settings.llm_provider_is_metered:
+            hosted_inference_exception = {
+                "provider": settings.llm_provider_name,
+                "scope": "hosted_inference_only",
+                "owner_authorized": (
+                    settings.llm_external_provider_owner_authorized
+                ),
+                "automatic_paid_usage": True,
+                "automatic_paid_activation": False,
+                "provider_side_budget_required": True,
+                "data_sharing_risk": "configured provider receives model inputs",
+            }
+            if hosted_inference_exception["owner_authorized"]:
+                notices.append(
+                    {
+                        "type": "hosted_inference_exception",
+                        "provider": settings.llm_provider_name,
+                        "reason": (
+                            "The owner explicitly authorized a metered hosted-inference "
+                            "exception; FOSS-only rules still govern tools and services."
+                        ),
+                    }
+                )
+            else:
+                blockers.append(
+                    {
+                        "type": "hosted_inference_exception",
+                        "provider": settings.llm_provider_name,
+                        "reason": (
+                            "Metered hosted inference is selected without explicit owner "
+                            "authorization."
+                        ),
+                    }
+                )
         status = "ready" if not blockers else "blocked"
         return {
             "status": status,
@@ -1461,9 +1496,15 @@ class ExecutiveCompanyOSService:
             "warnings": warnings,
             "notices": notices,
             "proposal_count": len(proposals),
+            "hosted_inference_exception": hosted_inference_exception,
             "checked_at": utc_now().isoformat(),
             "detail": (
-                "FOSS-only resource policy is satisfied."
+                (
+                    "FOSS-only tools and services policy is satisfied with an explicit "
+                    "owner-authorized hosted-inference exception."
+                    if hosted_inference_exception
+                    else "FOSS-only resource policy is satisfied."
+                )
                 if not blockers
                 else "One or more resource proposals violate the FOSS-only policy."
             ),

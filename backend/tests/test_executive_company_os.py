@@ -763,6 +763,37 @@ async def test_resource_policy_declared_data_sharing_is_notice_not_warning(
 
 
 @pytest.mark.asyncio
+async def test_resource_policy_reports_owner_authorized_openai_exception(
+    executive_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(executive_module.settings, "llm_provider", "openai")
+    monkeypatch.setattr(
+        executive_module.settings,
+        "llm_external_provider_owner_authorized",
+        True,
+    )
+
+    status = await build_service().resource_policy_status()
+
+    assert status["status"] == "ready"
+    assert status["foss_only"] is True
+    assert status["hosted_inference_exception"] == {
+        "provider": "openai",
+        "scope": "hosted_inference_only",
+        "owner_authorized": True,
+        "automatic_paid_usage": True,
+        "automatic_paid_activation": False,
+        "provider_side_budget_required": True,
+        "data_sharing_risk": "configured provider receives model inputs",
+    }
+    assert any(
+        item.get("type") == "hosted_inference_exception"
+        for item in status["notices"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_prompt_injection_instruction_escalates_through_observer(
     executive_session_factory,
 ):

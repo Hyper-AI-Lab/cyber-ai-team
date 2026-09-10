@@ -54,6 +54,7 @@ def main() -> int:
     _check_node_lock(failures, warnings, inventory)
     _check_docker_images(failures, warnings, inventory)
     _check_local_models(failures, inventory)
+    _check_hosted_service_exceptions(failures, inventory)
     _check_static_tool_proposals(failures)
     if warnings:
         print("Resource policy warnings:")
@@ -234,6 +235,42 @@ def _check_local_models(failures: list[str], inventory: dict) -> None:
             failures.append(
                 f"{path}:{lineno} local model `{model}` lacks reviewed FOSS metadata."
             )
+
+
+def _check_hosted_service_exceptions(failures: list[str], inventory: dict) -> None:
+    for name, item in (inventory.get("hosted_service_exceptions") or {}).items():
+        for field in ("status", "data_sharing_risk", "automatic_paid_usage"):
+            if field not in item:
+                failures.append(f"Hosted service exception `{name}` omits `{field}`.")
+        owner_authorized_metered = "owner_authorized" in str(
+            item.get("status") or ""
+        )
+        if item.get("automatic_paid_usage") is not False and not owner_authorized_metered:
+            failures.append(
+                f"Hosted service exception `{name}` permits automatic paid usage without "
+                "an owner-authorized status."
+            )
+        if owner_authorized_metered:
+            for field in (
+                "activation_guard",
+                "automatic_paid_activation",
+                "provider_side_budget_required",
+            ):
+                if field not in item:
+                    failures.append(
+                        f"Owner-authorized hosted service exception `{name}` omits "
+                        f"`{field}`."
+                    )
+            if item.get("automatic_paid_activation") is not False:
+                failures.append(
+                    f"Owner-authorized hosted service exception `{name}` must prohibit "
+                    "automatic activation."
+                )
+            if item.get("provider_side_budget_required") is not True:
+                failures.append(
+                    f"Owner-authorized hosted service exception `{name}` must require a "
+                    "provider-side budget."
+                )
 
 
 def _image_from_line(line: str) -> str | None:
