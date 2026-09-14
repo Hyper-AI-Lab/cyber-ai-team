@@ -8725,3 +8725,45 @@
   - `scripts/image-scan.sh` output for `cyber-team-core:0.4.13` and `cyber-team-ui:0.4.13`.
 - Next step:
   - Publish the security refresh, regenerate release `0.4.13` with its exact final commit SHA, then perform backup-first staging promotion and lifecycle growth verification.
+
+### 2026-09-14T17:17:30Z — STEP-362 — Promoted release 0.4.13 and compacted staging lifecycle evidence
+- Files/services changed:
+  - Published exact release commit `56905b303ae05ea97f22892c89ff391cc1b559fc`, regenerated the complete `0.4.13` release manifest, and promoted its immutable core, worker, and UI images to staging.
+  - Took and retained a fresh PostgreSQL backup before applying Alembic revision `0023_lifecycle_assessment_compaction` to staging.
+  - Preserved ERPNext and all persistent Cyber-Team services and data; the pre-existing local `docker-compose.yml` change was not staged, rewritten, or reverted.
+- Commands run:
+  - Ran `scripts/release-check.sh` with exact version/build metadata and Compose smoke enabled, then ran `scripts/promote-staging.sh` in dry-run and backup-first execution modes.
+  - Re-ran the promotion wrapper with `RUN_BACKUP=0` after the long transactional compaction completed, avoiding a duplicate backup while completing exact-image startup and external smoke verification.
+  - Queried Alembic state, row count, relation size, v2-key coverage, and duplicate idempotency keys directly in staging PostgreSQL; checked public `/health` and `/ready`.
+- Result:
+  - The release gate passed Ruff, `516` backend tests, compileall, Alembic offline SQL and real migration rehearsal, dependency audits, Next.js build/typecheck, `34` frontend tests, configuration/security/FOSS checks, Compose smoke, and zero-enforced-finding image scans.
+  - Migration `0023` reduced `lifecycle_assessments` from `12,945,173` rows and approximately `13 GB` to `35,723` stable `lifecycle:v2:` rows and `27 MB`, with zero duplicate idempotency keys.
+  - Public health and dependency readiness report `0.4.13`, exact build SHA `56905b303ae05ea97f22892c89ff391cc1b559fc`, and all required checks healthy.
+- Evidence:
+  - `dist/releases/0.4.13.json`.
+  - `dist/promotions/staging/0.4.13-20260914-171730.json`.
+  - `backups/staging/cyberteam-staging-0.4.13-20260914-170637.dump`.
+  - Public endpoints `https://cyberteam.hyperailab.com/health` and `https://cyberteam.hyperailab.com/ready`.
+- Next step:
+  - Execute one live scheduled autonomy cycle, prove bounded post-cycle lifecycle growth, refresh authenticated readiness, and verify current-SHA GitHub CI before beginning the strict soak.
+
+### 2026-09-14T17:33:18Z — STEP-363 — Proved live bounded growth and started the strict 24-hour soak
+- Files/services changed:
+  - Restored the 15-minute `cyberteam-autonomous-company-cycle-v3` schedule through the deployed Temporal controller and triggered one controlled live cycle.
+  - Started the detached, exact-image `cyberteam-staging-soak` monitor for `86,400` seconds at five-minute intervals; no production cutover or external business mutation was performed.
+- Commands run:
+  - Triggered and awaited Temporal workflow `autonomous-company-cycle-scheduled-2026-09-14T17:20:52Z` (`01a0a0ef-a238-79b1-8811-291049b3f573`), inspected its terminal result, and measured lifecycle-assessment rows before and after execution.
+  - Forced an authenticated operations-readiness refresh, triggered GitHub Actions manually for the exact deployed SHA, and verified all six jobs.
+  - Ran `scripts/start-staging-soak.sh`, then inspected the running container and its first state/evidence sample.
+- Result:
+  - The live evidence-to-outcome cycle completed across acquisition, discovery, strategy, operating-model reconciliation, mandates, routing, domain work, policy qualification, outcomes, and backlog reconciliation.
+  - It created only four legitimate new lifecycle transitions: the table remained `27 MB` at `35,727` rows with zero duplicate idempotency keys, proving the historical-revision amplification path is closed in staging.
+  - Authenticated readiness is `ready` with zero blockers. Push CI run `34837872096` and exact-SHA manual CI run `34874756818` both passed; the next natural scheduled run will be checked during the soak.
+  - Soak `staging-soak-20260914T173308Z` is running against `0.4.13` / `56905b303ae05ea97f22892c89ff391cc1b559fc`; its first sample passed with zero failures.
+- Evidence:
+  - `dist/soak/staging-soak-20260914T173308Z.jsonl`.
+  - `dist/soak/staging-soak-20260914T173308Z.state.json`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/34837872096`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/34874756818`.
+- Next step:
+  - Let the uninterrupted soak reach its scheduled completion after `2026-09-15T17:33:08Z`, require zero failed samples and an exact version/SHA match, confirm a green natural scheduled CI run, execute the final closure checks, and append the terminal soak evidence.
