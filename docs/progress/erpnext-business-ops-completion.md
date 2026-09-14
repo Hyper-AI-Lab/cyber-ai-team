@@ -8707,3 +8707,21 @@
   - `scripts/migration-rehearsal.sh`.
 - Next step:
   - Commit and publish the fix, build and scan release `0.4.13`, take a fresh backup, apply migration `0023`, verify storage reduction and bounded growth under a live Temporal cycle, resume the schedule, and start the strict 24-hour soak.
+
+### 2026-09-14T11:21:51Z — STEP-361 — Refreshed container security packages for release 0.4.13
+- Files/services changed:
+  - Advanced the explicit Debian and Alpine security refresh stamps in the backend and frontend Dockerfiles to `2026-09-14`.
+  - Removed only reproducible local quality/build environments and Docker build cache after a scan workspace exhausted the nearly full host disk; active containers, persistent data, source, retained backups, and current/rollback images were preserved.
+- Commands run:
+  - Ran the full exact-SHA release gate through tests, migration rehearsal, and Compose smoke; the first image scan detected newly fixed Debian findings in a cached July package layer.
+  - Rebuilt both images with current package indexes, installed Debian 13.7 and Alpine OpenSSL security updates, reclaimed `14.78 GB` of reproducible BuildKit cache, and rescanned `cyber-team-core:0.4.13` and `cyber-team-ui:0.4.13` at the enforced `HIGH,CRITICAL` threshold.
+- Result:
+  - Core image findings fell from `13` fixed-package findings to `0`; the UI image also reported `0` enforced-severity findings.
+  - Host free space recovered from approximately `301 MB` to `15 GB`, providing sufficient workspace for the transaction-safe staging compaction.
+  - No vulnerable image or failed scan result was deployed.
+- Evidence:
+  - `backend/Dockerfile`.
+  - `frontend/Dockerfile`.
+  - `scripts/image-scan.sh` output for `cyber-team-core:0.4.13` and `cyber-team-ui:0.4.13`.
+- Next step:
+  - Publish the security refresh, regenerate release `0.4.13` with its exact final commit SHA, then perform backup-first staging promotion and lifecycle growth verification.

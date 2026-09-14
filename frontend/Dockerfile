@@ -19,7 +19,7 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-ARG ALPINE_SECURITY_REFRESH=2026-08-26
+ARG ALPINE_SECURITY_REFRESH=2026-09-14
 RUN echo "Alpine security refresh: ${ALPINE_SECURITY_REFRESH}" \
     && apk upgrade --no-cache libcrypto3 libssl3 \
     && rm -rf /usr/local/lib/node_modules/npm \

@@ -13,7 +13,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-ARG DEBIAN_SECURITY_REFRESH=2026-07-13
+ARG DEBIAN_SECURITY_REFRESH=2026-09-14
 RUN echo "Debian security refresh: ${DEBIAN_SECURITY_REFRESH}" \
     && apt-get update \
     && apt-get upgrade -y \
