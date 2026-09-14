@@ -8669,3 +8669,41 @@
   - `backend/src/cyber_team/llm/gateway.py`, `backend/src/cyber_team/config.py`, `backend/tests/test_llm_gateway.py`, and `docs/runbooks/hosted-llm-capacity.md`.
 - Next step:
   - Commit and publish the reasoning-budget correction, build and promote immutable `0.4.12`, require all five live capability contracts to pass, prove the Governor/Temporal path, and only then start a fresh strict 24-hour autonomy soak.
+
+### 2026-09-14T10:47:04Z — STEP-359 — Qualified and promoted the corrected OpenAI release
+- Files/services changed:
+  - Published commit `9a355ca5355a1e866a62daed82a0ad63bf1ca659`, built immutable release `0.4.12`, and promoted the exact core, worker, and UI images to staging after a retained PostgreSQL backup.
+  - Kept local inference disabled and used the owner-configured `openai/gpt-5-nano` route with minimal reasoning effort; no credential value was printed or committed.
+- Commands run:
+  - Ran the complete release gate, exact-image Compose smoke, promotion dry-run, backup-first promotion, five live capability contracts, an authenticated readiness refresh, a live executive Governor dry run, and scheduled Temporal workflow result inspection.
+- Result:
+  - Model capability run `modelcaprun_284ba48ad7254bee83ec201497561fc0` passed `5/5` contracts at score `1.0`; automatic run `modelcaprun_c126fb93` also passed `5/5`.
+  - Executive Governor run `exegov_537a643fb1cf` completed with Observer agreement and no errors. Scheduled Governor run `exegov_70a006505def` and autonomous company cycle reconciliation `reconcile_abed5f65d0a84bccbdb6d6b52f692618` completed successfully through Temporal.
+  - Forced readiness returned `ready` with no blockers, and public health reported release `0.4.12` at the exact build SHA.
+- Evidence:
+  - `dist/releases/0.4.12.json`.
+  - `dist/promotions/staging/0.4.12-20260910-220130.json`.
+  - `backups/staging/cyberteam-staging-0.4.12-20260910-215429.dump`.
+  - GitHub scheduled CI run `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/34825283071`.
+- Next step:
+  - Investigate and remediate the staging storage exhaustion discovered before starting the strict autonomy soak.
+
+### 2026-09-14T10:47:04Z — STEP-360 — Bounded lifecycle-assessment growth and rehearsed compaction
+- Files/services changed:
+  - Diagnosed `lifecycle_assessments` as the staging database growth source: `12,945,173` rows and `13 GB`, caused by re-recording every historical resource state for every operating-model revision.
+  - Changed lifecycle evidence keys to stable company/resource/state transition identities, added additive migration `0023_lifecycle_assessment_compaction`, and strengthened the PostgreSQL migration rehearsal with production-shaped duplicate evidence.
+  - Temporarily paused only the 15-minute `cyberteam-autonomous-company-cycle-v3` Temporal schedule while the growth path is being replaced; the hourly Governor remained enabled.
+  - Reclaimed reproducible quality/build caches, a redundant first `0.4.12` backup, and unused old Cyber-Team images. The promotion-linked `0.4.12` backup and current/rollback images remain retained.
+- Commands run:
+  - Ran the focused lifecycle regression, full repository quality gate, Ruff, Alembic offline SQL, and two real PostgreSQL migration rehearsals; the final representative rehearsal seeded `100` duplicate lifecycle assessments at revision `0022` before upgrading to `0023`.
+- Result:
+  - Full quality gate passed with `516` backend tests and `34` frontend tests, plus build/typecheck, dependency audits, secret scan, Google Cloud isolation, FOSS policy, Compose validation, and diff hygiene.
+  - The representative migration retained the newest transition evidence, reduced `100` historical-revision duplicates to one stable `lifecycle:v2:` record, preserved seeded business data, and reached the single Alembic head.
+  - The staging application remains healthy on `0.4.12`; the compaction has not yet been applied to staging in this step.
+- Evidence:
+  - `backend/alembic/versions/0023_lifecycle_assessment_compaction.py`.
+  - `backend/src/cyber_team/operations/operating_model.py`.
+  - `backend/tests/test_operating_model_lifecycle.py`.
+  - `scripts/migration-rehearsal.sh`.
+- Next step:
+  - Commit and publish the fix, build and scan release `0.4.13`, take a fresh backup, apply migration `0023`, verify storage reduction and bounded growth under a live Temporal cycle, resume the schedule, and start the strict 24-hour soak.

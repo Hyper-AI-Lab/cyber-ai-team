@@ -174,6 +174,89 @@ if [ "$MIGRATION_REHEARSAL_RUN_REPRESENTATIVE" = "1" ]; then
       POSTGRES_DB="$POSTGRES_DB" \
       POSTGRES_USER="$POSTGRES_USER" \
       POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+      "$ALEMBIC_BIN" upgrade 0022_operating_model_lifecycle_v4
+  )
+
+  docker exec -i "$CONTAINER_NAME" \
+    psql \
+      -v ON_ERROR_STOP=1 \
+      -v row_count="$MIGRATION_REHEARSAL_SYNTHETIC_ROWS" \
+      -U "$POSTGRES_USER" \
+      -d "$POSTGRES_DB" <<'SQL'
+INSERT INTO operating_model_revisions (
+  id,
+  company_namespace,
+  revision,
+  status,
+  source_hash,
+  summary,
+  domain_keys,
+  objective_revision_ids,
+  evidence_ids,
+  confidence,
+  created_by,
+  created_at,
+  activated_at
+)
+SELECT
+  'rehearsal-model-' || item,
+  'company:migration-rehearsal',
+  item,
+  CASE WHEN item = :row_count THEN 'active' ELSE 'superseded' END,
+  md5('rehearsal-model-' || item),
+  '{}'::json,
+  '[]'::json,
+  '[]'::json,
+  '[]'::json,
+  0.9,
+  'migration-rehearsal',
+  CURRENT_TIMESTAMP + item * INTERVAL '1 second',
+  CURRENT_TIMESTAMP + item * INTERVAL '1 second'
+FROM generate_series(1, :row_count) AS item;
+
+INSERT INTO lifecycle_assessments (
+  id,
+  company_namespace,
+  resource_type,
+  resource_id,
+  operating_model_revision_id,
+  lifecycle_status,
+  reason,
+  evidence_ids,
+  metadata,
+  idempotency_key,
+  assessed_at
+)
+SELECT
+  'rehearsal-assessment-' || item,
+  'company:migration-rehearsal',
+  'business_work_item',
+  'shared-completed-work',
+  'rehearsal-model-' || item,
+  'resolved',
+  'Representative duplicate lifecycle evidence.',
+  '[]'::json,
+  '{}'::json,
+  'rehearsal-model-' || item || ':business_work_item:shared-completed-work:resolved',
+  CURRENT_TIMESTAMP + item * INTERVAL '1 second'
+FROM generate_series(1, :row_count) AS item;
+SQL
+
+  seeded_lifecycle_rows="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM lifecycle_assessments WHERE resource_id = 'shared-completed-work'")"
+  if [ "$seeded_lifecycle_rows" != "$MIGRATION_REHEARSAL_SYNTHETIC_ROWS" ]; then
+    echo "Representative lifecycle seed count mismatch: $seeded_lifecycle_rows" >&2
+    exit 1
+  fi
+
+  (
+    cd "$BACKEND_DIR"
+    env \
+      PYTHONPATH=src \
+      POSTGRES_HOST=127.0.0.1 \
+      POSTGRES_PORT="$POSTGRES_PORT" \
+      POSTGRES_DB="$POSTGRES_DB" \
+      POSTGRES_USER="$POSTGRES_USER" \
+      POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
       "$ALEMBIC_BIN" upgrade head
   )
 
@@ -190,6 +273,12 @@ if [ "$MIGRATION_REHEARSAL_RUN_REPRESENTATIVE" = "1" ]; then
       exit 1
     fi
   done <<<"$representative_counts"
+
+  compacted_lifecycle_rows="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM lifecycle_assessments WHERE resource_id = 'shared-completed-work' AND idempotency_key LIKE 'lifecycle:v2:%'")"
+  if [ "$compacted_lifecycle_rows" != "1" ]; then
+    echo "Lifecycle assessment compaction mismatch: $compacted_lifecycle_rows" >&2
+    exit 1
+  fi
 
   representative_indexes="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_communication_logs_idempotency_key', 'ix_communication_logs_created_at', 'ix_memory_entries_expires_at', 'ix_workflow_runs_completed_at', 'ix_approval_requests_resolved_at', 'ix_role_gaps_status', 'ix_role_gaps_severity', 'ix_role_gaps_source_agent_id', 'ix_role_gaps_company_namespace', 'ix_role_gaps_capability', 'ix_role_gaps_created_at', 'ix_role_gaps_resolved_at', 'ix_memory_traces_invocation_id', 'ix_memory_traces_agent_id', 'ix_memory_traces_conversation_id', 'ix_memory_traces_source_type', 'ix_memory_traces_memory_namespace', 'ix_memory_traces_created_at', 'ix_memory_steward_findings_finding_type', 'ix_memory_steward_findings_severity', 'ix_memory_steward_findings_status', 'ix_memory_steward_findings_agent_id', 'ix_memory_steward_findings_memory_namespace', 'ix_memory_steward_findings_company_namespace', 'ix_memory_steward_findings_created_at', 'uq_company_context_snapshots_source_hash', 'ix_company_context_snapshots_source', 'ix_company_context_snapshots_source_id', 'ix_company_context_snapshots_source_hash', 'ix_company_context_snapshots_company_namespace', 'ix_company_context_snapshots_status', 'ix_company_context_snapshots_created_at', 'ix_company_context_sync_runs_source', 'ix_company_context_sync_runs_status', 'ix_company_context_sync_runs_snapshot_id', 'ix_company_context_sync_runs_source_hash', 'ix_company_context_sync_runs_company_namespace', 'ix_company_context_sync_runs_started_at')")"
   if [ "$representative_indexes" != "38" ]; then

@@ -17,6 +17,7 @@ from cyber_team.db.models import (
     AgentCapabilityGrant,
     ApprovalRequest,
     BusinessEvent,
+    BusinessWorkItem,
     CompanyClaim,
     CompanyModelRevision,
     CompanySource,
@@ -25,6 +26,7 @@ from cyber_team.db.models import (
     OperatingDomain,
     OperatingDomainRevision,
     OperatingLifecycleDecision,
+    OperatingModelRevision,
     OperationGraphEdge,
     OperationGraphNode,
     OutsourcingRequest,
@@ -545,7 +547,18 @@ async def test_backlog_reconciliation_supersedes_obsolete_work_and_approval(
             task_spec={"domain_key": "finance"},
             context_pack={},
         )
-        session.add_all([finance_gap, current_gap, approval, outsource])
+        completed_work = BusinessWorkItem(
+            id="completed-product-work",
+            company_namespace="company:test",
+            title="Completed product research",
+            work_type="domain_operation",
+            status="completed",
+            payload={"domain_key": "product"},
+            idempotency_key="completed-product-work",
+        )
+        session.add_all(
+            [finance_gap, current_gap, approval, outsource, completed_work]
+        )
         await session.commit()
 
     first = await service.reconcile_backlogs()
@@ -564,6 +577,44 @@ async def test_backlog_reconciliation_supersedes_obsolete_work_and_approval(
     assert len(assessments) == len(
         {(item.resource_type, item.resource_id, item.lifecycle_status) for item in assessments}
     )
+    assert all(item.idempotency_key.startswith("lifecycle:v2:") for item in assessments)
+
+    async with operating_model_session() as session:
+        active_model = (
+            await session.execute(
+                select(OperatingModelRevision).where(
+                    OperatingModelRevision.status == "active"
+                )
+            )
+        ).scalar_one()
+        active_model.status = "superseded"
+        session.add(
+            OperatingModelRevision(
+                id="replacement-operating-model",
+                company_namespace=active_model.company_namespace,
+                revision=active_model.revision + 1,
+                status="active",
+                company_model_revision_id=active_model.company_model_revision_id,
+                strategy_context_hash=active_model.strategy_context_hash,
+                source_hash="replacement-operating-model-source",
+                summary=active_model.summary,
+                domain_keys=active_model.domain_keys,
+                objective_revision_ids=active_model.objective_revision_ids,
+                evidence_ids=active_model.evidence_ids,
+                confidence=active_model.confidence,
+                observer_review_id=active_model.observer_review_id,
+                created_by="test",
+                activated_at=utc_now(),
+            )
+        )
+        await session.commit()
+
+    await service.reconcile_backlogs()
+    async with operating_model_session() as session:
+        assessments_after_revision = (
+            await session.execute(select(LifecycleAssessment))
+        ).scalars().all()
+    assert len(assessments_after_revision) == len(assessments)
 
 
 async def test_discovery_obligations_are_deduplicated_and_source_bounded(

@@ -58,6 +58,7 @@ SAFE_ADVISORY_TOOL_CANDIDATES = {
     "process_audit",
 }
 TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
+LIFECYCLE_ASSESSMENT_KEY_PREFIX = "lifecycle:v2:"
 
 
 class OperatingModelLifecycleService:
@@ -1073,7 +1074,10 @@ class OperatingModelLifecycleService:
                 for item in (
                     await session.execute(
                         select(LifecycleAssessment).where(
-                            LifecycleAssessment.operating_model_revision_id == model.id
+                            LifecycleAssessment.company_namespace == namespace,
+                            LifecycleAssessment.idempotency_key
+                            >= LIFECYCLE_ASSESSMENT_KEY_PREFIX,
+                            LifecycleAssessment.idempotency_key < "lifecycle:v3:",
                         )
                     )
                 ).scalars()
@@ -1969,7 +1973,12 @@ class OperatingModelLifecycleService:
         reason: str,
         metadata: dict[str, Any],
     ) -> dict[str, Any]:
-        key = f"{model.id}:{resource_type}:{resource_id}:{status}"
+        key = self._lifecycle_assessment_key(
+            namespace=namespace,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            status=status,
+        )
         current = existing.get(key)
         if current:
             return self._assessment_payload(current, reused=True)
@@ -1990,6 +1999,18 @@ class OperatingModelLifecycleService:
         session.add(current)
         existing[key] = current
         return self._assessment_payload(current, reused=False)
+
+    @staticmethod
+    def _lifecycle_assessment_key(
+        *,
+        namespace: str,
+        resource_type: str,
+        resource_id: str,
+        status: str,
+    ) -> str:
+        identity = "\x1f".join((namespace, resource_type, resource_id, status))
+        digest = hashlib.md5(identity.encode(), usedforsecurity=False).hexdigest()
+        return f"{LIFECYCLE_ASSESSMENT_KEY_PREFIX}{digest}"
 
     def _gap_lifecycle_status(
         self,
