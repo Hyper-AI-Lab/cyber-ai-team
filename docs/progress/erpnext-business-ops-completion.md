@@ -8767,3 +8767,28 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/34874756818`.
 - Next step:
   - Let the uninterrupted soak reach its scheduled completion after `2026-09-15T17:33:08Z`, require zero failed samples and an exact version/SHA match, confirm a green natural scheduled CI run, execute the final closure checks, and append the terminal soak evidence.
+
+### 2026-09-16T00:47:49Z — STEP-364 — Preserved failed soak evidence and started a strict replacement run
+- Files/services changed:
+  - Inspected and retained the complete terminal evidence from soak `staging-soak-20260914T173308Z`; no result was discarded or relabeled.
+  - Started replacement soak `staging-soak-20260916T004748Z` against the unchanged immutable `0.4.13` release after confirming current application, dependency, model-provider, scheduler, and storage health.
+  - No application code, credentials, persistent business data, or pre-existing local `docker-compose.yml` change was modified.
+- Commands run:
+  - Parsed the soak summary and all failed JSONL samples, inspected adjacent samples to verify recovery timing, and checked the first and final samples.
+  - Refreshed public health/readiness and authenticated operations readiness, validated the configured OpenAI provider through the live integrations route, inspected recent Temporal schedule executions, measured lifecycle-assessment storage and idempotency, and checked natural scheduled GitHub CI.
+  - Ran `scripts/start-staging-soak.sh` and inspected the replacement run's first state sample.
+- Result:
+  - The first run completed the full `86,400` seconds with `289` samples: `286` passed and `3` failed, so its strict terminal status is correctly `failed`.
+  - Failure one was a single `Temporary failure in name resolution`. Failures two and three captured one transient OpenAI validation interruption followed by one stale degraded-readiness cache sample; model qualification had already recovered on the second sample, and the following sample was fully `ready`.
+  - The first and final samples passed, the current forced readiness result is `ready` with zero blockers, and live integration validation reports `openai/gpt-5-nano` as configured and `live`.
+  - The autonomy schedule is active; its ten most recent recorded workflows completed. Lifecycle evidence remains bounded at `35,853` rows and `27 MB`, with zero duplicate idempotency keys after more than a day of recurring cycles.
+  - Natural scheduled CI run `34948367552` passed on the current public-repository evidence commit.
+  - Replacement soak `staging-soak-20260916T004748Z` started at `2026-09-16T00:47:48Z`; its first sample passed with zero failures and the exact expected version/SHA.
+- Evidence:
+  - `dist/soak/staging-soak-20260914T173308Z.jsonl`.
+  - `dist/soak/staging-soak-20260914T173308Z.summary.json`.
+  - `dist/soak/staging-soak-20260916T004748Z.jsonl`.
+  - `dist/soak/staging-soak-20260916T004748Z.state.json`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/34948367552`.
+- Next step:
+  - Let the replacement run reach its scheduled completion after `2026-09-17T00:47:48Z` (`02:47:48` Berlin time), require zero failed samples, then run the final readiness/storage/scheduler/CI closure checks and append terminal evidence.
