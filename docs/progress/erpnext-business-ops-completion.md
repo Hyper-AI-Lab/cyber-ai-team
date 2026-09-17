@@ -8814,3 +8814,45 @@
   - Temporal failed executions for scheduled cycles at `2026-09-16T01:30:00Z`, `01:45:00Z`, and `02:00:00Z`.
 - Next step:
   - Publish the correction, build and scan immutable release `0.4.14`, deploy backup-first, prove a malformed persisted KPI records `invalid_definition` without failing a live cycle, then start a new strict 24-hour soak.
+
+### 2026-09-17T01:38:37Z — STEP-366 — Deployed KPI hardening and started the strict replacement soak
+- Files/services changed:
+  - Built and scanned immutable release `0.4.14` from exact commit `6e97db2b86bfdb912083e72d640cc75eab0bf768`, then promoted its core, worker, and UI images to staging through the backup-first release path.
+  - Added a temporary staging-only malformed KPI canary with formula `max`, allowed the natural Temporal company cycle to evaluate it, and archived the canary after successful observation.
+  - Started strict soak `staging-soak-20260917T013814Z` for `86,400` seconds at five-minute intervals against the exact deployed version and SHA.
+  - Preserved the pre-existing local `docker-compose.yml` change without staging, rewriting, or reverting it.
+- Commands run:
+  - Ran the exact `0.4.14` release gate with the full quality gate, PostgreSQL migration rehearsals, Compose smoke, immutable image builds, and Trivy image scans.
+  - Ran `scripts/promote-staging.sh` in dry-run and execution modes, including a fresh PostgreSQL backup and external authenticated smoke test.
+  - Triggered and inspected the natural scheduled Temporal workflow `autonomous-company-cycle-scheduled-2026-09-17T01:30:00Z`, queried the canary KPI observation, refreshed authenticated readiness, checked event/lifecycle bounds, and started `scripts/start-staging-soak.sh`.
+  - Verified public health/readiness and triggered GitHub Actions manually for the exact deployed SHA.
+- Result:
+  - Release verification passed Ruff, `518` backend tests, compileall, Alembic offline SQL and real PostgreSQL rehearsal, dependency audits, Next.js build/typecheck, `34` frontend tests, security/FOSS/GCP-isolation checks, Compose smoke, and zero-enforced-finding image scans.
+  - Public `/health` and `/ready` report version `0.4.14`, exact build SHA `6e97db2b86bfdb912083e72d640cc75eab0bf768`, and all required dependencies healthy.
+  - The live scheduled cycle completed with zero errors. KPI observation `kpiobs_f63f2d15234e47ce9b786279da7ba920` recorded `invalid_definition` with `KPI function max must be called`; the temporary definition is inactive and its revision is superseded.
+  - Authenticated readiness is `ready` with zero blockers, autonomous-company readiness is `ready`, and `openai/gpt-5-nano` remains live and non-blocking.
+  - Staging has zero unresolved business events. Lifecycle evidence remains bounded at `35,943` rows and `28 MB`, with zero duplicate idempotency keys.
+  - Push CI run `35169168998` passed. Exact-SHA manual run `35171301786` is in progress and will be required to pass before this step is considered closed.
+  - The soak's first sample passed all health, login, readiness, finite-event, mandate, model-qualification, and outcome-currentness checks with zero failures.
+- Evidence:
+  - `dist/releases/0.4.14.json`.
+  - `dist/promotions/staging/0.4.14-20260917-012909.json`.
+  - `backups/staging/cyberteam-staging-0.4.14-20260917-012406.dump`.
+  - `dist/soak/staging-soak-20260917T013814Z.jsonl`.
+  - `dist/soak/staging-soak-20260917T013814Z.state.json`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/35169168998`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/35171301786`.
+- Next step:
+  - Require manual CI to pass, let the strict soak complete after `2026-09-18T01:38:14Z` (`03:38:14` Berlin time) with zero failed samples, then run final readiness, scheduler, storage, and natural scheduled-CI closure checks.
+
+### 2026-09-17T01:40:30Z — STEP-367 — Closed exact-release CI verification
+- Files/services changed:
+  - No runtime service, credential, or application source was changed; this step recorded the terminal CI result for the exact deployed release commit.
+- Commands run:
+  - Watched GitHub Actions run `35171301786` through completion with failure propagation enabled.
+- Result:
+  - Exact-SHA manual CI completed successfully. Backend, frontend, Compose smoke, observability, configuration/security hygiene, and Docker image scan jobs all passed for `6e97db2b86bfdb912083e72d640cc75eab0bf768`.
+- Evidence:
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/35171301786`.
+- Next step:
+  - Keep strict soak `staging-soak-20260917T013814Z` uninterrupted until its scheduled completion, then require zero failed samples and run the final closure checks.
