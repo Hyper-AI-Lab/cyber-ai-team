@@ -8792,3 +8792,25 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/34948367552`.
 - Next step:
   - Let the replacement run reach its scheduled completion after `2026-09-17T00:47:48Z` (`02:47:48` Berlin time), require zero failed samples, then run the final readiness/storage/scheduler/CI closure checks and append terminal evidence.
+
+### 2026-09-17T01:04:34Z — STEP-365 — Diagnosed replacement-soak failures and hardened the KPI formula DSL
+- Files/services changed:
+  - Retained and inspected all evidence from replacement soak `staging-soak-20260916T004748Z`; its failed terminal status was not suppressed or reclassified.
+  - Hardened `KPIFormula` so allowlisted function names such as `max` are valid only as actual calls and missing metric values raise `KPIFormulaError` instead of leaking `KeyError` into the Temporal activity.
+  - Added regression cases for the exact bare-function formula and a nested bare-function argument. Malformed persisted KPI definitions now follow the existing `invalid_definition` observation path without crashing the company cycle.
+- Commands run:
+  - Parsed every failed soak sample and adjacent recovery samples, queried the exact business events and disposition delays, listed historical Temporal executions, and extracted the failed activity stack traces.
+  - Queried the historical KPI revision that caused the incident and ran the complete repository quality gate.
+- Result:
+  - The replacement completed all `86,400` seconds with `289` samples: `286` passed and `3` failed, so it correctly remains a strict failure.
+  - Three consecutive readiness failures came from business events that exceeded the 30-minute processing window after the 01:30, 01:45, and 02:00 company cycles each exhausted three Temporal activity attempts with `KeyError('max')`. The 02:15 cycle recovered and dispositioned the backlog.
+  - Root cause was LLM-generated KPI revision `kpirev_8acebd65c5de4b3ab125e104dd5cfa7d`, whose bare formula `max` passed the DSL validator because function identifiers were excluded from metric binding checks even when not called.
+  - The quality gate passed Ruff, `518` backend tests, compileall, Alembic offline SQL through `0023`, Python dependency audit, Next.js production build/typecheck, `34` frontend tests, zero runtime dependency findings, Compose validation, secret scan, Google Cloud isolation, FOSS/resource policy, and diff hygiene.
+- Evidence:
+  - `dist/soak/staging-soak-20260916T004748Z.jsonl`.
+  - `dist/soak/staging-soak-20260916T004748Z.summary.json`.
+  - `backend/src/cyber_team/operations/strategy.py`.
+  - `backend/tests/test_company_strategy.py`.
+  - Temporal failed executions for scheduled cycles at `2026-09-16T01:30:00Z`, `01:45:00Z`, and `02:00:00Z`.
+- Next step:
+  - Publish the correction, build and scan immutable release `0.4.14`, deploy backup-first, prove a malformed persisted KPI records `invalid_definition` without failing a live cycle, then start a new strict 24-hour soak.

@@ -78,11 +78,18 @@ class KPIFormula:
         except SyntaxError as exc:
             raise KPIFormulaError("KPI formula is not valid arithmetic") from exc
         names: set[str] = set()
+        function_nodes = {
+            id(node.func)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
         for node in ast.walk(tree):
             if type(node) not in cls.ALLOWED_NODES:
                 raise KPIFormulaError(f"KPI formula node {type(node).__name__} is prohibited")
             if isinstance(node, ast.Name):
                 names.add(node.id)
+                if node.id in cls.ALLOWED_FUNCTIONS and id(node) not in function_nodes:
+                    raise KPIFormulaError(f"KPI function {node.id} must be called")
             if isinstance(node, ast.Call):
                 if not isinstance(node.func, ast.Name) or node.func.id not in cls.ALLOWED_FUNCTIONS:
                     raise KPIFormulaError("Only min, max, abs, and round calls are allowed")
@@ -133,7 +140,10 @@ class KPIFormula:
         if isinstance(node, ast.Constant):
             return float(node.value)
         if isinstance(node, ast.Name):
-            return values[node.id]
+            try:
+                return values[node.id]
+            except KeyError as exc:
+                raise KPIFormulaError(f"KPI metric {node.id} has no value") from exc
         if isinstance(node, ast.UnaryOp):
             value = cls._evaluate_node(node.operand, values)
             return -value if isinstance(node.op, ast.USub) else value

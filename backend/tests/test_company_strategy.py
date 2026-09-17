@@ -205,6 +205,11 @@ def test_kpi_formula_dsl_evaluates_allowlisted_arithmetic():
         ("customer.__class__", {"customer": "erpnext.customer.active"}),
         ("customers", {"customers": "raw_sql.customer_count"}),
         ("missing_metric + 1", {}),
+        ("max", {"unknown_critical_facts": "company_model.unknown_count"}),
+        (
+            "max(max, 1)",
+            {"unknown_critical_facts": "company_model.unknown_count"},
+        ),
     ],
 )
 def test_kpi_formula_dsl_rejects_code_and_unapproved_bindings(formula, bindings):
