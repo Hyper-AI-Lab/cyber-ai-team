@@ -8856,3 +8856,28 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/35171301786`.
 - Next step:
   - Keep strict soak `staging-soak-20260917T013814Z` uninterrupted until its scheduled completion, then require zero failed samples and run the final closure checks.
+
+### 2026-09-18T07:50:28Z — STEP-368 — Passed the strict 24-hour staging soak and closure audit
+- Files/services changed:
+  - No runtime configuration, credential, or application source was changed. The completed soak evidence and final live closure checks were inspected and retained.
+  - The self-removing soak container exited normally after writing its terminal state and summary artifacts.
+- Commands run:
+  - Inspected every sample, terminal state, and summary for `staging-soak-20260917T013814Z`, including an explicit search for non-passing samples and first/last sample comparison.
+  - Rechecked public health/readiness, forced authenticated operations readiness, integration status, Temporal schedule state and twelve recent workflow executions, business-event disposition, agent-mandate coverage, lifecycle storage bounds, duplicate idempotency keys, endpoint latency percentiles, and GitHub push/manual/scheduled CI.
+- Result:
+  - The strict soak completed the full `86,400.18` seconds with `289/289` passing samples and zero failures against immutable release `0.4.14` / `6e97db2b86bfdb912083e72d640cc75eab0bf768`.
+  - Mean monitor latency was `61.63 ms`. Endpoint p95 latency was `68.85 ms` for health, `98.01 ms` for login, and `162.30 ms` for authenticated readiness; readiness had one `778.03 ms` maximum sample without a timeout, error, blocker, or gate failure.
+  - Both the first and terminal samples reported healthy exact-version metadata, readiness `ready` with zero blockers, all ten outcome-autonomy checks passing, and qualified live `openai/gpt-5-nano` model capability.
+  - Current public health and dependency readiness remain healthy. Authenticated readiness and autonomous-company readiness are `ready` with zero blockers, and the Temporal schedule is active.
+  - All twelve latest scheduled company cycles completed. Staging has zero unresolved business events, zero active agents without an active mandate, and zero duplicate lifecycle idempotency keys.
+  - Lifecycle evidence remains bounded at `36,028` rows and `28 MB`, an increase of only `85` legitimate rows across the soak.
+  - Push CI `35171485574`, exact-release manual CI `35171301786`, and natural scheduled CI `35200905651` all passed.
+- Evidence:
+  - `dist/soak/staging-soak-20260917T013814Z.jsonl`.
+  - `dist/soak/staging-soak-20260917T013814Z.state.json`.
+  - `dist/soak/staging-soak-20260917T013814Z.summary.json`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/35171485574`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/35171301786`.
+  - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/35200905651`.
+- Next step:
+  - Treat the Autonomous Operating-Model Lifecycle v4 staging release candidate as technically accepted. Any production promotion remains an explicit permanent owner gate; future development should begin from the next product milestone rather than extending this completed soak gate.
