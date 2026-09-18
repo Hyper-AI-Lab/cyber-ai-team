@@ -9,6 +9,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -1025,6 +1026,25 @@ class EvidenceArtifact(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
 
 
+class EvidencePayloadArtifact(Base):
+    """Content-addressed immutable storage for oversized structured evidence."""
+
+    __tablename__ = "evidence_payload_artifacts"
+    __table_args__ = (
+        UniqueConstraint("content_hash", name="uq_evidence_payload_artifacts_hash"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    company_namespace: Mapped[str] = mapped_column(String(200), index=True)
+    artifact_type: Mapped[str] = mapped_column(String(100), index=True)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    encoding: Mapped[str] = mapped_column(String(30), default="gzip+json")
+    payload: Mapped[bytes] = mapped_column(LargeBinary)
+    raw_size: Mapped[int] = mapped_column(Integer)
+    compressed_size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
 class CompanyClaim(Base):
     __tablename__ = "company_claims"
     __table_args__ = (UniqueConstraint("claim_hash", name="uq_company_claims_claim_hash"),)
@@ -1040,6 +1060,9 @@ class CompanyClaim(Base):
     sensitivity: Mapped[str] = mapped_column(String(30), default="internal", index=True)
     evidence_ids: Mapped[list] = mapped_column(JSON, default=list)
     claim_hash: Mapped[str] = mapped_column(String(64), index=True)
+    semantic_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
     owner_locked: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     valid_from: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
     valid_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
@@ -1050,6 +1073,42 @@ class CompanyClaim(Base):
         index=True,
     )
     created_by: Mapped[str] = mapped_column(String(200), default="company_discovery_agent")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
+class CompanyClaimObservation(Base):
+    """One provenance-bearing observation of a canonical semantic claim."""
+
+    __tablename__ = "company_claim_observations"
+    __table_args__ = (
+        UniqueConstraint(
+            "observation_hash",
+            name="uq_company_claim_observations_hash",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    claim_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("company_claims.id"), index=True
+    )
+    evidence_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("evidence_artifacts.id"),
+        nullable=True,
+        index=True,
+    )
+    source_reference: Mapped[str | None] = mapped_column(
+        String(240), nullable=True, index=True
+    )
+    signal_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("company_signals.id"), nullable=True, index=True
+    )
+    observation_hash: Mapped[str] = mapped_column(String(64), index=True)
+    epistemic_state: Mapped[str] = mapped_column(String(30), index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    trust_class: Mapped[str] = mapped_column(String(30), default="untrusted", index=True)
+    sensitivity: Mapped[str] = mapped_column(String(30), default="internal", index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
 
 
@@ -1253,6 +1312,12 @@ class OperatingModelRevision(Base):
     domain_keys: Mapped[list] = mapped_column(JSON, default=list)
     objective_revision_ids: Mapped[list] = mapped_column(JSON, default=list)
     evidence_ids: Mapped[list] = mapped_column(JSON, default=list)
+    evidence_archive_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("evidence_payload_artifacts.id"),
+        nullable=True,
+        index=True,
+    )
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     observer_review_id: Mapped[str | None] = mapped_column(
         String(64),
@@ -1267,6 +1332,27 @@ class OperatingModelRevision(Base):
     activated_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, index=True
     )
+
+
+class OperatingModelRevisionClaim(Base):
+    __tablename__ = "operating_model_revision_claims"
+    __table_args__ = (
+        UniqueConstraint(
+            "operating_model_revision_id",
+            "claim_id",
+            name="uq_operating_model_revision_claim",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    operating_model_revision_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("operating_model_revisions.id"), index=True
+    )
+    claim_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("company_claims.id"), index=True
+    )
+    semantic_hash: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
 
 
 class OperatingDomain(Base):
@@ -1345,6 +1431,12 @@ class OperatingDomainRevision(Base):
     event_selectors: Mapped[list] = mapped_column(JSON, default=list)
     objective_revision_ids: Mapped[list] = mapped_column(JSON, default=list)
     evidence_ids: Mapped[list] = mapped_column(JSON, default=list)
+    evidence_archive_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("evidence_payload_artifacts.id"),
+        nullable=True,
+        index=True,
+    )
     cadence: Mapped[dict] = mapped_column(JSON, default=dict)
     budget: Mapped[dict] = mapped_column(JSON, default=dict)
     activation_criteria: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -1361,6 +1453,29 @@ class OperatingDomainRevision(Base):
     created_by: Mapped[str] = mapped_column(
         String(200), default="chief_operating_agent"
     )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
+class OperatingDomainRevisionEvidence(Base):
+    __tablename__ = "operating_domain_revision_evidence"
+    __table_args__ = (
+        UniqueConstraint(
+            "domain_revision_id",
+            "evidence_hash",
+            name="uq_operating_domain_revision_evidence",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    domain_revision_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("operating_domain_revisions.id"), index=True
+    )
+    source_type: Mapped[str] = mapped_column(String(80), index=True)
+    source_id: Mapped[str] = mapped_column(String(64), index=True)
+    evidence_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    matched_selectors: Mapped[list] = mapped_column(JSON, default=list)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    evidence_hash: Mapped[str] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
 
 

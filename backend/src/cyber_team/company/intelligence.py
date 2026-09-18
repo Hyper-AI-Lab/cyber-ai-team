@@ -28,6 +28,7 @@ from cyber_team.db.models import (
     BusinessEvent,
     BusinessEventDelivery,
     CompanyClaim,
+    CompanyClaimObservation,
     CompanyContextSnapshot,
     CompanyModelRevision,
     CompanySignal,
@@ -1213,6 +1214,13 @@ class CompanyIntelligenceService:
             for item in competing:
                 item.epistemic_state = "superseded"
                 item.valid_until = now
+                item.semantic_hash = None
+            semantic_hash = self._semantic_claim_hash(
+                namespace=original.company_namespace,
+                subject=original.subject,
+                predicate=original.predicate,
+                value=self.redact(value),
+            )
             revision = CompanyClaim(
                 id=f"claim_{uuid.uuid4().hex}",
                 company_namespace=original.company_namespace,
@@ -1225,6 +1233,7 @@ class CompanyIntelligenceService:
                 sensitivity=original.sensitivity,
                 evidence_ids=original.evidence_ids,
                 claim_hash=claim_hash,
+                semantic_hash=semantic_hash,
                 owner_locked=True,
                 valid_from=now,
                 supersedes_id=original.id,
@@ -1825,24 +1834,44 @@ class CompanyIntelligenceService:
         evidence_id: str | None,
     ) -> bool:
         value = candidate.get("value")
+        normalized_value = value if isinstance(value, dict) else {"value": value}
         state = candidate.get("epistemic_state", "inferred")
         if state not in EPISTEMIC_STATES:
             state = "hypothesis"
-        claim_hash = self._hash(
-            {
-                "namespace": namespace,
-                "subject": candidate["subject"],
-                "predicate": candidate["predicate"],
-                "value": value,
-                "evidence_id": evidence_id,
-            }
+        semantic_hash = self._semantic_claim_hash(
+            namespace=namespace,
+            subject=candidate["subject"],
+            predicate=candidate["predicate"],
+            value=normalized_value,
         )
         existing = (
             await session.execute(
-                select(CompanyClaim).where(CompanyClaim.claim_hash == claim_hash)
+                select(CompanyClaim).where(CompanyClaim.semantic_hash == semantic_hash)
             )
         ).scalar_one_or_none()
         if existing:
+            await self._record_claim_observation(
+                session,
+                claim=existing,
+                semantic_hash=semantic_hash,
+                signal=signal,
+                evidence_id=evidence_id,
+                epistemic_state=state,
+                confidence=float(candidate.get("confidence", 0.5)),
+            )
+            if evidence_id:
+                existing.evidence_ids = self._bounded_unique(
+                    [*(existing.evidence_ids or []), evidence_id],
+                    limit=100,
+                )
+            if not existing.owner_locked:
+                confidence = min(
+                    float(candidate.get("confidence", 0.5)),
+                    TRUST_WEIGHTS.get(signal.trust_class, 0.25),
+                )
+                if confidence > existing.confidence:
+                    existing.confidence = confidence
+                    existing.trust_class = signal.trust_class
             return False
         competing = (
             await session.execute(
@@ -1866,22 +1895,80 @@ class CompanyIntelligenceService:
             float(candidate.get("confidence", 0.5)),
             TRUST_WEIGHTS.get(signal.trust_class, 0.25),
         )
+        claim = CompanyClaim(
+            id=f"claim_{uuid.uuid4().hex}",
+            company_namespace=namespace,
+            subject=candidate["subject"][:240],
+            predicate=candidate["predicate"][:160],
+            value=normalized_value,
+            epistemic_state=state,
+            confidence=confidence,
+            trust_class=signal.trust_class,
+            sensitivity=signal.sensitivity,
+            evidence_ids=[evidence_id] if evidence_id else [],
+            claim_hash=semantic_hash,
+            semantic_hash=semantic_hash,
+            owner_locked=False,
+            valid_from=signal.occurred_at or signal.received_at,
+            created_by=self.DISCOVERY_AGENT_ID,
+        )
+        session.add(claim)
+        await session.flush()
+        await self._record_claim_observation(
+            session,
+            claim=claim,
+            semantic_hash=semantic_hash,
+            signal=signal,
+            evidence_id=evidence_id,
+            epistemic_state=state,
+            confidence=float(candidate.get("confidence", 0.5)),
+        )
+        return True
+
+    async def _record_claim_observation(
+        self,
+        session,
+        *,
+        claim: CompanyClaim,
+        semantic_hash: str,
+        signal: CompanySignal,
+        evidence_id: str | None,
+        epistemic_state: str,
+        confidence: float,
+    ) -> bool:
+        observation_hash = self._hash(
+            {
+                "semantic_hash": semantic_hash,
+                "evidence_id": evidence_id,
+                "signal_content_hash": signal.content_hash,
+                "source_id": signal.source_id,
+            }
+        )
+        existing = (
+            await session.execute(
+                select(CompanyClaimObservation.id).where(
+                    CompanyClaimObservation.observation_hash == observation_hash
+                )
+            )
+        ).scalar_one_or_none()
+        if existing:
+            return False
         session.add(
-            CompanyClaim(
-                id=f"claim_{uuid.uuid4().hex}",
-                company_namespace=namespace,
-                subject=candidate["subject"][:240],
-                predicate=candidate["predicate"][:160],
-                value=value if isinstance(value, dict) else {"value": value},
-                epistemic_state=state,
-                confidence=confidence,
+            CompanyClaimObservation(
+                id=f"claimobs_{uuid.uuid4().hex}",
+                claim_id=claim.id,
+                evidence_id=evidence_id,
+                source_reference=evidence_id,
+                signal_id=signal.id,
+                observation_hash=observation_hash,
+                epistemic_state=epistemic_state,
+                confidence=min(
+                    max(float(confidence), 0.0),
+                    TRUST_WEIGHTS.get(signal.trust_class, 0.25),
+                ),
                 trust_class=signal.trust_class,
                 sensitivity=signal.sensitivity,
-                evidence_ids=[evidence_id] if evidence_id else [],
-                claim_hash=claim_hash,
-                owner_locked=False,
-                valid_from=signal.occurred_at or signal.received_at,
-                created_by=self.DISCOVERY_AGENT_ID,
+                observed_at=signal.occurred_at or signal.received_at,
             )
         )
         return True
@@ -2418,6 +2505,28 @@ class CompanyIntelligenceService:
         return cls._hash(sorted(fingerprints))
 
     @classmethod
+    def _semantic_claim_hash(
+        cls,
+        *,
+        namespace: str,
+        subject: str,
+        predicate: str,
+        value: Any,
+    ) -> str:
+        return cls._hash(
+            {
+                "namespace": namespace,
+                "subject": str(subject)[:240],
+                "predicate": str(predicate)[:160],
+                "value": value,
+            }
+        )
+
+    @staticmethod
+    def _bounded_unique(values: list[Any], *, limit: int) -> list[str]:
+        return list(dict.fromkeys(str(item) for item in values if item))[-limit:]
+
+    @classmethod
     def _hash(cls, value: Any) -> str:
         text = value if isinstance(value, str) else cls._canonical_json(value)
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -2509,6 +2618,7 @@ class CompanyIntelligenceService:
             "sensitivity": item.sensitivity,
             "evidence_ids": item.evidence_ids,
             "claim_hash": item.claim_hash,
+            "semantic_hash": item.semantic_hash or item.claim_hash,
             "owner_locked": item.owner_locked,
             "valid_from": item.valid_from.isoformat(),
             "valid_until": item.valid_until.isoformat() if item.valid_until else None,

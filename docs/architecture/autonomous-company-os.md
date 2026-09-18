@@ -286,3 +286,30 @@ milestone. Autonomous-company acceptance must demonstrate representative evidenc
 discovery, work delegation, policy-gated execution, outcome measurement, adaptation, and
 owner escalation over time. The detailed correction and closure sequence is defined in
 `docs/architecture/autonomy-outcome-closure-plan.md`.
+
+## Vision Integrity V5 Contract
+
+The production control plane distinguishes observations from semantic company facts.
+Repeated observations refresh provenance on a canonical claim and must not create new
+facts or operating-model revisions when the semantic state is unchanged. Operating-model
+and domain revisions reference canonical evidence instead of copying unbounded evidence
+payloads.
+
+Periodic no-change cycles are measured, not narrated as thousands of identical audit
+events. Immutable audit records remain mandatory for state transitions, policy and
+authorization decisions, approvals, owner actions, external effects, and failures.
+Large supporting payloads are content-addressed evidence artifacts referenced by hash.
+
+Lifecycle truth is reconciled against effective agents, mandates, grants, tools,
+providers, and source revisions. A fulfilled or obsolete gap, request, intent, or
+approval cannot remain actionable. Readiness includes semantic integrity, storage growth,
+authorization dependencies, observability runtime, privacy coverage, and protocol
+conformance rather than configuration presence alone.
+
+Interoperability labels are evidence claims. Cyber-Team may claim MCP compatibility only
+for a tested MCP transport and tool contract. Internal agent-card projections are not
+described as A2A conformance unless the complete protocol is implemented and tested.
+
+The closure target is a production-grade staging release candidate with no known
+in-scope defect or ungoverned lifecycle. Production promotion remains an explicit owner
+gate.

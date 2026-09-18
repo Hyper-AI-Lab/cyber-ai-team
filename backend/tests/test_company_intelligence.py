@@ -21,7 +21,9 @@ from cyber_team.db.models import (
     AuditEvent,
     BusinessEvent,
     CompanyClaim,
+    CompanyClaimObservation,
     CompanyContextSnapshot,
+    CompanyModelRevision,
     CompanySignal,
     CompanySource,
     EvidenceArtifact,
@@ -499,6 +501,59 @@ async def test_erpnext_evidence_creates_claims_without_generic_company_facts(
         discovery_agent = await session.get(Agent, service.DISCOVERY_AGENT_ID)
     assert discovery_agent is not None
     assert discovery_agent.config["side_effect_authority"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_repeated_semantic_evidence_creates_observations_not_duplicate_claims(
+    intelligence_session_factory,
+):
+    service = CompanyIntelligenceService(audit_service=FakeAudit())
+    for sequence in range(100):
+        payload = erpnext_payload()
+        payload["observation_sequence"] = sequence
+        await service.ingest_signal(
+            source_key="erpnext",
+            signal_type="erpnext.company_context_snapshot",
+            external_id=f"snapshot-repeat-{sequence}",
+            payload=payload,
+            trust_class="canonical",
+        )
+
+    processed_count = 0
+    while processed_count < 100:
+        batch = await service.process_pending_signals(limit=200)
+        processed_count += int(batch["processed"])
+        if not batch["claimed"]:
+            break
+    first_model = await service.discover_company_model(acquire=False)
+    second_model = await service.discover_company_model(acquire=False)
+
+    async with intelligence_session_factory() as session:
+        claims = (
+            await session.execute(
+                select(CompanyClaim).where(
+                    CompanyClaim.epistemic_state != "superseded"
+                )
+            )
+        ).scalars().all()
+        observations = (
+            await session.execute(select(CompanyClaimObservation))
+        ).scalars().all()
+        model_revisions = (
+            await session.execute(select(CompanyModelRevision))
+        ).scalars().all()
+
+    semantic_facts = {
+        (item.subject, item.predicate, service._canonical_json(item.value))
+        for item in claims
+    }
+    assert processed_count == 100
+    assert len(claims) == len(semantic_facts)
+    assert all(item.semantic_hash for item in claims)
+    assert len(observations) == len(claims) * 100
+    assert len(model_revisions) == 1
+    assert first_model["id"] == second_model["id"]
+    assert second_model["duplicate"] is True
 
 
 @pytest.mark.asyncio

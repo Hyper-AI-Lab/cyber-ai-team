@@ -8881,3 +8881,49 @@
   - `https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/35200905651`.
 - Next step:
   - Treat the Autonomous Operating-Model Lifecycle v4 staging release candidate as technically accepted. Any production promotion remains an explicit permanent owner gate; future development should begin from the next product milestone rather than extending this completed soak gate.
+
+### 2026-09-18T09:06:10Z — STEP-369 — Froze the v5 vision contract and verified the migration safety point
+- Files/services changed:
+  - Created the requirement-to-implementation audit at `docs/audits/vision-conformance-2026-09-18.md` and replaced the stale v3 development status with the authoritative Vision Integrity v5 closure ledger.
+  - Extended the architecture contract with canonical-evidence, bounded-history, lifecycle-truth, readiness, and protocol-conformance invariants.
+  - Created fresh PostgreSQL and ERPNext backups, verified isolated PostgreSQL/Qdrant/ERPNext restores, paused both Temporal autonomy schedules, and stopped only the worker while keeping the owner UI and API available.
+  - Preserved the pre-existing localhost-only ERPNext frontend binding in `docker-compose.yml` without rewriting or reverting it.
+- Commands run:
+  - Created and checksummed a custom-format PostgreSQL dump, ran `scripts/erpnext-backup.sh`, `scripts/staging-restore-drill.sh`, and `scripts/erpnext-restore-drill.sh`.
+  - Paused `cyberteam-autonomous-company-cycle-v3` and `cyberteam-executive-governor-v1` through the Temporal API, stopped `cyberteam-staging-worker`, and captured live table, integrity, health, and readiness baselines.
+- Result:
+  - PostgreSQL, Qdrant, and ERPNext restore drills passed. Public health and dependency readiness remained healthy after the autonomy freeze.
+  - The baseline confirmed `8,099` claim rows for only `335` semantic facts, `1,045,563` audit events, `849` operating-model revisions, `11,886` domain revisions, and `14,400` lifecycle decisions.
+  - The largest tracked relations were audit events (`846 MB`), operating-model revisions (`618 MB`), lifecycle decisions (`451 MB`), and domain revisions (`373 MB`), validating semantic canonicalization and bounded-history work as the first code priority.
+- Evidence:
+  - `backups/staging/cyberteam-staging-v5-pre-migration-20260918-084557.dump` and its SHA-256 sidecar.
+  - `dist/restore-drills/staging/staging-restore-drill-20260918T085039Z.json`.
+  - `dist/erpnext/backups/erpnext-backup-20260918T084958Z.json`.
+  - `dist/erpnext/restore-drills/erpnext-restore-drill-20260918T085626Z.json`.
+  - `dist/vision-integrity-v5/baseline/`.
+- Next step:
+  - Add canonical claim observations and normalized operating-model evidence, backfill staging idempotently, and prove unchanged evidence no longer creates semantic or revision duplicates.
+
+### 2026-09-18T13:55:22Z — STEP-370 — Canonicalized company intelligence and bounded operating-model evidence
+- Files/services changed:
+  - Added canonical semantic claim identity, normalized claim observations, normalized operating-model claim/domain evidence links, and immutable compressed evidence-payload artifacts through additive Alembic revision `0024`.
+  - Changed company-intelligence ingestion so new evidence refreshes one semantic claim and records an observation instead of creating a duplicate claim.
+  - Changed operating-model synthesis to hash semantic state, omit row identity and routine event churn, bound evidence arrays, and store compact trace references instead of copied evidence text.
+  - Added the idempotent `scripts/backfill-vision-integrity-v5.py` migration utility and a 100-observation regression test.
+- Commands run:
+  - Ran focused and complete backend suites, Ruff, compileall, Alembic offline SQL, legacy and representative migration rehearsals, and a full restored-data migration/backfill rehearsal.
+  - Applied the additive schema and backfill to paused staging, reran the complete backfill, and analyzed the affected PostgreSQL tables.
+- Result:
+  - `519` backend tests passed. Both schema migration rehearsals and the full restored-data rehearsal passed.
+  - Staging now has `335` canonical active claims and `8,099` normalized observations; `7,764` duplicate claim rows are preserved as superseded history rather than deleted.
+  - Historical oversized payloads are preserved in `7,890` content-addressed compressed artifacts, while current-domain evidence uses only `670` normalized query links.
+  - The second staging backfill changed zero rows and created zero artifacts or links, proving idempotency.
+  - Secret scan and diff hygiene passed.
+- Evidence:
+  - `dist/vision-integrity-v5/baseline/backfill-apply-rehearsal-v2.json`.
+  - `dist/vision-integrity-v5/baseline/backfill-second-apply-rehearsal-v2.json`.
+  - `dist/vision-integrity-v5/backfill-staging-apply.json`.
+  - `dist/vision-integrity-v5/backfill-staging-idempotency.json`.
+  - `dist/vision-integrity-v5/staging-canonicalization-counts.tsv`.
+- Next step:
+  - Deploy the canonical write path, resume a controlled company cycle, then suppress no-change audit amplification and establish table-specific maintenance and growth budgets.

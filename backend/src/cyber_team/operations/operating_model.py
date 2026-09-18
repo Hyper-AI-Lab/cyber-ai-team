@@ -35,11 +35,13 @@ from cyber_team.db.models import (
     ObserverReview,
     OperatingDomain,
     OperatingDomainRevision,
+    OperatingDomainRevisionEvidence,
     OperatingKPIDefinition,
     OperatingKPIRevision,
     OperatingLifecycleDecision,
     OperatingModelReconciliationRun,
     OperatingModelRevision,
+    OperatingModelRevisionClaim,
     OperationGraphEdge,
     OperationGraphNode,
     OutsourcingRequest,
@@ -64,7 +66,7 @@ LIFECYCLE_ASSESSMENT_KEY_PREFIX = "lifecycle:v2:"
 class OperatingModelLifecycleService:
     """Synthesize and reconcile the company operating model from durable evidence."""
 
-    SYNTHESIS_VERSION = "operating-model-synthesis-v1"
+    SYNTHESIS_VERSION = "operating-model-synthesis-v2"
 
     def __init__(
         self,
@@ -100,11 +102,13 @@ class OperatingModelLifecycleService:
         source_payload = {
             "version": self.SYNTHESIS_VERSION,
             "company_namespace": namespace,
-            "company_model_revision_id": (context["model"].id if context["model"] else None),
+            "company_model_source_hash": (
+                context["model"].source_hash if context["model"] else None
+            ),
             "claim_versions": [
                 {
-                    "id": item.id,
-                    "hash": item.claim_hash,
+                    "hash": item.semantic_hash
+                    or self._semantic_claim_fingerprint(item),
                     "state": item.epistemic_state,
                     "confidence": item.confidence,
                 }
@@ -112,24 +116,14 @@ class OperatingModelLifecycleService:
             ],
             "objective_revisions": [item.id for item in context["objectives"]],
             "kpi_revisions": [item.id for item in context["kpi_revisions"]],
-            "event_versions": [
-                [item.id, item.status, item.disposition] for item in context["events"]
-            ],
-            "work_versions": [
-                [item.id, item.status, item.updated_at.isoformat()]
-                for item in context["work_items"]
-            ],
-            "gap_versions": [
-                [item.id, item.status, item.updated_at.isoformat()] for item in context["role_gaps"]
-            ],
-            "domains": proposed_domains,
+            "domains": [self._domain_source_fingerprint(item) for item in proposed_domains],
         }
         source_hash = self._hash(source_payload)
         confidence = self._model_confidence(context, proposed_domains)
         objective_ids = sorted(item.id for item in context["objectives"])
         evidence_ids = sorted(
             {evidence_id for domain in proposed_domains for evidence_id in domain["evidence_ids"]}
-        )
+        )[:250]
 
         async with async_session() as session:
             existing = (
@@ -180,6 +174,17 @@ class OperatingModelLifecycleService:
                 created_by=actor,
             )
             session.add(revision)
+            await session.flush()
+            for claim in context["claims"]:
+                semantic_hash = claim.semantic_hash or self._semantic_claim_fingerprint(claim)
+                session.add(
+                    OperatingModelRevisionClaim(
+                        id=f"opmodelclaim_{uuid.uuid4().hex}",
+                        operating_model_revision_id=revision.id,
+                        claim_id=claim.id,
+                        semantic_hash=semantic_hash,
+                    )
+                )
             try:
                 await session.commit()
             except IntegrityError:
@@ -2406,8 +2411,7 @@ class OperatingModelLifecycleService:
             ).scalar_one_or_none()
             if not latest or latest.source_hash != revision_hash:
                 domain.current_revision = (latest.revision + 1) if latest else 1
-                session.add(
-                    OperatingDomainRevision(
+                domain_revision = OperatingDomainRevision(
                         id=f"domainrev_{uuid.uuid4().hex}",
                         domain_id=domain.id,
                         operating_model_revision_id=model.id,
@@ -2424,7 +2428,7 @@ class OperatingModelLifecycleService:
                         objective_revision_ids=list(
                             specification.get("objective_revision_ids") or []
                         ),
-                        evidence_ids=list(specification.get("evidence_ids") or []),
+                        evidence_ids=list(specification.get("evidence_ids") or [])[:250],
                         cadence={
                             "interval_seconds": int(
                                 specification.get("cadence_seconds")
@@ -2451,7 +2455,33 @@ class OperatingModelLifecycleService:
                         observer_review_id=model.observer_review_id,
                         created_by="operating_model_reconciler",
                     )
-                )
+                session.add(domain_revision)
+                await session.flush()
+                for item in list(specification.get("evidence") or [])[:100]:
+                    source_type = str(item.get("source_type") or "unknown")[:80]
+                    source_id = str(item.get("source_id") or "unknown")[:64]
+                    evidence_id = next(iter(item.get("evidence_ids") or []), None)
+                    evidence_hash = self._hash(
+                        {
+                            "source_type": source_type,
+                            "source_id": source_id,
+                            "matched_selectors": item.get("matched_selectors") or [],
+                        }
+                    )
+                    session.add(
+                        OperatingDomainRevisionEvidence(
+                            id=f"domainrevev_{uuid.uuid4().hex}",
+                            domain_revision_id=domain_revision.id,
+                            source_type=source_type,
+                            source_id=source_id,
+                            evidence_id=str(evidence_id)[:64] if evidence_id else None,
+                            matched_selectors=list(
+                                item.get("matched_selectors") or []
+                            )[:25],
+                            confidence=float(item.get("confidence") or 0),
+                            evidence_hash=evidence_hash,
+                        )
+                    )
             domain.operating_model_revision_id = model.id
 
         projection_state = decision["effective_state"]
@@ -2736,6 +2766,7 @@ class OperatingModelLifecycleService:
                     ),
                 )
             )
+            compact_matches = [self._compact_evidence_match(item) for item in matches[:50]]
             domains.append(
                 {
                     **spec.model_dump(),
@@ -2743,7 +2774,7 @@ class OperatingModelLifecycleService:
                     "confidence": round(confidence, 4),
                     "objective_revision_ids": objective_ids,
                     "evidence_ids": evidence_ids,
-                    "evidence": matches[:50],
+                    "evidence": compact_matches,
                     "reason": (
                         "Required control-plane domain."
                         if spec.core and not matches
@@ -2762,7 +2793,7 @@ class OperatingModelLifecycleService:
                     "company_model_revision",
                     model.id,
                     {"model": model.model, "unknowns": model.unknowns},
-                    model.claim_ids,
+                    [],
                     model.confidence,
                 )
             )
@@ -2772,7 +2803,7 @@ class OperatingModelLifecycleService:
                     "company_claim",
                     claim.id,
                     {"predicate": claim.predicate, "value": claim.value},
-                    claim.evidence_ids,
+                    [claim.id, *(claim.evidence_ids or [])],
                     claim.confidence,
                 )
             )
@@ -2848,6 +2879,35 @@ class OperatingModelLifecycleService:
                 )
             )
         return items
+
+    @staticmethod
+    def _compact_evidence_match(item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "source_type": item["source_type"],
+            "source_id": item["source_id"],
+            "evidence_ids": list(item.get("evidence_ids") or [])[:25],
+            "confidence": float(item.get("confidence") or 0),
+            "matched_selectors": list(item.get("matched_selectors") or [])[:25],
+        }
+
+    @classmethod
+    def _domain_source_fingerprint(cls, item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in item.items()
+            if key not in {"evidence", "reason"}
+        }
+
+    @classmethod
+    def _semantic_claim_fingerprint(cls, claim: CompanyClaim) -> str:
+        return cls._hash(
+            {
+                "namespace": claim.company_namespace,
+                "subject": claim.subject,
+                "predicate": claim.predicate,
+                "value": claim.value,
+            }
+        )
 
     @classmethod
     def _evidence_item(
@@ -3019,6 +3079,7 @@ class OperatingModelLifecycleService:
             "domain_keys": revision.domain_keys or [],
             "objective_revision_ids": revision.objective_revision_ids or [],
             "evidence_ids": revision.evidence_ids or [],
+            "evidence_archive_id": revision.evidence_archive_id,
             "confidence": revision.confidence,
             "observer_review_id": revision.observer_review_id,
             "actual_domains": [self._domain_payload(item) for item in domains],
