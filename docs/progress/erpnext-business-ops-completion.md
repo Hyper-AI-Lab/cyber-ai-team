@@ -8976,3 +8976,26 @@
   - `/tmp/vision-v5-email-gate.log`.
 - Next step:
   - Publish and deploy the scoped-ingestion patch from an exact commit, run one legitimate transition cycle followed by an immediate replay, and require stable company/operating-model identities before beginning bounded audit rollups and delta lifecycle reconciliation.
+
+### 2026-09-21T16:11:12Z — STEP-373 — Proved semantic model idempotency on the scoped live write path
+- Files/services changed:
+  - Published checkpoint `19397ea40ad082dc2019f9104698223627f9814d` to the public `codex/vision-integrity-v5` branch.
+  - Built immutable image `cyber-team-core:0.4.15-vision-v5.3` with exact OCI version and revision labels, then recreated only staging `core` and `worker` from that image.
+  - Kept the UI, database, ERPNext, Temporal, Qdrant, Redis, and OPA services in place. Kept both autonomy schedules paused before starting the new worker.
+- Commands run:
+  - Inspected image labels, stopped the worker, recreated the API, reasserted both Temporal schedule pauses, verified health/readiness, and recreated the worker on the same exact image.
+  - Triggered one controlled company cycle and one immediate replay through the paused Temporal schedule; captured both workflow results and pre/post persistence counts.
+- Result:
+  - `/health` and `/ready` pass on version `0.4.15` and exact SHA `19397ea40ad082dc2019f9104698223627f9814d`; PostgreSQL, Redis, Qdrant, Temporal, and OPA are healthy.
+  - Transition run `01a0c4b9-e108-730f-b24b-ed85af33c9cd` completed, left zero pending signals and `87` active claims, and produced the expected one-time company-model revision `210` and operating-model revision `854` after removing unrelated evidence.
+  - Immediate replay `01a0c4bb-93ca-7390-9650-127176a0318c` completed in `20.7` seconds with zero source acquisition, zero domain work, zero routing work, the same company-model revision `210`, the same operating-model revision `854` with `reused=true`, and the same agreed Observer review with `reused=true`.
+  - Both Temporal autonomy schedules remain paused with no running workflows. The semantic company/model persistence boundary is now live-proven idempotent.
+  - The replay still reassessed `35,858` lifecycle resources and emitted `21` audit rows, isolating the next planned integrity work to delta lifecycle reconciliation and bounded audit rollups.
+- Evidence:
+  - `dist/vision-integrity-v5/replay/post-scope-transition.txt`.
+  - `dist/vision-integrity-v5/replay/post-scope-transition-counts.tsv`.
+  - `dist/vision-integrity-v5/replay/post-scope-idempotent-replay.txt`.
+  - `dist/vision-integrity-v5/replay/post-scope-idempotent-replay-counts.tsv`.
+  - Temporal runs `01a0c4b9-e108-730f-b24b-ed85af33c9cd` and `01a0c4bb-93ca-7390-9650-127176a0318c`.
+- Next step:
+  - Replace full-history lifecycle reassessment with current-state deltas and replace repeated no-change audit events with bounded hourly rollups while preserving immutable security, approval, side-effect, failure, and owner-action records.
