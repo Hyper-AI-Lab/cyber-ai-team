@@ -73,6 +73,7 @@ async def test_validate_imap_performs_login_select_and_noop(monkeypatch):
     monkeypatch.setattr(settings, "imap_password", "imap-password")
     monkeypatch.setattr(settings, "imap_use_ssl", True)
     monkeypatch.setattr(settings, "imap_mailbox", "INBOX")
+    monkeypatch.setattr(settings, "inbound_email_address", "contact@example.com")
     calls = []
 
     class FakeIMAP:
@@ -176,6 +177,79 @@ def test_fetch_unseen_messages_parses_headers_and_body(monkeypatch):
     assert parsed.metadata["attachments"][0]["filename"] == "request.json"
     assert parsed.metadata["attachments"][0]["size_bytes"] == 21
     assert parsed.metadata["attachments"][0]["extracted_text"] == '{"request":"pricing"}'
+
+
+def test_fetch_unseen_messages_ignores_mail_for_other_shared_mailbox_users(monkeypatch):
+    monkeypatch.setattr(settings, "inbound_email_enabled", True)
+    monkeypatch.setattr(settings, "imap_host", "imap.example.com")
+    monkeypatch.setattr(settings, "imap_username", "ops@example.com")
+    monkeypatch.setattr(settings, "imap_password", "imap-password")
+    monkeypatch.setattr(settings, "imap_mailbox", "INBOX")
+    monkeypatch.setattr(settings, "inbound_email_address", "contact@example.com")
+    monkeypatch.setattr(settings, "inbound_email_mark_seen", True)
+    monkeypatch.setattr(settings, "inbound_email_max_messages_per_poll", 5)
+
+    company_message = EmailMessage()
+    company_message["From"] = "customer@example.com"
+    company_message["To"] = "contact@example.com"
+    company_message["Subject"] = "Company request"
+    company_message.set_content("Please contact me.")
+    unrelated_message = EmailMessage()
+    unrelated_message["From"] = "notifications@example.net"
+    unrelated_message["To"] = "personal@example.com"
+    unrelated_message["Subject"] = "Unrelated notification"
+    unrelated_message.set_content("Not company evidence.")
+    messages = {b"41": company_message.as_bytes(), b"42": unrelated_message.as_bytes()}
+    calls = []
+
+    class FakeIMAP:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            pass
+
+        def login(self, *args):
+            pass
+
+        def select(self, *args, **kwargs):
+            return "OK", [b"2"]
+
+        def uid(self, command, *args):
+            calls.append((command, args))
+            if command == "SEARCH":
+                return "OK", [b"41 42"]
+            if command == "FETCH":
+                uid = args[0]
+                return "OK", [(uid + b" (RFC822)", messages[uid])]
+            if command == "STORE":
+                return "OK", [b""]
+            raise AssertionError(command)
+
+    monkeypatch.setattr("cyber_team.comms.inbound_email.imaplib.IMAP4_SSL", FakeIMAP)
+
+    parsed = InboundEmailService()._fetch_unseen_sync()
+
+    assert [item.subject for item in parsed] == ["Company request"]
+    stored_uids = [args[0] for command, args in calls if command == "STORE"]
+    assert stored_uids == [b"41"]
+
+
+def test_parse_message_accepts_configured_envelope_recipient(monkeypatch):
+    monkeypatch.setattr(settings, "inbound_email_address", "contact@example.com")
+    message = EmailMessage()
+    message["From"] = "customer@example.com"
+    message["To"] = "workspace-user@example.com"
+    message["Delivered-To"] = "contact@example.com"
+    message.set_content("Alias delivery.")
+
+    parsed = InboundEmailService._parse_message("41", message.as_bytes())
+
+    assert parsed.metadata["delivery_addresses"] == ["contact@example.com"]
+    assert InboundEmailService._is_intended_recipient(parsed) is True
 
 
 def test_inbound_email_routes_list_poll_and_update(monkeypatch):

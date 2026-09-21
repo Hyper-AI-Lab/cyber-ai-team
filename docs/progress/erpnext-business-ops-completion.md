@@ -8951,3 +8951,28 @@
   - `backend/tests/test_company_strategy.py` and `backend/tests/test_operating_model_lifecycle.py`.
 - Next step:
   - Publish and deploy the semantic fingerprint correction from an exact commit, run the required one-transition-plus-replay proof, then implement bounded audit rollups and lifecycle reconciliation deltas.
+
+### 2026-09-21T16:04:01Z — STEP-372 — Scoped shared-mailbox evidence and remediated unrelated company intelligence
+- Files/services changed:
+  - Added exact recipient scoping in `backend/src/cyber_team/comms/email_scope.py` and enforced it in both IMAP collection and company-intelligence acquisition. Visible and envelope recipients are supported, and a configured `INBOUND_EMAIL_ADDRESS` is now required for live inbound collection.
+  - Added `scripts/remediate-company-email-scope.py`, an idempotent dry-run-first remediation that preserves messages, signals, artifacts, observations, and claims while superseding intelligence derived exclusively from mail not addressed to the configured company recipient.
+  - Added regressions for shared-mailbox exclusion, envelope alias delivery, intelligence cursor advancement, and reactivation of a scope-superseded claim after valid evidence arrives.
+  - Kept staging core/worker on the prior exact image while the patch was verified; both Temporal autonomy schedules remain explicitly paused.
+- Commands run:
+  - Ran two controlled Temporal company cycles and inspected their acquisition, model, operating-revision, backlog, and persistence results.
+  - Ran the remediation in dry-run mode, created and checksummed a targeted PostgreSQL backup, applied the remediation, and repeated it to prove zero-change idempotency.
+  - Ran focused tests and the complete repository backend gate: Ruff, compileall, `pytest`, secret scan, and `git diff --check`.
+- Result:
+  - The replay diagnosis found a scope-integrity issue rather than residual record-identity drift: the shared Google mailbox contained personal and unrelated project mail, and the collector had treated all unread messages as company evidence.
+  - Of `1,585` stored messages, `4` matched `contact@hyperailab.com` and `1,581` were out of scope. The remediation superseded `1,581` signals, marked their artifacts out of scope, and superseded `280` exclusively derived active claims without deleting provenance or owner-locked facts.
+  - Staging now has `87` active claims (`35` verified, `14` inferred, `2` hypothesis, and `36` disputed); `8,044` superseded rows remain as auditable history. Only one non-email ERPNext signal remains pending for the post-deploy controlled cycle.
+  - A repeated remediation changed zero signals, artifacts, or claims. Ruff, compileall, all `525` backend tests, secret scan, and diff hygiene passed.
+- Evidence:
+  - `dist/vision-integrity-v5/email-scope/dry-run.json`.
+  - `dist/vision-integrity-v5/email-scope/apply.json`.
+  - `dist/vision-integrity-v5/email-scope/idempotency.json`.
+  - `backups/staging/cyberteam-email-scope-pre-remediation-20260921T155102Z.dump` with SHA-256 `1156f9a9305c5ef1eea718c2d95365a45a5454c09813466c37867b52e2c801e5`.
+  - Temporal runs `01a0c48e-9189-7c59-8633-2ecfbd3cfa23` and `01a0c494-bfa5-7d66-a3b5-60c2e3abe9d5`.
+  - `/tmp/vision-v5-email-gate.log`.
+- Next step:
+  - Publish and deploy the scoped-ingestion patch from an exact commit, run one legitimate transition cycle followed by an immediate replay, and require stable company/operating-model identities before beginning bounded audit rollups and delta lifecycle reconciliation.

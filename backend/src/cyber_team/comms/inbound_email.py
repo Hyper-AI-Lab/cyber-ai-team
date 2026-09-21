@@ -21,6 +21,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
 
 from cyber_team.clock import utc_now
+from cyber_team.comms.email_scope import is_intended_recipient, normalized_addresses
 from cyber_team.config import settings
 from cyber_team.db import async_session
 from cyber_team.db.models import InboundEmailMessage
@@ -328,9 +329,17 @@ class InboundEmailService:
                 raw_message = self._first_message_bytes(msg_data)
                 if not raw_message:
                     continue
-                messages.append(
-                    self._parse_message(uid.decode("ascii", errors="replace"), raw_message)
+                parsed = self._parse_message(
+                    uid.decode("ascii", errors="replace"), raw_message
                 )
+                if not self._is_intended_recipient(parsed):
+                    logger.info(
+                        "Ignoring IMAP uid=%s because it is not addressed to the "
+                        "configured inbound address",
+                        uid,
+                    )
+                    continue
+                messages.append(parsed)
                 if settings.inbound_email_mark_seen:
                     mail.uid("STORE", uid, "+FLAGS", "(\\Seen)")
             return messages
@@ -417,6 +426,15 @@ class InboundEmailService:
         attachments = InboundEmailService._extract_attachments(message)
         snippet = InboundEmailService._make_snippet(text_body or html_body or "")
         received_at = InboundEmailService._parse_date(message.get("Date"))
+        delivery_addresses = sorted(
+            normalized_addresses(
+                [
+                    *message.get_all("Delivered-To", []),
+                    *message.get_all("X-Original-To", []),
+                    *message.get_all("Envelope-To", []),
+                ]
+            )
+        )
         return ParsedInboundEmail(
             provider="imap",
             mailbox=settings.imap_mailbox,
@@ -435,8 +453,21 @@ class InboundEmailService:
                 "raw_from": message.get("From"),
                 "raw_to": message.get("To"),
                 "raw_cc": message.get("Cc"),
+                "delivered_to": message.get_all("Delivered-To", []),
+                "x_original_to": message.get_all("X-Original-To", []),
+                "envelope_to": message.get_all("Envelope-To", []),
+                "delivery_addresses": delivery_addresses,
                 "attachments": attachments,
             },
+        )
+
+    @staticmethod
+    def _is_intended_recipient(message: ParsedInboundEmail) -> bool:
+        return is_intended_recipient(
+            target_address=settings.inbound_email_address,
+            to_addresses=message.to_addresses,
+            cc_addresses=message.cc_addresses,
+            metadata=message.metadata,
         )
 
     @staticmethod
@@ -569,4 +600,6 @@ class InboundEmailService:
             missing.append("IMAP_PASSWORD")
         if not settings.imap_mailbox:
             missing.append("IMAP_MAILBOX")
+        if not settings.inbound_email_address:
+            missing.append("INBOUND_EMAIL_ADDRESS")
         return missing

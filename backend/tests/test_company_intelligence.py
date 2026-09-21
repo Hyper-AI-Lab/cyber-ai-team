@@ -27,6 +27,7 @@ from cyber_team.db.models import (
     CompanySignal,
     CompanySource,
     EvidenceArtifact,
+    InboundEmailMessage,
     MemoryEntry,
     OperationGraphNode,
 )
@@ -634,6 +635,109 @@ async def test_acquisition_uses_latest_canonical_snapshot_idempotently(
 
     assert first["counts"]["erpnext"] == 1
     assert second["counts"]["erpnext"] == 0
+
+
+@pytest.mark.asyncio
+async def test_inbound_evidence_requires_configured_company_recipient(
+    intelligence_session_factory,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "inbound_email_address", "contact@example.com")
+    observed_at = utc_now()
+    async with intelligence_session_factory() as session:
+        session.add_all(
+            [
+                InboundEmailMessage(
+                    id="company-email",
+                    provider="imap",
+                    mailbox="INBOX",
+                    provider_uid="1",
+                    from_address="customer@example.com",
+                    to_addresses=["contact@example.com"],
+                    cc_addresses=[],
+                    subject="Company request",
+                    text_body="Please send product information.",
+                    status="new",
+                    first_seen_at=observed_at,
+                    last_seen_at=observed_at,
+                ),
+                InboundEmailMessage(
+                    id="personal-email",
+                    provider="imap",
+                    mailbox="INBOX",
+                    provider_uid="2",
+                    from_address="notifications@example.net",
+                    to_addresses=["personal@example.com"],
+                    cc_addresses=[],
+                    subject="Unrelated notification",
+                    text_body="Not company evidence.",
+                    status="new",
+                    first_seen_at=observed_at,
+                    last_seen_at=observed_at,
+                ),
+            ]
+        )
+        await session.commit()
+    service = CompanyIntelligenceService()
+
+    acquired = await service._acquire_inbound_email("company:test")
+
+    async with intelligence_session_factory() as session:
+        signals = (
+            await session.execute(
+                select(CompanySignal).where(CompanySignal.signal_type == "email.received")
+            )
+        ).scalars().all()
+        source = (
+            await session.execute(
+                select(CompanySource).where(CompanySource.source_key == "imap")
+            )
+        ).scalar_one()
+    assert acquired == 1
+    assert [item.external_id for item in signals] == ["company-email"]
+    assert source.cursor["last_message_id"] == "personal-email"
+
+
+@pytest.mark.asyncio
+async def test_valid_observation_reactivates_scope_superseded_claim(
+    intelligence_session_factory,
+):
+    service = CompanyIntelligenceService(audit_service=FakeAudit())
+    await service.ingest_signal(
+        source_key="erpnext",
+        signal_type="erpnext.company_context_snapshot",
+        external_id="snapshot-first",
+        payload=erpnext_payload(),
+        trust_class="canonical",
+    )
+    await service.process_pending_signals()
+    async with intelligence_session_factory() as session:
+        claim = (
+            await session.execute(
+                select(CompanyClaim).where(CompanyClaim.predicate == "legal_name")
+            )
+        ).scalar_one()
+        claim.epistemic_state = "superseded"
+        claim.valid_until = utc_now()
+        await session.commit()
+
+    await service.ingest_signal(
+        source_key="erpnext",
+        signal_type="erpnext.company_context_snapshot",
+        external_id="snapshot-second",
+        payload={**erpnext_payload(), "observation_sequence": 2},
+        trust_class="canonical",
+    )
+    await service.process_pending_signals()
+
+    async with intelligence_session_factory() as session:
+        claim = (
+            await session.execute(
+                select(CompanyClaim).where(CompanyClaim.predicate == "legal_name")
+            )
+        ).scalar_one()
+    assert claim.epistemic_state == "verified"
+    assert claim.valid_until is None
 
 
 @pytest.mark.asyncio

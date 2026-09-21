@@ -20,6 +20,7 @@ from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from cyber_team.clock import utc_now
+from cyber_team.comms.email_scope import is_intended_recipient
 from cyber_team.config import settings
 from cyber_team.db import async_session
 from cyber_team.db.models import (
@@ -1400,6 +1401,8 @@ class CompanyIntelligenceService:
             ).scalars().all()
         count = 0
         for item in items:
+            if not self._inbound_message_is_company_scoped(item):
+                continue
             result = await self.ingest_signal(
                 source_key="imap",
                 signal_type="email.received",
@@ -1407,6 +1410,8 @@ class CompanyIntelligenceService:
                 payload={
                     "message_id": item.message_id,
                     "from_domain": self._email_domain(item.from_address),
+                    "to_addresses": item.to_addresses,
+                    "cc_addresses": item.cc_addresses,
                     "subject": item.subject,
                     "text_body": item.text_body,
                     "attachments": (item.metadata_ or {}).get("attachments", []),
@@ -1435,6 +1440,15 @@ class CompanyIntelligenceService:
             },
         )
         return count
+
+    @staticmethod
+    def _inbound_message_is_company_scoped(item: InboundEmailMessage) -> bool:
+        return is_intended_recipient(
+            target_address=settings.inbound_email_address,
+            to_addresses=item.to_addresses,
+            cc_addresses=item.cc_addresses,
+            metadata=item.metadata_,
+        )
 
     async def _acquire_owner_instructions(self, namespace: str) -> int:
         cursor = await self._source_cursor(namespace, "owner_instructions")
@@ -1869,6 +1883,9 @@ class CompanyIntelligenceService:
                     float(candidate.get("confidence", 0.5)),
                     TRUST_WEIGHTS.get(signal.trust_class, 0.25),
                 )
+                if existing.epistemic_state == "superseded":
+                    existing.epistemic_state = state
+                    existing.valid_until = None
                 if confidence > existing.confidence:
                     existing.confidence = confidence
                     existing.trust_class = signal.trust_class
