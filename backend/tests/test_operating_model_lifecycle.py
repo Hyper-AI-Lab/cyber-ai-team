@@ -184,6 +184,34 @@ async def test_synthesis_is_evidence_driven_versioned_and_idempotent(
     assert first["source_hash"] == second["source_hash"]
 
 
+async def test_synthesis_identity_ignores_repeated_provenance_observations(
+    operating_model_session,
+):
+    await seed_company(
+        operating_model_session,
+        description="A B2B software product with customer support.",
+        claims=[("customer_support", {"enabled": True})],
+    )
+    service = OperatingModelLifecycleService()
+
+    first = await service.synthesize()
+    async with operating_model_session() as session:
+        claim = (
+            await session.execute(
+                select(CompanyClaim).where(
+                    CompanyClaim.predicate == "customer_support"
+                )
+            )
+        ).scalar_one()
+        claim.evidence_ids = ["evidence-new", "evidence-replayed"]
+        await session.commit()
+    repeated = await service.synthesize()
+
+    assert repeated["reused"] is True
+    assert repeated["id"] == first["id"]
+    assert repeated["source_hash"] == first["source_hash"]
+
+
 @pytest.mark.parametrize(
     ("description", "expected", "excluded"),
     [

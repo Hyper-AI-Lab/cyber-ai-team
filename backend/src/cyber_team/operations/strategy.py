@@ -794,6 +794,8 @@ class CompanyStrategyService:
             return [
                 {
                     "id": item.id,
+                    "semantic_hash": item.semantic_hash or item.claim_hash,
+                    "subject": item.subject,
                     "predicate": item.predicate,
                     "value": item.value,
                     "state": item.epistemic_state,
@@ -1609,22 +1611,37 @@ class CompanyStrategyService:
         normalized_claims = sorted(
             (
                 {
-                    "id": str(item.get("id") or ""),
+                    "semantic_hash": str(item.get("semantic_hash") or "")
+                    or cls._hash(
+                        {
+                            "subject": str(item.get("subject") or ""),
+                            "predicate": str(item.get("predicate") or ""),
+                            "value": item.get("value") or {},
+                        }
+                    ),
                     "predicate": str(item.get("predicate") or ""),
                     "value": item.get("value") or {},
                     "state": str(item.get("state") or "unknown"),
                     "confidence": round(float(item.get("confidence") or 0), 6),
                     "trust_class": str(item.get("trust_class") or "unknown"),
-                    "evidence_ids": sorted(item.get("evidence_ids") or []),
+                    "sensitivity": str(item.get("sensitivity") or "internal"),
                 }
                 for item in claims
             ),
-            key=lambda item: (item["id"], item["predicate"]),
+            key=lambda item: (item["semantic_hash"], item["predicate"]),
         )
         return cls._hash(
             {
-                "company_model_source_hash": model.source_hash,
-                "company_model_revision": model.revision,
+                "company_model": {
+                    "model": model.model or {},
+                    "unknowns": model.unknowns or [],
+                    "disputes": model.disputes or [],
+                    "owner_locks": model.owner_locks or {},
+                    "confidence": round(float(model.confidence or 0), 6),
+                    "provenance_coverage": round(
+                        float(model.provenance_coverage or 0), 6
+                    ),
+                },
                 "claims": normalized_claims,
             }
         )

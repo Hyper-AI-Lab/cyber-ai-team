@@ -8927,3 +8927,27 @@
   - `dist/vision-integrity-v5/staging-canonicalization-counts.tsv`.
 - Next step:
   - Deploy the canonical write path, resume a controlled company cycle, then suppress no-change audit amplification and establish table-specific maintenance and growth budgets.
+
+### 2026-09-21T15:05:56Z — STEP-371 — Deployed the canonical write path and closed record-identity drift
+- Files/services changed:
+  - Deployed the additive `0024` schema and canonical write path to staging on pinned core/worker image `cyber-team-core:0.4.15-vision-v5.1` from public checkpoint `d952b4834e2eb6d3ecdec1a26012dbd36cc31714`.
+  - Changed strategy and operating-model fingerprints so evidence IDs, claim row IDs, objective/KPI revision IDs, provenance ordering, and repeated observations cannot masquerade as a new business state.
+  - Added regressions proving strategy and operating-model identity remain stable when only provenance record identities change, while genuine model content changes still trigger a new strategy context.
+  - Kept both Temporal autonomy schedules explicitly paused during controlled replay validation.
+- Commands run:
+  - Reclaimed only unused Docker build cache and dangling images, built the pinned core image, recreated only staging core/worker, and verified `/health`, `/ready`, exact build metadata, PostgreSQL, Redis, Qdrant, Temporal, and OPA.
+  - Recovered PostgreSQL through its native WAL recovery after the image build exhausted host space during a checkpoint; no database reset, truncation, or restore replacement was performed.
+  - Triggered two isolated Temporal company cycles while periodic schedules remained paused, compared pre/post claim, observation, model-revision, domain-revision, signal, and audit counts, and inspected exact workflow results.
+  - Ran Ruff, compileall, `521` backend tests, secret scan, and `git diff --check` in a repository-root-mounted test container matching CI path assumptions.
+- Result:
+  - PostgreSQL recovery completed with `pg_is_in_recovery() = false`; staging core and worker are healthy on exact SHA `d952b4834e2eb6d3ecdec1a26012dbd36cc31714` and all dependency readiness checks pass.
+  - The first controlled cycle legitimately consumed catch-up ERPNext/IMAP evidence and created revision `850`.
+  - The immediate replay exposed residual identity drift: revision `851` was created because strategy hashes included evidence IDs and operating-model hashes included objective/domain record IDs. The new semantic fingerprint implementation removes those inputs while preserving provenance links and archived evidence.
+  - Backlog reconciliation assessed more than `35,000` historical lifecycle resources per replay, independently confirming audit/lifecycle write amplification as the next closure priority.
+  - Ruff, compileall, `521` tests, secret scan, and diff hygiene pass after the correction.
+- Evidence:
+  - Temporal runs `01a0b4de-e1e4-7057-bdec-80e93deb3a9c` and `01a0b4e5-cc85-73de-aba4-82e473f714fb`.
+  - Staging operating-model revisions `850` and `851` and their source hashes.
+  - `backend/tests/test_company_strategy.py` and `backend/tests/test_operating_model_lifecycle.py`.
+- Next step:
+  - Publish and deploy the semantic fingerprint correction from an exact commit, run the required one-transition-plus-replay proof, then implement bounded audit rollups and lifecycle reconciliation deltas.

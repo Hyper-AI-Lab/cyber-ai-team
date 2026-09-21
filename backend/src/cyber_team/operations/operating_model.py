@@ -66,7 +66,7 @@ LIFECYCLE_ASSESSMENT_KEY_PREFIX = "lifecycle:v2:"
 class OperatingModelLifecycleService:
     """Synthesize and reconcile the company operating model from durable evidence."""
 
-    SYNTHESIS_VERSION = "operating-model-synthesis-v2"
+    SYNTHESIS_VERSION = "operating-model-synthesis-v3"
 
     def __init__(
         self,
@@ -99,24 +99,48 @@ class OperatingModelLifecycleService:
         context = await self._load_synthesis_context(namespace)
         registry = self._registry_with_custom_domains(context["claims"], context["model"])
         proposed_domains = self._derive_domains(registry, context)
+        objective_revision_map = {
+            item.id: item.objective_id for item in context["objectives"]
+        }
+        objective_fingerprints = sorted(
+            (self._objective_source_fingerprint(item) for item in context["objectives"]),
+            key=lambda item: item["objective_id"],
+        )
+        kpi_fingerprints = sorted(
+            (
+                self._kpi_source_fingerprint(item, objective_revision_map)
+                for item in context["kpi_revisions"]
+            ),
+            key=lambda item: item["kpi_definition_id"],
+        )
         source_payload = {
             "version": self.SYNTHESIS_VERSION,
             "company_namespace": namespace,
-            "company_model_source_hash": (
-                context["model"].source_hash if context["model"] else None
+            "company_model": (
+                self._company_model_source_fingerprint(context["model"])
+                if context["model"]
+                else None
             ),
-            "claim_versions": [
-                {
-                    "hash": item.semantic_hash
-                    or self._semantic_claim_fingerprint(item),
-                    "state": item.epistemic_state,
-                    "confidence": item.confidence,
-                }
-                for item in context["claims"]
-            ],
-            "objective_revisions": [item.id for item in context["objectives"]],
-            "kpi_revisions": [item.id for item in context["kpi_revisions"]],
-            "domains": [self._domain_source_fingerprint(item) for item in proposed_domains],
+            "claim_versions": sorted(
+                (
+                    {
+                        "hash": item.semantic_hash
+                        or self._semantic_claim_fingerprint(item),
+                        "state": item.epistemic_state,
+                        "confidence": round(float(item.confidence or 0), 6),
+                        "trust_class": item.trust_class,
+                        "sensitivity": item.sensitivity,
+                    }
+                    for item in context["claims"]
+                ),
+                key=lambda item: item["hash"],
+            ),
+            "objectives": objective_fingerprints,
+            "kpis": kpi_fingerprints,
+            "domains": sorted(
+                (self._domain_source_fingerprint(item) for item in proposed_domains),
+                key=lambda item: item["key"],
+            ),
         }
         source_hash = self._hash(source_payload)
         confidence = self._model_confidence(context, proposed_domains)
@@ -152,8 +176,8 @@ class OperatingModelLifecycleService:
                 company_model_revision_id=(context["model"].id if context["model"] else None),
                 strategy_context_hash=self._hash(
                     {
-                        "objectives": objective_ids,
-                        "kpis": [item.id for item in context["kpi_revisions"]],
+                        "objectives": objective_fingerprints,
+                        "kpis": kpi_fingerprints,
                     }
                 ),
                 source_hash=source_hash,
@@ -2895,7 +2919,70 @@ class OperatingModelLifecycleService:
         return {
             key: value
             for key, value in item.items()
-            if key not in {"evidence", "reason"}
+            if key
+            not in {
+                "confidence",
+                "evidence",
+                "evidence_ids",
+                "objective_revision_ids",
+                "reason",
+            }
+        }
+
+    @staticmethod
+    def _company_model_source_fingerprint(item: CompanyModelRevision) -> dict[str, Any]:
+        return {
+            "model": item.model or {},
+            "unknowns": item.unknowns or [],
+            "disputes": item.disputes or [],
+            "owner_locks": item.owner_locks or {},
+            "confidence": round(float(item.confidence or 0), 6),
+            "provenance_coverage": round(float(item.provenance_coverage or 0), 6),
+        }
+
+    @staticmethod
+    def _objective_source_fingerprint(item: CompanyObjectiveRevision) -> dict[str, Any]:
+        return {
+            "objective_id": item.objective_id,
+            "status": item.status,
+            "title": item.title,
+            "description": item.description,
+            "category": item.category,
+            "priority": item.priority,
+            "target": item.target or {},
+            "confidence": round(float(item.confidence or 0), 6),
+            "owner_locked": bool(item.owner_locked),
+        }
+
+    @staticmethod
+    def _kpi_source_fingerprint(
+        item: OperatingKPIRevision,
+        objective_revision_map: dict[str, str],
+    ) -> dict[str, Any]:
+        objective_ids = sorted(
+            {
+                objective_revision_map[revision_id]
+                for revision_id in (item.objective_revision_ids or [])
+                if revision_id in objective_revision_map
+            }
+        )
+        unresolved_objective_count = sum(
+            1
+            for revision_id in (item.objective_revision_ids or [])
+            if revision_id not in objective_revision_map
+        )
+        return {
+            "kpi_definition_id": item.kpi_definition_id,
+            "status": item.status,
+            "formula": item.formula,
+            "measurement_bindings": item.measurement_bindings or {},
+            "target_value": item.target_value,
+            "lower_guardrail": item.lower_guardrail,
+            "upper_guardrail": item.upper_guardrail,
+            "objective_ids": objective_ids,
+            "unresolved_objective_count": unresolved_objective_count,
+            "confidence": round(float(item.confidence or 0), 6),
+            "owner_locked": bool(item.owner_locked),
         }
 
     @classmethod

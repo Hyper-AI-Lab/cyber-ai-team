@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -88,6 +90,46 @@ class RepairingStrategyLLM:
             return candidate
         assert payload["validation_errors"]
         return payload["example"]
+
+
+def test_strategy_context_identity_ignores_record_and_evidence_ids():
+    model = SimpleNamespace(
+        model={"business_description": "Verified company"},
+        unknowns=["customer_segments"],
+        disputes=[],
+        owner_locks={"legal_name": "Verified Company"},
+        confidence=0.84,
+        provenance_coverage=0.75,
+    )
+    first_claim = {
+        "id": "claim-first",
+        "semantic_hash": "semantic-company-description",
+        "subject": "company",
+        "predicate": "business_description",
+        "value": {"text": "Verified company"},
+        "state": "verified",
+        "confidence": 0.9,
+        "trust_class": "canonical",
+        "sensitivity": "internal",
+        "evidence_ids": ["evidence-first"],
+    }
+    repeated_observation = {
+        **first_claim,
+        "id": "claim-replayed",
+        "evidence_ids": ["evidence-second", "evidence-third"],
+    }
+
+    first_hash = CompanyStrategyService._strategy_context_hash(model, [first_claim])
+    replay_hash = CompanyStrategyService._strategy_context_hash(
+        model, [repeated_observation]
+    )
+    changed_hash = CompanyStrategyService._strategy_context_hash(
+        model,
+        [{**repeated_observation, "value": {"text": "Changed company"}}],
+    )
+
+    assert replay_hash == first_hash
+    assert changed_hash != first_hash
 
 
 class InvalidStrategyLLM:
@@ -271,7 +313,10 @@ async def test_changed_evidence_context_retires_stale_strategy_artifacts(
     first = await service.run_strategy_cycle()
     async with strategy_session_factory() as session:
         model = await session.get(CompanyModelRevision, "model-active")
-        model.source_hash = "changed-model-source-hash"
+        model.model = {
+            **model.model,
+            "customer_segments": ["regulated enterprises"],
+        }
         await session.commit()
     second = await service.run_strategy_cycle()
     third = await service.run_strategy_cycle()
