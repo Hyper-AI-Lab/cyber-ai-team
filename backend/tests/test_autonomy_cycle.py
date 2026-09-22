@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -183,13 +184,25 @@ async def test_company_cycle_returns_bounded_temporal_payload():
 class ExistingHandle:
     def __init__(self):
         self.updated = False
+        self.updated_schedule = None
         self.signals = []
+        self.schedule = SimpleNamespace(
+            state=SimpleNamespace(
+                note="Owner maintenance pause",
+                paused=True,
+                limited_actions=False,
+                remaining_actions=0,
+            )
+        )
 
     async def describe(self):
-        return {"status": "running"}
+        return SimpleNamespace(schedule=self.schedule)
 
     async def update(self, callback):
-        callback(None)
+        update = callback(
+            SimpleNamespace(description=SimpleNamespace(schedule=self.schedule))
+        )
+        self.updated_schedule = update.schedule
         self.updated = True
 
     async def signal(self, name, value):
@@ -228,6 +241,24 @@ async def test_temporal_controller_reconciles_schedule_and_signals(monkeypatch):
     assert status["schedule_created"] is False
     assert client.schedules[settings.company_autonomy_schedule_id].updated is True
     assert client.schedules[settings.governor_temporal_schedule_id].updated is True
+    assert (
+        client.schedules[
+            settings.company_autonomy_schedule_id
+        ].updated_schedule.state.paused
+        is True
+    )
+    assert (
+        client.schedules[
+            settings.governor_temporal_schedule_id
+        ].updated_schedule.state.paused
+        is True
+    )
+    assert (
+        client.schedules[
+            settings.company_autonomy_schedule_id
+        ].updated_schedule.state.note
+        == "Owner maintenance pause"
+    )
     assert status["governor_schedule_id"] == settings.governor_temporal_schedule_id
     assert status["signal_max_cycles"] == 10
     assert status["signal_max_buffered_events"] == 100

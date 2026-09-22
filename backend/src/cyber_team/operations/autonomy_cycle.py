@@ -369,7 +369,7 @@ class TemporalAutonomyController:
         handle = client.get_schedule_handle(schedule_id)
         try:
             await handle.describe()
-            await handle.update(lambda _: cls._schedule_update(schedule))
+            await handle.update(lambda update: cls._schedule_update(update, schedule))
             return False
         except RPCError as exc:
             if exc.status != RPCStatusCode.NOT_FOUND:
@@ -400,10 +400,22 @@ class TemporalAutonomyController:
         }
 
     @staticmethod
-    def _schedule_update(schedule: Schedule):
+    def _schedule_update(update, schedule: Schedule):
         from temporalio.client import ScheduleUpdate
 
-        return ScheduleUpdate(schedule=schedule)
+        current_state = update.description.schedule.state
+        reconciled = Schedule(
+            action=schedule.action,
+            spec=schedule.spec,
+            policy=schedule.policy,
+            state=ScheduleState(
+                note=current_state.note or schedule.state.note,
+                paused=current_state.paused,
+                limited_actions=current_state.limited_actions,
+                remaining_actions=current_state.remaining_actions,
+            ),
+        )
+        return ScheduleUpdate(schedule=reconciled)
 
     @staticmethod
     def _schedule() -> Schedule:
