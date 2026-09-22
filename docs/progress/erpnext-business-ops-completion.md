@@ -9044,3 +9044,28 @@
   - Real-PostgreSQL migration rehearsal and complete backend output captured in the implementation task on 2026-09-22.
 - Next step:
   - Commit and push the exact archive checkpoint, back up staging, deploy revisions `0025` and `0026` in an immutable image, and compare one controlled transition plus immediate replay against the Step 373 write-amplification baseline.
+
+### 2026-09-22T23:56:49Z — STEP-376 — Deployed bounded persistence and closed false ERPNext drift and restart-unsafe schedule state
+- Files/services changed:
+  - Deployed additive revisions `0025_bounded_audit_lifecycle_state` and `0026_immutable_audit_archives` after a pre-migration PostgreSQL backup, then moved staging core/worker through immutable v5.4, v5.5, and final v5.6 verification images.
+  - Excluded volatile `validation.checked_at` from ERPNext company-context semantic identity while retaining the timestamp in stored validation evidence.
+  - Changed Temporal schedule reconciliation to preserve the existing operator pause flag, pause note, and limited-action counters across worker restarts while still updating workflow action, cadence, and policy definitions.
+  - Added full-pipeline regressions proving changing validation check times reuse one context snapshot and manually paused schedules survive controller startup.
+- Commands run:
+  - Verified and checksummed `backups/staging/cyberteam-pre-audit-lifecycle-20260922T160515Z.dump`, stopped the worker, upgraded PostgreSQL through `0026`, verified four archive partitions and lifecycle-current-state backfill, and recreated only staging core/worker.
+  - Ran two live ERPNext drift scans, one controlled Temporal company cycle, and one immediate replay while both periodic schedules were paused; compared signal, event, work-item, plan, lifecycle, audit, and rollup counts.
+  - Ran the complete backend test suite twice around the two corrections, focused synchronization/orchestration regressions, Ruff, compileall, and `git diff --check`.
+  - Built final image `cyber-team-core:0.4.15-vision-v5.6` from exact SHA `8de19e9c4631d4576fb25ac6fc387bb8e6c84662`, restarted the worker while paused, then aligned core to the same image and rechecked health/readiness and both schedules.
+- Result:
+  - All `537` backend tests pass; Ruff, compileall, and diff hygiene pass.
+  - The first canonical drift scan reactivated existing snapshot `ctx_130b399889ad` and invalidated one approval bound to an obsolete volatile snapshot. The immediate scan returned `unchanged`, reused source hash `4edccdbd52d90e55c5f82c7fd61cc84dee15b807af520bc9946c9d94bdb83a89`, and changed no review or role-gap state.
+  - Controlled run `01a0cb7d-f01d-765b-b7dd-baade1c68e02` completed with ERPNext acquisition `0`, routing `0`, and domain work `0`. Immediate replay `01a0cb7f-3ba9-74f7-8912-a6e07384405e` completed in `8.8` seconds with the same zero-work result and reused company model `210`, operating model `854`, Observer review, and reconciliation.
+  - Across the replay, company signals, business events, business work items, autonomous plans, lifecycle assessments, and lifecycle current states were unchanged. Four immutable governance evidence rows were written and one identical evidence event was compacted into an hourly rollup.
+  - Restarting the final v5.6 worker preserved both manually paused Temporal schedules and their operator note. No workflow was running. `/health` and `/ready` pass on version `0.4.15` and exact SHA `8de19e9c4631d4576fb25ac6fc387bb8e6c84662` with PostgreSQL, Redis, Qdrant, Temporal, and OPA healthy.
+- Evidence:
+  - Backup `backups/staging/cyberteam-pre-audit-lifecycle-20260922T160515Z.dump`, SHA-256 `d464e9e5ef0256e3e621474cdf33b9dfd3a25c99fdd253c1789d19fbf0bf4c1d`.
+  - `dist/vision-integrity-v5/bounded-write/deploy-baseline.tsv` and `dist/vision-integrity-v5/bounded-write/post-replay.tsv`.
+  - Temporal runs `01a0cb7d-f01d-765b-b7dd-baade1c68e02` and `01a0cb7f-3ba9-74f7-8912-a6e07384405e`.
+  - Final immutable image manifest `sha256:c0fdf34852f6adc4118e0653533936319e286206e3d5a85097ec6a4a6b9d17a4`.
+- Next step:
+  - Begin v5 lifecycle-truth remediation: reconcile fulfilled role gaps and outsourcing requests, recompute workflow readiness from current providers/tools, invalidate obsolete approvals consistently, and prove every lifecycle resource has one truthful current disposition before revalidating the executive autonomy loop.
