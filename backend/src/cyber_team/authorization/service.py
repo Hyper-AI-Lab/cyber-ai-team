@@ -60,23 +60,46 @@ class AuthorizationService:
             context=context,
         ):
             actor_type = "agent" if principal.role == "agent" else "user"
-            await self._audit.record(
-                event_type="authorization.allowed" if decision.allowed else "authorization.denied",
-                actor=principal.email,
-                actor_type=actor_type,
-                resource_type=resource_type,
-                resource_id=resource_id,
-                action=action,
-                outcome="success" if decision.allowed else "denied",
-                metadata={
-                    "subject": principal.subject,
-                    "role": principal.role,
-                    "reason": decision.reason,
-                    "source": decision.source,
-                    "policy": decision.policy,
-                    "context": self._safe_context(context),
-                },
-            )
+            metadata = {
+                "subject": principal.subject,
+                "role": principal.role,
+                "reason": decision.reason,
+                "source": decision.source,
+                "policy": decision.policy,
+                "context": self._safe_context(context),
+            }
+            if (
+                decision.allowed
+                and action == "read"
+                and hasattr(self._audit, "record_rollup")
+            ):
+                await self._audit.record_rollup(
+                    event_type="authorization.allowed",
+                    actor=principal.email,
+                    actor_type=actor_type,
+                    resource_type=resource_type,
+                    action=action,
+                    outcome="success",
+                    rollup_group=(
+                        f"{principal.subject}:{decision.source}:{resource_type}:read"
+                    ),
+                    metadata={**metadata, "sample_resource_id": resource_id},
+                )
+            else:
+                await self._audit.record(
+                    event_type=(
+                        "authorization.allowed"
+                        if decision.allowed
+                        else "authorization.denied"
+                    ),
+                    actor=principal.email,
+                    actor_type=actor_type,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    action=action,
+                    outcome="success" if decision.allowed else "denied",
+                    metadata=metadata,
+                )
         if self._metrics:
             self._metrics.record_authorization_decision(
                 allowed=decision.allowed,

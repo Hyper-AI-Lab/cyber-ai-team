@@ -378,6 +378,20 @@ class OwnerAttentionNotificationService:
                 "metadata": metadata,
                 "created_at": utc_now().isoformat(),
             }
+        if outcome == "skipped" and hasattr(self._audit, "record_rollup"):
+            return await self._audit.record_rollup(
+                event_type=self.EVENT_TYPE,
+                actor=actor,
+                actor_type="system",
+                resource_type=self.RESOURCE_TYPE,
+                action=action,
+                outcome=outcome,
+                rollup_group=str(metadata.get("reason") or "skipped"),
+                metadata={
+                    **metadata,
+                    "sample_resource_id": item.get("plan_id"),
+                },
+            )
         return await self._audit.record(
             event_type=self.EVENT_TYPE,
             actor=actor,
@@ -408,6 +422,17 @@ class OwnerAttentionNotificationService:
                 "metadata": metadata,
                 "created_at": utc_now().isoformat(),
             }
+        if outcome == "skipped" and hasattr(self._audit, "record_rollup"):
+            return await self._audit.record_rollup(
+                event_type=self.EVENT_TYPE,
+                actor=actor,
+                actor_type="system",
+                resource_type="owner_attention",
+                action=action,
+                outcome=outcome,
+                rollup_group=str(metadata.get("reason") or action),
+                metadata=metadata,
+            )
         return await self._audit.record(
             event_type=self.EVENT_TYPE,
             actor=actor,

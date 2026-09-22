@@ -981,23 +981,40 @@ async def _run_operating_cadence_scheduler_once(app: FastAPI) -> dict:
         app.state.operating_cadence_scheduler_status = final_status
         audit_service = getattr(app.state, "audit_service", None)
         if audit_service:
-            await audit_service.record(
-                event_type="operating_cadence.scheduler_run",
-                actor=actor,
-                actor_type="system",
-                resource_type="operating_cadence",
-                resource_id=None,
-                action="scan",
-                outcome="degraded" if errors else "success",
-                metadata={
-                    "auto_execute": auto_execute,
-                    "cadences_reviewed": compact_result["cadences_reviewed"],
-                    "cadences_due": compact_result["cadences_due"],
-                    "plans_created": compact_result["plans_created"],
-                    "plans_existing": compact_result["plans_existing"],
-                    "errors": errors,
-                },
-            )
+            metadata = {
+                "auto_execute": auto_execute,
+                "cadences_reviewed": compact_result["cadences_reviewed"],
+                "cadences_due": compact_result["cadences_due"],
+                "plans_created": compact_result["plans_created"],
+                "plans_existing": compact_result["plans_existing"],
+                "errors": errors,
+            }
+            if (
+                not errors
+                and not compact_result["plans_created"]
+                and hasattr(audit_service, "record_rollup")
+            ):
+                await audit_service.record_rollup(
+                    event_type="operating_cadence.scheduler_run",
+                    actor=actor,
+                    actor_type="system",
+                    resource_type="operating_cadence",
+                    action="scan",
+                    outcome="success",
+                    rollup_group="no_change",
+                    metadata=metadata,
+                )
+            else:
+                await audit_service.record(
+                    event_type="operating_cadence.scheduler_run",
+                    actor=actor,
+                    actor_type="system",
+                    resource_type="operating_cadence",
+                    resource_id=None,
+                    action="scan",
+                    outcome="degraded" if errors else "success",
+                    metadata=metadata,
+                )
         return final_status
     except asyncio.CancelledError:
         raise

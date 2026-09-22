@@ -8,9 +8,13 @@ from cyber_team.authorization.service import AuthorizationService
 class FakeAudit:
     def __init__(self):
         self.events = []
+        self.rollups = []
 
     async def record(self, **kwargs):
         self.events.append(kwargs)
+
+    async def record_rollup(self, **kwargs):
+        self.rollups.append(kwargs)
 
 
 def _owner() -> Principal:
@@ -43,7 +47,9 @@ async def test_identical_allowed_reads_recheck_opa_and_deduplicate_audit(monkeyp
         assert decision.allowed is True
 
     assert len(opa_calls) == 2
-    assert len(audit.events) == 1
+    assert audit.events == []
+    assert len(audit.rollups) == 1
+    assert audit.rollups[0]["event_type"] == "authorization.allowed"
     await client.aclose()
 
 
@@ -73,4 +79,5 @@ async def test_mutations_and_denials_are_never_audit_deduplicated():
         )
 
     assert len(audit.events) == 4
+    assert audit.rollups == []
     await client.aclose()

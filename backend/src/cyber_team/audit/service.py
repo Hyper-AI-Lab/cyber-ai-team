@@ -1,9 +1,15 @@
+import hashlib
+import json
 import uuid
+from datetime import datetime
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from cyber_team.clock import utc_now
 from cyber_team.db import async_session
-from cyber_team.db.models import AuditEvent
+from cyber_team.db.models import AuditEvent, AuditEventRollup
 from cyber_team.observability.metrics import MetricsService
 
 
@@ -89,6 +95,111 @@ class AuditService:
             },
         )
 
+    async def record_rollup(
+        self,
+        *,
+        event_type: str,
+        actor: str = "system",
+        actor_type: str = "system",
+        resource_type: str | None = None,
+        action: str | None = None,
+        outcome: str = "success",
+        rollup_group: str = "default",
+        metadata: dict | None = None,
+        observed_at: datetime | None = None,
+    ) -> dict:
+        """Count a repeated low-signal event in one durable row per UTC hour.
+
+        Callers must not use rollups for denials, mutations, approvals, side
+        effects, failures, or owner actions. Those remain individual immutable
+        audit events through :meth:`record`.
+        """
+        observed_at = observed_at or utc_now()
+        hour_bucket = observed_at.replace(minute=0, second=0, microsecond=0)
+        identity = {
+            "event_type": event_type,
+            "actor": actor,
+            "actor_type": actor_type,
+            "resource_type": resource_type,
+            "action": action,
+            "outcome": outcome,
+            "rollup_group": rollup_group,
+        }
+        rollup_key = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        values = {
+            "id": f"audit_rollup_{uuid.uuid4().hex}",
+            "hour_bucket": hour_bucket,
+            "rollup_key": rollup_key,
+            "event_type": event_type,
+            "actor": actor,
+            "actor_type": actor_type,
+            "resource_type": resource_type,
+            "action": action,
+            "outcome": outcome,
+            "count": 1,
+            "first_at": observed_at,
+            "last_at": observed_at,
+            "sample_metadata": metadata or {},
+            "created_at": observed_at,
+            "updated_at": observed_at,
+        }
+        async with async_session() as session:
+            dialect = session.get_bind().dialect.name
+            if dialect == "postgresql":
+                statement = postgresql_insert(AuditEventRollup).values(**values)
+                statement = statement.on_conflict_do_update(
+                    index_elements=["hour_bucket", "rollup_key"],
+                    set_={
+                        "count": AuditEventRollup.count + 1,
+                        "last_at": observed_at,
+                        "sample_metadata": metadata or {},
+                        "updated_at": observed_at,
+                    },
+                )
+                await session.execute(statement)
+            elif dialect == "sqlite":
+                statement = sqlite_insert(AuditEventRollup).values(**values)
+                statement = statement.on_conflict_do_update(
+                    index_elements=["hour_bucket", "rollup_key"],
+                    set_={
+                        "count": AuditEventRollup.count + 1,
+                        "last_at": observed_at,
+                        "sample_metadata": metadata or {},
+                        "updated_at": observed_at,
+                    },
+                )
+                await session.execute(statement)
+            else:
+                current = (
+                    await session.execute(
+                        select(AuditEventRollup).where(
+                            AuditEventRollup.hour_bucket == hour_bucket,
+                            AuditEventRollup.rollup_key == rollup_key,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if current:
+                    current.count += 1
+                    current.last_at = observed_at
+                    current.sample_metadata = metadata or {}
+                    current.updated_at = observed_at
+                else:
+                    session.add(AuditEventRollup(**values))
+            await session.commit()
+            rollup = (
+                await session.execute(
+                    select(AuditEventRollup).where(
+                        AuditEventRollup.hour_bucket == hour_bucket,
+                        AuditEventRollup.rollup_key == rollup_key,
+                    )
+                )
+            ).scalar_one()
+        if self._metrics:
+            self._metrics.record_audit_event(event_type, outcome)
+        return self._rollup_to_dict(rollup)
+
     async def list_events(
         self,
         limit: int = 100,
@@ -116,6 +227,22 @@ class AuditService:
             )
             return [self._event_to_dict(event) for event in result.scalars().all()]
 
+    async def list_rollups(
+        self,
+        *,
+        limit: int = 100,
+        event_type: str | None = None,
+    ) -> list[dict]:
+        limit = max(1, min(limit, 500))
+        async with async_session() as session:
+            query = select(AuditEventRollup)
+            if event_type:
+                query = query.where(AuditEventRollup.event_type == event_type)
+            result = await session.execute(
+                query.order_by(AuditEventRollup.last_at.desc()).limit(limit)
+            )
+            return [self._rollup_to_dict(item) for item in result.scalars().all()]
+
     @staticmethod
     def _event_to_dict(event: AuditEvent) -> dict:
         return {
@@ -129,4 +256,24 @@ class AuditService:
             "outcome": event.outcome,
             "metadata": event.metadata_,
             "created_at": event.created_at.isoformat(),
+        }
+
+    @staticmethod
+    def _rollup_to_dict(rollup: AuditEventRollup) -> dict:
+        return {
+            "id": rollup.id,
+            "event_type": rollup.event_type,
+            "actor": rollup.actor,
+            "actor_type": rollup.actor_type,
+            "resource_type": rollup.resource_type,
+            "action": rollup.action,
+            "outcome": rollup.outcome,
+            "count": rollup.count,
+            "metadata": rollup.sample_metadata,
+            "hour_bucket": rollup.hour_bucket.isoformat(),
+            "first_at": rollup.first_at.isoformat(),
+            "last_at": rollup.last_at.isoformat(),
+            "created_at": rollup.created_at.isoformat(),
+            "updated_at": rollup.updated_at.isoformat(),
+            "rollup": True,
         }

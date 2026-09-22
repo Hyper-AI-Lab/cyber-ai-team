@@ -23,6 +23,7 @@ from cyber_team.db.models import (
     CompanySource,
     DiscoveryObligation,
     LifecycleAssessment,
+    LifecycleCurrentState,
     OperatingDomain,
     OperatingDomainRevision,
     OperatingLifecycleDecision,
@@ -597,11 +598,20 @@ async def test_backlog_reconciliation_supersedes_obsolete_work_and_approval(
         finance_gap = await session.get(RoleGap, "finance-gap")
         current_gap = await session.get(RoleGap, "product-gap")
         assessments = (await session.execute(select(LifecycleAssessment))).scalars().all()
+        current_states = (
+            await session.execute(select(LifecycleCurrentState))
+        ).scalars().all()
     assert "obsolete-approval" in first["invalidated_approval_ids"]
     assert approval.status == "expired"
     assert finance_gap.context["lifecycle_status"] == "superseded"
     assert current_gap.context["lifecycle_status"] == "actionable"
     assert second["invalidated_approval_ids"] == []
+    assert first["assessment_count"] == 5
+    assert first["transition_count"] == 5
+    assert second["assessment_count"] == 3
+    assert second["transition_count"] == 0
+    assert second["unchanged_count"] == 2
+    assert len(current_states) == 5
     assert len(assessments) == len(
         {(item.resource_type, item.resource_id, item.lifecycle_status) for item in assessments}
     )
@@ -637,12 +647,21 @@ async def test_backlog_reconciliation_supersedes_obsolete_work_and_approval(
         )
         await session.commit()
 
-    await service.reconcile_backlogs()
+    after_revision = await service.reconcile_backlogs()
     async with operating_model_session() as session:
         assessments_after_revision = (
             await session.execute(select(LifecycleAssessment))
         ).scalars().all()
+        current_states_after_revision = (
+            await session.execute(select(LifecycleCurrentState))
+        ).scalars().all()
     assert len(assessments_after_revision) == len(assessments)
+    assert after_revision["assessment_count"] == 5
+    assert after_revision["transition_count"] == 0
+    assert all(
+        item.operating_model_revision_id == "replacement-operating-model"
+        for item in current_states_after_revision
+    )
 
 
 async def test_discovery_obligations_are_deduplicated_and_source_bounded(

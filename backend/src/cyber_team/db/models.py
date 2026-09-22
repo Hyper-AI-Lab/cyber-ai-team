@@ -349,6 +349,41 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
 
 
+class AuditEventRollup(Base):
+    """Bounded hourly evidence for repeated low-signal audit observations."""
+
+    __tablename__ = "audit_event_rollups"
+    __table_args__ = (
+        UniqueConstraint(
+            "hour_bucket",
+            "rollup_key",
+            name="uq_audit_event_rollups_bucket_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    hour_bucket: Mapped[datetime] = mapped_column(DateTime, index=True)
+    rollup_key: Mapped[str] = mapped_column(String(64), index=True)
+    event_type: Mapped[str] = mapped_column(String(100), index=True)
+    actor: Mapped[str] = mapped_column(String(200), index=True)
+    actor_type: Mapped[str] = mapped_column(String(30), default="system")
+    resource_type: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, index=True
+    )
+    action: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    outcome: Mapped[str] = mapped_column(String(30), default="success", index=True)
+    count: Mapped[int] = mapped_column(Integer, default=1)
+    first_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    last_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    sample_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+
 class CommunicationLog(Base):
     __tablename__ = "communication_logs"
 
@@ -1576,6 +1611,41 @@ class LifecycleAssessment(Base):
     idempotency_key: Mapped[str] = mapped_column(String(240), index=True)
     assessed_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class LifecycleCurrentState(Base):
+    """Queryable current disposition backed by immutable lifecycle transitions."""
+
+    __tablename__ = "lifecycle_current_states"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_namespace",
+            "resource_type",
+            "resource_id",
+            name="uq_lifecycle_current_states_resource",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    company_namespace: Mapped[str] = mapped_column(String(200), index=True)
+    resource_type: Mapped[str] = mapped_column(String(80), index=True)
+    resource_id: Mapped[str] = mapped_column(String(200), index=True)
+    operating_model_revision_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("operating_model_revisions.id"), index=True
+    )
+    lifecycle_status: Mapped[str] = mapped_column(String(40), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    assessment_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("lifecycle_assessments.id"), index=True
+    )
+    source_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    assessed_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=utc_now,
+        onupdate=utc_now,
+    )
 
 
 class DiscoveryObligation(Base):

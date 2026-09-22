@@ -5,7 +5,12 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cyber_team.db import Base
-from cyber_team.db.models import CompanyContextSnapshot, MemoryStewardFinding, RoleGap
+from cyber_team.db.models import (
+    ApprovalRequest,
+    CompanyContextSnapshot,
+    MemoryStewardFinding,
+    RoleGap,
+)
 from cyber_team.operations.planning import AutonomousPlanningService
 
 
@@ -340,6 +345,144 @@ async def test_scan_creates_role_gap_graph_and_waits_for_owner_review():
         assert plan["tasks"][3]["approval_id"] == "review_approval_1"
         manager._request_approval.assert_awaited_once()
         manager.apply_role_gap_proposal.assert_not_awaited()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_waiting_plan_is_not_reexecuted_until_approval_is_executable():
+    engine, session_factory = await build_session_factory()
+    manager = FakeAgentManager({"status": "resolved"})
+    try:
+        async with session_factory() as session:
+            session.add(role_gap())
+            await session.commit()
+        service = AutonomousPlanningService(
+            agent_manager=manager,
+            memory_steward_service=FakeMemorySteward(),
+            tool_registry=high_risk_tool_registry(),
+            session_factory=session_factory,
+        )
+        await service.scan_and_plan(
+            actor="test",
+            include_memory_findings=False,
+            auto_execute=True,
+        )
+
+        replay = await service.execute_ready_plans(actor="test")
+
+        assert replay["plans_reviewed"] == 0
+        assert replay["plans_deferred_waiting_approval"] == 1
+        assert replay["plans_waiting_approval"] == 0
+        manager._request_approval.assert_awaited_once()
+        manager.approval_is_executable.assert_not_awaited()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_approved_waiting_plan_resumes_exactly_once():
+    engine, session_factory = await build_session_factory()
+    manager = FakeAgentManager(
+        {"status": "resolved", "resolution": {"agent_id": "sales-specialist"}},
+        approval_executable=True,
+    )
+    try:
+        async with session_factory() as session:
+            session.add(role_gap())
+            await session.commit()
+        service = AutonomousPlanningService(
+            agent_manager=manager,
+            memory_steward_service=FakeMemorySteward(),
+            tool_registry=high_risk_tool_registry(),
+            session_factory=session_factory,
+        )
+        await service.scan_and_plan(
+            actor="test",
+            include_memory_findings=False,
+            auto_execute=True,
+        )
+        plan = (await service.list_plans())[0]
+        review_task = next(
+            task for task in plan["tasks"] if task["task_type"] == "plan.owner_review"
+        )
+        async with session_factory() as session:
+            session.add(
+                ApprovalRequest(
+                    id="review_approval_1",
+                    action_type="autonomous_task.review",
+                    action_description="Approve the waiting plan.",
+                    action_payload={},
+                    requester="test",
+                    requester_type="agent",
+                    risk_level="high",
+                    target_type="autonomous_task",
+                    target_id=review_task["id"],
+                    status="approved",
+                    reviewer="owner@example.com",
+                    resolved_at=datetime.now(),
+                    expires_at=datetime.now() + timedelta(hours=1),
+                )
+            )
+            await session.commit()
+
+        resumed = await service.execute_ready_plans(actor="test")
+        replay = await service.execute_ready_plans(actor="test")
+
+        assert resumed["plans_reviewed"] == 1
+        assert resumed["plans_completed"] == 1
+        assert replay["plans_reviewed"] == 0
+        manager.consume_approval.assert_awaited_once()
+        manager.apply_role_gap_proposal.assert_awaited_once()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mismatched_approved_request_does_not_wake_waiting_plan():
+    engine, session_factory = await build_session_factory()
+    manager = FakeAgentManager({"status": "resolved"}, approval_executable=True)
+    try:
+        async with session_factory() as session:
+            session.add(role_gap())
+            await session.commit()
+        service = AutonomousPlanningService(
+            agent_manager=manager,
+            memory_steward_service=FakeMemorySteward(),
+            tool_registry=high_risk_tool_registry(),
+            session_factory=session_factory,
+        )
+        await service.scan_and_plan(
+            actor="test",
+            include_memory_findings=False,
+            auto_execute=True,
+        )
+        async with session_factory() as session:
+            session.add(
+                ApprovalRequest(
+                    id="review_approval_1",
+                    action_type="autonomous_task.review",
+                    action_description="Approval with a mismatched target.",
+                    action_payload={},
+                    requester="test",
+                    requester_type="agent",
+                    risk_level="high",
+                    target_type="autonomous_task",
+                    target_id="different-task",
+                    status="approved",
+                    reviewer="owner@example.com",
+                    resolved_at=datetime.now(),
+                    expires_at=datetime.now() + timedelta(hours=1),
+                )
+            )
+            await session.commit()
+
+        replay = await service.execute_ready_plans(actor="test")
+
+        assert replay["plans_reviewed"] == 0
+        assert replay["plans_deferred_waiting_approval"] == 1
+        manager.approval_is_executable.assert_not_awaited()
+        manager.consume_approval.assert_not_awaited()
     finally:
         await engine.dispose()
 

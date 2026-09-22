@@ -8999,3 +8999,25 @@
   - Temporal runs `01a0c4b9-e108-730f-b24b-ed85af33c9cd` and `01a0c4bb-93ca-7390-9650-127176a0318c`.
 - Next step:
   - Replace full-history lifecycle reassessment with current-state deltas and replace repeated no-change audit events with bounded hourly rollups while preserving immutable security, approval, side-effect, failure, and owner-action records.
+
+### 2026-09-22T10:49:47Z — STEP-374 — Bounded no-change audit writes and lifecycle reconciliation deltas
+- Files/services changed:
+  - Added additive Alembic revision `0025_bounded_audit_lifecycle_state` with hourly audit rollups, a queryable lifecycle-current-state projection, representative-data backfill, and table-specific PostgreSQL autovacuum/analyze settings.
+  - Changed repeated successful read authorizations, no-change planning/cadence/autonomous cycles, skipped owner-attention notifications, and unchanged backlog reconciliations to bounded hourly rollups. Denials, mutations, approvals, side effects, failures, and owner actions remain individual immutable audit rows.
+  - Changed autonomous-plan polling so approval-waiting plans are not re-executed until a fresh, unconsumed, unexpired approval matches the exact autonomous-task target.
+  - Changed backlog reconciliation to query current/nonterminal/changed resources instead of loading every historical work item and lifecycle assessment, while preserving immutable status-transition assessments and maintaining one current disposition per resource.
+  - Extended the migration rehearsal to require the new tables, lifecycle backfill, and maintenance settings.
+- Commands run:
+  - Ran focused regression suites, complete backend Pytest from the CI-matching backend project root, Ruff, compileall, Alembic offline SQL, shell syntax validation, `git diff --check`, and the isolated Docker PostgreSQL migration rehearsal.
+  - Rehearsed both the legacy pre-Alembic path and representative seeded schema path through revision `0025`.
+- Result:
+  - All `531` backend tests passed. Focused audit/planner/lifecycle/authorization/cadence tests passed with exact-target, replay, current-state, and hourly-coalescing coverage.
+  - Ruff, compileall, Alembic offline generation, and diff hygiene passed.
+  - The real PostgreSQL rehearsal passed both upgrade paths; the representative duplicate lifecycle history compacted to one transition and backfilled exactly one current-state row.
+  - No staging schema or running service was changed in this checkpoint; both autonomy schedules remain paused pending the archive/restore completion and pre-deploy backup.
+- Evidence:
+  - `backend/alembic/versions/0025_bounded_audit_lifecycle_state.py`.
+  - `backend/tests/test_audit_service.py`, `backend/tests/test_autonomous_planning.py`, `backend/tests/test_operating_model_lifecycle.py`, and `backend/tests/test_operating_cadence_scheduler.py`.
+  - `scripts/migration-rehearsal.sh` real-PostgreSQL output: legacy and representative rehearsals passed on 2026-09-22.
+- Next step:
+  - Complete category-aware immutable audit archival and restoration, then deploy revision `0025` from an exact checkpoint and measure controlled replay write rates against the Step 373 baseline.

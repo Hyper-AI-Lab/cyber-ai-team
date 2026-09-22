@@ -80,6 +80,37 @@ async def test_operating_cadence_scheduler_reports_scan_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_operating_cadence_scheduler_rolls_up_no_change_scan(monkeypatch):
+    app = SimpleNamespace(state=SimpleNamespace())
+    app.state.autonomous_planning_service = AsyncMock()
+    app.state.autonomous_planning_service.scan_operating_cadences.return_value = {
+        "scanned_at": "2026-09-22T10:00:00+00:00",
+        "cadences_reviewed": 3,
+        "cadences_due": 0,
+        "plans_created": 0,
+        "plans_existing": 0,
+        "created_plan_ids": [],
+        "existing_plan_ids": [],
+        "errors": [],
+        "execution": None,
+    }
+    app.state.audit_service = AsyncMock()
+    monkeypatch.setattr(
+        "cyber_team.api.settings.operating_cadence_scheduler_auto_execute",
+        False,
+    )
+
+    result = await _run_operating_cadence_scheduler_once(app)
+
+    assert result["status"] == "completed"
+    app.state.audit_service.record.assert_not_awaited()
+    app.state.audit_service.record_rollup.assert_awaited_once()
+    audit_call = app.state.audit_service.record_rollup.await_args.kwargs
+    assert audit_call["event_type"] == "operating_cadence.scheduler_run"
+    assert audit_call["rollup_group"] == "no_change"
+
+
+@pytest.mark.asyncio
 async def test_owner_attention_notification_runner_updates_status(monkeypatch):
     app = SimpleNamespace(state=SimpleNamespace())
     app.state.owner_attention_notification_service = AsyncMock()

@@ -10,7 +10,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from cyber_team.clock import utc_now
@@ -32,6 +32,7 @@ from cyber_team.db.models import (
     DomainAutonomyControl,
     DomainControlRevision,
     LifecycleAssessment,
+    LifecycleCurrentState,
     ObserverReview,
     OperatingDomain,
     OperatingDomainRevision,
@@ -61,6 +62,10 @@ SAFE_ADVISORY_TOOL_CANDIDATES = {
 }
 TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
 LIFECYCLE_ASSESSMENT_KEY_PREFIX = "lifecycle:v2:"
+TERMINAL_GAP_STATUSES = {"resolved", "dismissed"}
+TERMINAL_OUTSOURCING_STATUSES = {"resolved", "accepted", "closed", "deduplicated"}
+TERMINAL_WORK_STATUSES = {"completed", "failed", "cancelled"}
+ACTIVE_APPROVAL_STATUSES = {"pending", "approved"}
 
 
 class OperatingModelLifecycleService:
@@ -1038,8 +1043,8 @@ class OperatingModelLifecycleService:
         """Classify legacy/current work and fail closed on obsolete approvals."""
         namespace = company_namespace or settings.company_namespace
         now = utc_now()
-        counts: dict[str, int] = defaultdict(int)
         assessment_count = 0
+        transition_count = 0
         invalidated_approvals: list[str] = []
         async with async_session() as session:
             model = (
@@ -1064,71 +1069,122 @@ class OperatingModelLifecycleService:
                 item.id: self._canonical_domain(item.role_family)
                 for item in (await session.execute(select(Agent))).scalars()
             }
-            gaps = (
-                (
-                    await session.execute(
-                        select(RoleGap).where(RoleGap.company_namespace == namespace)
+            gap_rows = (
+                await session.execute(
+                    select(RoleGap, LifecycleCurrentState)
+                    .outerjoin(
+                        LifecycleCurrentState,
+                        and_(
+                            LifecycleCurrentState.company_namespace == namespace,
+                            LifecycleCurrentState.resource_type == "role_gap",
+                            LifecycleCurrentState.resource_id == RoleGap.id,
+                        ),
+                    )
+                    .where(
+                        RoleGap.company_namespace == namespace,
+                        self._needs_lifecycle_assessment(
+                            model_id=model.id,
+                            source_updated_at=RoleGap.updated_at,
+                            active_condition=RoleGap.status.notin_(TERMINAL_GAP_STATUSES),
+                        ),
                     )
                 )
-                .scalars()
-                .all()
-            )
-            outsourcing = (
-                (await session.execute(select(OutsourcingRequest))).scalars().all()
-            )
-            work_items = (
-                (
-                    await session.execute(
-                        select(BusinessWorkItem).where(
-                            BusinessWorkItem.company_namespace == namespace
+            ).all()
+            outsourcing_rows = (
+                await session.execute(
+                    select(OutsourcingRequest, LifecycleCurrentState)
+                    .outerjoin(
+                        LifecycleCurrentState,
+                        and_(
+                            LifecycleCurrentState.company_namespace == namespace,
+                            LifecycleCurrentState.resource_type == "outsourcing_request",
+                            LifecycleCurrentState.resource_id == OutsourcingRequest.id,
+                        ),
+                    )
+                    .where(
+                        self._needs_lifecycle_assessment(
+                            model_id=model.id,
+                            source_updated_at=OutsourcingRequest.updated_at,
+                            active_condition=OutsourcingRequest.status.notin_(
+                                TERMINAL_OUTSOURCING_STATUSES
+                            ),
                         )
                     )
                 )
-                .scalars()
-                .all()
+            ).all()
+            work_rows = (
+                await session.execute(
+                    select(BusinessWorkItem, LifecycleCurrentState)
+                    .outerjoin(
+                        LifecycleCurrentState,
+                        and_(
+                            LifecycleCurrentState.company_namespace == namespace,
+                            LifecycleCurrentState.resource_type == "business_work_item",
+                            LifecycleCurrentState.resource_id == BusinessWorkItem.id,
+                        ),
+                    )
+                    .where(
+                        BusinessWorkItem.company_namespace == namespace,
+                        self._needs_lifecycle_assessment(
+                            model_id=model.id,
+                            source_updated_at=BusinessWorkItem.updated_at,
+                            active_condition=BusinessWorkItem.status.notin_(
+                                TERMINAL_WORK_STATUSES
+                            ),
+                        ),
+                    )
+                )
+            ).all()
+            approval_changed = or_(
+                ApprovalRequest.resolved_at > LifecycleCurrentState.assessed_at,
+                ApprovalRequest.consumed_at > LifecycleCurrentState.assessed_at,
             )
-            approvals = (
-                (
-                    await session.execute(
-                        select(ApprovalRequest).where(
-                            ApprovalRequest.status.in_({"pending", "approved"})
+            approval_rows = (
+                await session.execute(
+                    select(ApprovalRequest, LifecycleCurrentState)
+                    .outerjoin(
+                        LifecycleCurrentState,
+                        and_(
+                            LifecycleCurrentState.company_namespace == namespace,
+                            LifecycleCurrentState.resource_type == "approval_request",
+                            LifecycleCurrentState.resource_id == ApprovalRequest.id,
+                        ),
+                    )
+                    .where(
+                        or_(
+                            LifecycleCurrentState.id.is_(None),
+                            LifecycleCurrentState.operating_model_revision_id != model.id,
+                            ApprovalRequest.status.in_(ACTIVE_APPROVAL_STATUSES),
+                            approval_changed,
                         )
                     )
                 )
-                .scalars()
-                .all()
-            )
-            existing_assessments = {
-                item.idempotency_key: item
-                for item in (
-                    await session.execute(
-                        select(LifecycleAssessment).where(
-                            LifecycleAssessment.company_namespace == namespace,
-                            LifecycleAssessment.idempotency_key
-                            >= LIFECYCLE_ASSESSMENT_KEY_PREFIX,
-                            LifecycleAssessment.idempotency_key < "lifecycle:v3:",
-                        )
-                    )
-                ).scalars()
-            }
+            ).all()
 
+            gaps = (
+                await session.execute(
+                    select(RoleGap).where(RoleGap.company_namespace == namespace)
+                )
+            ).scalars().all()
             gap_by_id = {item.id: item for item in gaps}
-            for gap in gaps:
+            for gap, current_state in gap_rows:
                 domain = self._resource_domain(
                     context=gap.context,
                     capability=gap.capability,
                     text=f"{gap.title} {gap.description}",
                 )
                 status, reason = self._gap_lifecycle_status(gap, domain, desired)
-                gap.context = {
+                updated_context = {
                     **(gap.context or {}),
                     "lifecycle_status": status,
                     "lifecycle_reason": reason,
                     "operating_model_revision_id": model.id,
                 }
-                await self._record_lifecycle_assessment(
+                if updated_context != (gap.context or {}):
+                    gap.context = updated_context
+                assessment = await self._record_lifecycle_assessment(
                     session,
-                    existing_assessments,
+                    current_state=current_state,
                     namespace=namespace,
                     model=model,
                     resource_type="role_gap",
@@ -1138,15 +1194,15 @@ class OperatingModelLifecycleService:
                     metadata={"domain_key": domain, "requested_tools": gap.requested_tools or []},
                 )
                 assessment_count += 1
-                counts[status] += 1
+                transition_count += int(assessment["transitioned"])
 
-            for request in outsourcing:
+            for request, current_state in outsourcing_rows:
                 domain = self._resource_domain(
                     context={**(request.context_pack or {}), **(request.task_spec or {})},
                     capability=None,
                     text=f"{request.title} {request.complexity_reason}",
                 )
-                if request.status in {"resolved", "accepted", "closed"}:
+                if request.status in TERMINAL_OUTSOURCING_STATUSES:
                     status = "resolved"
                     reason = "Outsourcing request already has a terminal resolution."
                 elif domain and domain not in desired:
@@ -1155,15 +1211,17 @@ class OperatingModelLifecycleService:
                 else:
                     status = "actionable"
                     reason = "The request remains relevant to the current operating model."
-                request.resolution = {
+                updated_resolution = {
                     **(request.resolution or {}),
                     "lifecycle_status": status,
                     "lifecycle_reason": reason,
                     "operating_model_revision_id": model.id,
                 }
-                await self._record_lifecycle_assessment(
+                if updated_resolution != (request.resolution or {}):
+                    request.resolution = updated_resolution
+                assessment = await self._record_lifecycle_assessment(
                     session,
-                    existing_assessments,
+                    current_state=current_state,
                     namespace=namespace,
                     model=model,
                     resource_type="outsourcing_request",
@@ -1173,15 +1231,15 @@ class OperatingModelLifecycleService:
                     metadata={"domain_key": domain},
                 )
                 assessment_count += 1
-                counts[status] += 1
+                transition_count += int(assessment["transitioned"])
 
-            for work in work_items:
+            for work, current_state in work_rows:
                 domain = agents.get(str(work.assigned_agent_id or "")) or self._resource_domain(
                     context=work.payload,
                     capability=None,
                     text=f"{work.title} {work.description} {work.work_type}",
                 )
-                if work.status in {"completed", "failed", "cancelled"}:
+                if work.status in TERMINAL_WORK_STATUSES:
                     status = "resolved"
                     reason = "Work item is terminal."
                 elif domain and domain not in desired:
@@ -1202,9 +1260,9 @@ class OperatingModelLifecycleService:
                 else:
                     status = "current"
                     reason = "Work remains current under the desired operating model."
-                await self._record_lifecycle_assessment(
+                assessment = await self._record_lifecycle_assessment(
                     session,
-                    existing_assessments,
+                    current_state=current_state,
                     namespace=namespace,
                     model=model,
                     resource_type="business_work_item",
@@ -1214,9 +1272,9 @@ class OperatingModelLifecycleService:
                     metadata={"domain_key": domain, "work_status": work.status},
                 )
                 assessment_count += 1
-                counts[status] += 1
+                transition_count += int(assessment["transitioned"])
 
-            for approval in approvals:
+            for approval, current_state in approval_rows:
                 domain, source_revision = self._approval_context(
                     approval,
                     gap_by_id=gap_by_id,
@@ -1226,7 +1284,10 @@ class OperatingModelLifecycleService:
                     (source_revision and source_revision != model.id)
                     or (domain and domain not in desired)
                 )
-                if obsolete:
+                expired_by_time = bool(
+                    approval.expires_at and approval.expires_at <= now
+                )
+                if obsolete and approval.status in ACTIVE_APPROVAL_STATUSES:
                     approval.status = "expired"
                     approval.resolved_at = now
                     approval.review_note = (
@@ -1241,6 +1302,24 @@ class OperatingModelLifecycleService:
                     status = "superseded"
                     reason = approval.review_note
                     invalidated_approvals.append(approval.id)
+                elif expired_by_time and approval.status in ACTIVE_APPROVAL_STATUSES:
+                    approval.status = "expired"
+                    approval.resolved_at = now
+                    approval.review_note = "Approval expired before execution."
+                    status = "resolved"
+                    reason = approval.review_note
+                    invalidated_approvals.append(approval.id)
+                elif approval.consumed_at is not None:
+                    status = "resolved"
+                    reason = "Approval was consumed by its exact target."
+                elif approval.status in {"expired", "rejected"}:
+                    status = (
+                        "superseded"
+                        if (approval.action_payload or {}).get("lifecycle_status")
+                        == "superseded"
+                        else "resolved"
+                    )
+                    reason = "Approval has a terminal owner or policy disposition."
                 elif approval.status == "approved":
                     status = "actionable"
                     reason = (
@@ -1250,9 +1329,9 @@ class OperatingModelLifecycleService:
                 else:
                     status = "owner_review"
                     reason = "Current approval still requires an owner decision."
-                await self._record_lifecycle_assessment(
+                assessment = await self._record_lifecycle_assessment(
                     session,
-                    existing_assessments,
+                    current_state=current_state,
                     namespace=namespace,
                     model=model,
                     resource_type="approval_request",
@@ -1262,8 +1341,50 @@ class OperatingModelLifecycleService:
                     metadata={"domain_key": domain, "source_revision": source_revision},
                 )
                 assessment_count += 1
-                counts[status] += 1
+                transition_count += int(assessment["transitioned"])
             await session.commit()
+
+            counts = dict(
+                (
+                    await session.execute(
+                        select(
+                            LifecycleCurrentState.lifecycle_status,
+                            func.count(),
+                        )
+                        .where(LifecycleCurrentState.company_namespace == namespace)
+                        .group_by(LifecycleCurrentState.lifecycle_status)
+                    )
+                ).all()
+            )
+            resource_count = sum(
+                int(value)
+                for value in (
+                    (
+                        await session.execute(
+                            select(func.count())
+                            .select_from(RoleGap)
+                            .where(RoleGap.company_namespace == namespace)
+                        )
+                    ).scalar_one(),
+                    (
+                        await session.execute(
+                            select(func.count()).select_from(OutsourcingRequest)
+                        )
+                    ).scalar_one(),
+                    (
+                        await session.execute(
+                            select(func.count())
+                            .select_from(BusinessWorkItem)
+                            .where(BusinessWorkItem.company_namespace == namespace)
+                        )
+                    ).scalar_one(),
+                    (
+                        await session.execute(
+                            select(func.count()).select_from(ApprovalRequest)
+                        )
+                    ).scalar_one(),
+                )
+            )
 
         result = {
             "status": "completed",
@@ -1271,19 +1392,46 @@ class OperatingModelLifecycleService:
             "counts": dict(sorted(counts.items())),
             "invalidated_approval_ids": sorted(invalidated_approvals),
             "assessment_count": assessment_count,
+            "transition_count": transition_count,
+            "resource_count": resource_count,
+            "unchanged_count": max(0, resource_count - assessment_count),
         }
         if self._audit:
-            await self._audit.record_control_evidence(
-                control_id="autonomy.operating_model_backlog_reconciliation",
-                control_area="ai_governance",
-                actor=actor,
-                outcome="success",
-                evidence={
-                    "operating_model_revision_id": model.id,
-                    "counts": result["counts"],
-                    "invalidated_approval_ids": result["invalidated_approval_ids"],
-                },
-            )
+            evidence = {
+                "operating_model_revision_id": model.id,
+                "counts": result["counts"],
+                "invalidated_approval_ids": result["invalidated_approval_ids"],
+                "assessment_count": assessment_count,
+                "transition_count": transition_count,
+                "unchanged_count": result["unchanged_count"],
+            }
+            if (
+                transition_count == 0
+                and not invalidated_approvals
+                and hasattr(self._audit, "record_rollup")
+            ):
+                await self._audit.record_rollup(
+                    event_type="control.evidence",
+                    actor=actor,
+                    actor_type="system",
+                    resource_type="control",
+                    action="ai_governance",
+                    outcome="success",
+                    rollup_group="autonomy.operating_model_backlog_reconciliation:no_change",
+                    metadata={
+                        "control_id": "autonomy.operating_model_backlog_reconciliation",
+                        "control_area": "ai_governance",
+                        "evidence": evidence,
+                    },
+                )
+            else:
+                await self._audit.record_control_evidence(
+                    control_id="autonomy.operating_model_backlog_reconciliation",
+                    control_area="ai_governance",
+                    actor=actor,
+                    outcome="success",
+                    evidence=evidence,
+                )
         return result
 
     async def list_lifecycle_assessments(
@@ -1992,8 +2140,8 @@ class OperatingModelLifecycleService:
     async def _record_lifecycle_assessment(
         self,
         session,
-        existing: dict[str, LifecycleAssessment],
         *,
+        current_state: LifecycleCurrentState | None,
         namespace: str,
         model: OperatingModelRevision,
         resource_type: str,
@@ -2002,32 +2150,109 @@ class OperatingModelLifecycleService:
         reason: str,
         metadata: dict[str, Any],
     ) -> dict[str, Any]:
+        source_fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "operating_model_revision_id": model.id,
+                    "status": status,
+                    "reason": reason,
+                    "metadata": metadata,
+                },
+                sort_keys=True,
+                default=str,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        assessed_at = utc_now()
+        if current_state and current_state.source_fingerprint == source_fingerprint:
+            return {
+                "id": current_state.assessment_id,
+                "resource_type": resource_type,
+                "resource_id": resource_id,
+                "operating_model_revision_id": current_state.operating_model_revision_id,
+                "lifecycle_status": current_state.lifecycle_status,
+                "reason": current_state.reason,
+                "metadata": current_state.metadata_ or {},
+                "reused": True,
+                "transitioned": False,
+                "assessed_at": current_state.assessed_at.isoformat(),
+                "expires_at": None,
+            }
         key = self._lifecycle_assessment_key(
             namespace=namespace,
             resource_type=resource_type,
             resource_id=resource_id,
             status=status,
         )
-        current = existing.get(key)
-        if current:
-            return self._assessment_payload(current, reused=True)
-        current = LifecycleAssessment(
-            id=f"assessment_{uuid.uuid4().hex}",
-            company_namespace=namespace,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            operating_model_revision_id=model.id,
-            lifecycle_status=status,
-            reason=reason,
-            evidence_ids=[],
-            observer_review_id=model.observer_review_id,
-            metadata_=metadata,
-            idempotency_key=key,
-            assessed_at=utc_now(),
+        assessment = (
+            await session.execute(
+                select(LifecycleAssessment).where(
+                    LifecycleAssessment.idempotency_key == key
+                )
+            )
+        ).scalar_one_or_none()
+        created = assessment is None
+        if assessment is None:
+            assessment = LifecycleAssessment(
+                id=f"assessment_{uuid.uuid4().hex}",
+                company_namespace=namespace,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                operating_model_revision_id=model.id,
+                lifecycle_status=status,
+                reason=reason,
+                evidence_ids=[],
+                observer_review_id=model.observer_review_id,
+                metadata_=metadata,
+                idempotency_key=key,
+                assessed_at=assessed_at,
+            )
+            session.add(assessment)
+            await session.flush()
+
+        transitioned = current_state is None or current_state.lifecycle_status != status
+        if current_state is None:
+            current_state = LifecycleCurrentState(
+                id=f"lifecycle_state_{uuid.uuid4().hex}",
+                company_namespace=namespace,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                operating_model_revision_id=model.id,
+                lifecycle_status=status,
+                reason=reason,
+                metadata_=metadata,
+                assessment_id=assessment.id,
+                source_fingerprint=source_fingerprint,
+                assessed_at=assessed_at,
+                updated_at=assessed_at,
+            )
+            session.add(current_state)
+        else:
+            current_state.operating_model_revision_id = model.id
+            current_state.lifecycle_status = status
+            current_state.reason = reason
+            current_state.metadata_ = metadata
+            current_state.assessment_id = assessment.id
+            current_state.source_fingerprint = source_fingerprint
+            current_state.assessed_at = assessed_at
+            current_state.updated_at = assessed_at
+        payload = self._assessment_payload(assessment, reused=not created)
+        payload["transitioned"] = transitioned
+        return payload
+
+    @staticmethod
+    def _needs_lifecycle_assessment(
+        *,
+        model_id: str,
+        source_updated_at,
+        active_condition,
+    ):
+        return or_(
+            LifecycleCurrentState.id.is_(None),
+            LifecycleCurrentState.operating_model_revision_id != model_id,
+            source_updated_at > LifecycleCurrentState.assessed_at,
+            active_condition,
         )
-        session.add(current)
-        existing[key] = current
-        return self._assessment_payload(current, reused=False)
 
     @staticmethod
     def _lifecycle_assessment_key(

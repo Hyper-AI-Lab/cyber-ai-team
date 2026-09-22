@@ -275,6 +275,25 @@ class AutonomousOperationsService:
     async def _record_cycle(self, summary: dict[str, Any]) -> None:
         if not self._audit:
             return
+        metadata = {
+            "started_at": summary["started_at"],
+            "completed_at": summary["completed_at"],
+            "counts": summary["counts"],
+            "decisions": summary["decisions"],
+            "errors": summary["errors"],
+        }
+        if self._cycle_is_no_change(summary) and hasattr(self._audit, "record_rollup"):
+            await self._audit.record_rollup(
+                event_type="autonomous_operations.cycle",
+                actor=summary["actor"],
+                actor_type="agent",
+                resource_type="autonomous_operations",
+                action="run",
+                outcome=summary["status"],
+                rollup_group="no_change",
+                metadata={**metadata, "sample_cycle_id": summary["cycle_id"]},
+            )
+            return
         await self._audit.record(
             event_type="autonomous_operations.cycle",
             actor=summary["actor"],
@@ -283,11 +302,28 @@ class AutonomousOperationsService:
             resource_id=summary["cycle_id"],
             action="run",
             outcome=summary["status"],
-            metadata={
-                "started_at": summary["started_at"],
-                "completed_at": summary["completed_at"],
-                "counts": summary["counts"],
-                "decisions": summary["decisions"],
-                "errors": summary["errors"],
-            },
+            metadata=metadata,
         )
+
+    @staticmethod
+    def _cycle_is_no_change(summary: dict[str, Any]) -> bool:
+        if summary.get("status") != "completed" or summary.get("errors"):
+            return False
+        material_count_keys = {
+            "memory_findings_created",
+            "memory_findings_updated",
+            "memory_actions_applied",
+            "memory_approvals_requested",
+            "memory_plans_created",
+            "memory_blocks",
+            "role_gaps_proposed",
+            "workflow_failure_gaps",
+            "stale_approvals",
+            "autonomous_plans_created",
+            "autonomous_plans_completed",
+            "autonomous_plans_waiting_approval",
+            "autonomous_plans_blocked",
+            "autonomous_plans_failed",
+        }
+        counts = summary.get("counts") or {}
+        return not any(int(counts.get(key) or 0) for key in material_count_keys)

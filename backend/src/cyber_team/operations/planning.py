@@ -7,12 +7,13 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from cyber_team.clock import utc_now
 from cyber_team.db import async_session
 from cyber_team.db.models import (
+    ApprovalRequest,
     AutonomousPlan,
     AutonomousTask,
     CompanyContextSnapshot,
@@ -139,6 +140,13 @@ class AutonomousPlanningService:
             resource_id=None,
             outcome="degraded" if errors else "success",
             metadata={key: value for key, value in summary.items() if key != "execution"},
+            rollup_group=(
+                "no_change"
+                if not errors
+                and not created
+                and not self._execution_has_transition(execution)
+                else None
+            ),
         )
         return summary
 
@@ -890,6 +898,13 @@ class AutonomousPlanningService:
                 "plans_existing": summary["plans_existing"],
                 "errors": errors,
             },
+            rollup_group=(
+                "no_change"
+                if not errors
+                and not created
+                and not self._execution_has_transition(execution)
+                else None
+            ),
         )
         return summary
 
@@ -900,22 +915,82 @@ class AutonomousPlanningService:
         limit: int = 50,
     ) -> dict[str, Any]:
         safe_limit = max(1, min(limit, 200))
-        plans = await self.list_plans(
-            statuses=self.EXECUTABLE_PLAN_STATUSES,
-            limit=safe_limit,
-            include_tasks=False,
-        )
+        plan_ids, deferred_waiting = await self._runnable_plan_ids(safe_limit)
         results = []
-        for plan in plans:
-            results.append(await self.execute_plan(plan["id"], actor=actor))
+        for plan_id in plan_ids:
+            results.append(await self.execute_plan(plan_id, actor=actor))
         counts = self._execution_counts(results)
         return {
             "executed_at": utc_now().isoformat(),
             "actor": actor,
-            "plans_reviewed": len(plans),
+            "plans_reviewed": len(plan_ids),
+            "plans_deferred_waiting_approval": deferred_waiting,
             "plans": results,
             **counts,
         }
+
+    async def _runnable_plan_ids(self, limit: int) -> tuple[list[str], int]:
+        """Return new work plus approval-waiting work that can actually resume."""
+        now = utc_now()
+        async with self._session_factory() as session:
+            resumable_waiting = and_(
+                AutonomousPlan.status == "waiting_approval",
+                AutonomousTask.status == "waiting_approval",
+                ApprovalRequest.status == "approved",
+                ApprovalRequest.target_type == "autonomous_task",
+                ApprovalRequest.target_id == AutonomousTask.id,
+                ApprovalRequest.consumed_at.is_(None),
+                or_(
+                    ApprovalRequest.expires_at.is_(None),
+                    ApprovalRequest.expires_at > now,
+                ),
+            )
+            rows = (
+                await session.execute(
+                    select(AutonomousPlan.id, AutonomousPlan.created_at)
+                    .outerjoin(
+                        AutonomousTask,
+                        AutonomousTask.plan_id == AutonomousPlan.id,
+                    )
+                    .outerjoin(
+                        ApprovalRequest,
+                        ApprovalRequest.id == AutonomousTask.approval_id,
+                    )
+                    .where(
+                        or_(
+                            AutonomousPlan.status.in_({"planned", "running"}),
+                            resumable_waiting,
+                        )
+                    )
+                    .distinct()
+                    .order_by(desc(AutonomousPlan.created_at))
+                    .limit(limit)
+                )
+            ).all()
+            waiting_total = int(
+                (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(AutonomousPlan)
+                        .where(AutonomousPlan.status == "waiting_approval")
+                    )
+                ).scalar_one()
+            )
+            resumable_total = int(
+                (
+                    await session.execute(
+                        select(func.count(func.distinct(AutonomousPlan.id)))
+                        .select_from(AutonomousPlan)
+                        .join(AutonomousTask, AutonomousTask.plan_id == AutonomousPlan.id)
+                        .join(
+                            ApprovalRequest,
+                            ApprovalRequest.id == AutonomousTask.approval_id,
+                        )
+                        .where(resumable_waiting)
+                    )
+                ).scalar_one()
+            )
+        return [str(row[0]) for row in rows], max(0, waiting_total - resumable_total)
 
     async def execute_plan(
         self,
@@ -2699,8 +2774,21 @@ class AutonomousPlanningService:
         resource_id: str | None,
         outcome: str = "success",
         metadata: dict[str, Any] | None = None,
+        rollup_group: str | None = None,
     ) -> None:
         if not self._audit:
+            return
+        if rollup_group and hasattr(self._audit, "record_rollup"):
+            await self._audit.record_rollup(
+                event_type=event_type,
+                actor=actor,
+                actor_type="agent",
+                resource_type="autonomous_plan",
+                action="run",
+                outcome=outcome,
+                rollup_group=rollup_group,
+                metadata=metadata or {},
+            )
             return
         await self._audit.record(
             event_type=event_type,
@@ -2711,6 +2799,20 @@ class AutonomousPlanningService:
             action="run",
             outcome=outcome,
             metadata=metadata or {},
+        )
+
+    @staticmethod
+    def _execution_has_transition(execution: dict[str, Any] | None) -> bool:
+        if not execution:
+            return False
+        return any(
+            int(execution.get(key) or 0) > 0
+            for key in (
+                "plans_completed",
+                "plans_blocked",
+                "plans_failed",
+                "plans_waiting_approval",
+            )
         )
 
     @staticmethod

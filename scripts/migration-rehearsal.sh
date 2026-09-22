@@ -109,6 +109,18 @@ if [ "$workflow_tables" != "11" ]; then
   exit 1
 fi
 
+bounded_state_tables="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('audit_event_rollups', 'lifecycle_current_states')")"
+if [ "$bounded_state_tables" != "2" ]; then
+  echo "Expected bounded audit and lifecycle-current-state tables were not created" >&2
+  exit 1
+fi
+
+autovacuum_tuning="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_class WHERE relname IN ('audit_events', 'lifecycle_assessments', 'lifecycle_current_states', 'business_work_items') AND reloptions @> ARRAY['autovacuum_vacuum_scale_factor=0.02', 'autovacuum_analyze_scale_factor=0.01']")"
+if [ "$autovacuum_tuning" != "4" ]; then
+  echo "Expected bounded-write tables to have explicit autovacuum/analyze tuning" >&2
+  exit 1
+fi
+
 idempotency_column="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT is_nullable FROM information_schema.columns WHERE table_name = 'communication_logs' AND column_name = 'idempotency_key'")"
 if [ "$idempotency_column" != "YES" ]; then
   echo "communication_logs.idempotency_key should exist and be nullable" >&2
@@ -277,6 +289,12 @@ SQL
   compacted_lifecycle_rows="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM lifecycle_assessments WHERE resource_id = 'shared-completed-work' AND idempotency_key LIKE 'lifecycle:v2:%'")"
   if [ "$compacted_lifecycle_rows" != "1" ]; then
     echo "Lifecycle assessment compaction mismatch: $compacted_lifecycle_rows" >&2
+    exit 1
+  fi
+
+  current_lifecycle_rows="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM lifecycle_current_states WHERE company_namespace = 'company:migration-rehearsal' AND resource_type = 'business_work_item' AND resource_id = 'shared-completed-work' AND lifecycle_status = 'resolved'")"
+  if [ "$current_lifecycle_rows" != "1" ]; then
+    echo "Lifecycle current-state backfill mismatch: $current_lifecycle_rows" >&2
     exit 1
   fi
 
