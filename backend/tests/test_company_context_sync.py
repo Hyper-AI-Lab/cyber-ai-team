@@ -28,14 +28,17 @@ async def build_session_factory():
 class FakeERPNext:
     def __init__(self):
         self.customer_name = "Acme"
+        self.validation_count = 0
 
     async def validate(self):
+        self.validation_count += 1
         return {
             "status": "ready",
             "provider": "erpnext",
             "mode": "live",
             "configured": True,
             "detail": "ok",
+            "checked_at": f"2026-09-22T{self.validation_count:02d}:00:00Z",
         }
 
     async def get_doc(self, doctype, name):
@@ -420,6 +423,34 @@ def test_excluded_fixture_counts_do_not_change_context_hash():
 
     assert first_basis["scope"].get("excluded_fixture_counts") is None
     assert second_basis["scope"].get("excluded_fixture_counts") is None
+    assert CompanyContextSyncService._source_hash(first_basis) == (
+        CompanyContextSyncService._source_hash(second_basis)
+    )
+
+
+def test_validation_check_time_does_not_change_context_hash():
+    first = {
+        "validation": {
+            "status": "ready",
+            "mode": "live",
+            "checked_at": "2026-09-22T21:47:32.615851",
+        },
+        "records": {"Company": [{"name": "HyperAILabs"}]},
+    }
+    second = {
+        "validation": {
+            "status": "ready",
+            "mode": "live",
+            "checked_at": "2026-09-22T22:47:46.395180",
+        },
+        "records": {"Company": [{"name": "HyperAILabs"}]},
+    }
+
+    first_basis = CompanyContextSyncService._erpnext_summary_hash_basis(first)
+    second_basis = CompanyContextSyncService._erpnext_summary_hash_basis(second)
+
+    assert first_basis["validation"].get("checked_at") is None
+    assert second_basis["validation"].get("checked_at") is None
     assert CompanyContextSyncService._source_hash(first_basis) == (
         CompanyContextSyncService._source_hash(second_basis)
     )

@@ -1859,6 +1859,9 @@ class CompanyContextSyncService:
         scope = dict(hash_basis.get("scope") or {})
         scope.pop("excluded_fixture_counts", None)
         hash_basis["scope"] = scope
+        validation = dict(hash_basis.get("validation") or {})
+        validation.pop("checked_at", None)
+        hash_basis["validation"] = validation
         return hash_basis
 
     @staticmethod
