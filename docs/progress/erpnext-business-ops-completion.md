@@ -9021,3 +9021,26 @@
   - `scripts/migration-rehearsal.sh` real-PostgreSQL output: legacy and representative rehearsals passed on 2026-09-22.
 - Next step:
   - Complete category-aware immutable audit archival and restoration, then deploy revision `0025` from an exact checkpoint and measure controlled replay write rates against the Step 373 baseline.
+
+### 2026-09-22T14:58:40Z — STEP-375 — Added immutable category-aware audit archival and verified restoration
+- Files/services changed:
+  - Added Alembic revision `0026_immutable_audit_archives` with a PostgreSQL LIST-partitioned immutable archive for security, governance, and operational audit categories plus a default fail-safe partition.
+  - Changed retention cleanup to compress and hash eligible audit rows into category/time-window bundles before removing those exact IDs from the hot audit table in the same database transaction.
+  - Added hash/count-verified restoration that preserves the archive, restores only missing source IDs, and records an immutable restoration event and control evidence.
+  - Added owner-only archive list/restore APIs, dry-run-first CLI commands, category-specific retention configuration, runbook guidance, migration assertions, and regression tests.
+  - Corrected the FOSS resource-policy scanner to resolve declared Docker `ARG` defaults in `FROM` references while leaving undeclared variables unresolved and therefore rejectable.
+- Commands run:
+  - Ran focused retention/API/resource-policy tests, the complete backend suite, Ruff, compileall, Alembic offline SQL generation, shell syntax checks, `git diff --check`, secret scan, GCP-isolation scan, and the FOSS/resource-policy scan.
+  - Ran the isolated real-PostgreSQL migration rehearsal through revision `0026` for both the legacy pre-Alembic schema and representative seeded schema, including archive-partition assertions.
+- Result:
+  - All `533` pre-scanner backend tests passed; the final focused suite including the new scanner regressions passed `30` tests. Ruff, compile checks, offline SQL, diff hygiene, secret isolation, GCP isolation, and resource policy all pass.
+  - Both real-PostgreSQL migration paths passed and confirmed all four audit archive partitions.
+  - Operational audit history can now leave the high-write hot table without losing integrity or recoverability; security and governance categories retain independent longer windows.
+  - No staging schema, data, or running service was changed in this checkpoint; both autonomy schedules remain paused pending the exact-image deployment and controlled replay measurement.
+- Evidence:
+  - `backend/alembic/versions/0026_immutable_audit_archives.py`.
+  - `backend/tests/test_retention_service.py`, `backend/tests/test_api_operations.py`, and `backend/tests/test_resource_policy_script.py`.
+  - `docs/runbooks/data-retention.md` and `scripts/migration-rehearsal.sh`.
+  - Real-PostgreSQL migration rehearsal and complete backend output captured in the implementation task on 2026-09-22.
+- Next step:
+  - Commit and push the exact archive checkpoint, back up staging, deploy revisions `0025` and `0026` in an immutable image, and compare one controlled transition plus immediate replay against the Step 373 write-amplification baseline.

@@ -72,6 +72,39 @@ def retention_cleanup(execute):
     click.echo(json.dumps(result, indent=2, sort_keys=True))
 
 
+@main.command("audit-archives")
+@click.option(
+    "--category",
+    type=click.Choice(("security", "governance", "operational")),
+)
+@click.option("--limit", type=click.IntRange(1, 500), default=100, show_default=True)
+def audit_archives(category, limit):
+    """List immutable compressed audit archive partitions."""
+    from cyber_team.operations.retention import RetentionService
+
+    result = asyncio.run(
+        RetentionService().list_audit_archives(category=category, limit=limit)
+    )
+    click.echo(json.dumps(result, indent=2, sort_keys=True))
+
+
+@main.command("audit-archive-restore")
+@click.argument("archive_id")
+@click.option("--execute", is_flag=True, help="Restore missing rows instead of previewing")
+def audit_archive_restore(archive_id, execute):
+    """Verify and restore an immutable audit archive partition."""
+    from cyber_team.operations.retention import RetentionService
+
+    result = asyncio.run(
+        RetentionService().restore_audit_archive(
+            archive_id,
+            dry_run=not execute,
+            actor="cli_owner",
+        )
+    )
+    click.echo(json.dumps(result, indent=2, sort_keys=True))
+
+
 @main.command("subject-export")
 @click.argument("subject")
 @click.option("--output", type=click.Path(dir_okay=False), help="Write JSON export to a file")

@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     retention_workflow_run_days: int = 180
     retention_approval_request_days: int = 730
     retention_audit_event_days: int = 2555
+    retention_audit_operational_days: int = 365
+    retention_audit_governance_days: int = 2555
+    retention_audit_security_days: int = 2555
     retention_batch_size: int = 500
     autonomous_operations_enabled: bool = True
     autonomous_operations_initial_delay_seconds: int = 60

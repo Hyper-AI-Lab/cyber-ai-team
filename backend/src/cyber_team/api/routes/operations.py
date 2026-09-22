@@ -414,6 +414,10 @@ class RetentionCleanupRequest(BaseModel):
     dry_run: bool = True
 
 
+class AuditArchiveRestoreRequest(BaseModel):
+    dry_run: bool = True
+
+
 class SubjectDeleteRequest(BaseModel):
     dry_run: bool = True
     audit_preserving: bool = True
@@ -3607,6 +3611,65 @@ async def run_retention_cleanup(
         actor=principal.email,
         outcome="success",
         evidence=result,
+    )
+    return result
+
+
+@router.get("/retention/audit-archives")
+async def list_audit_archives(
+    request: Request,
+    category: str | None = None,
+    limit: int = 100,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "read",
+        "retention_policy",
+        "audit_archives",
+    )
+    return await request.app.state.retention_service.list_audit_archives(
+        category=category,
+        limit=limit,
+    )
+
+
+@router.post("/retention/audit-archives/{archive_id}/restore")
+async def restore_audit_archive(
+    archive_id: str,
+    data: AuditArchiveRestoreRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
+    await require_authorization(
+        request,
+        principal,
+        "execute",
+        "retention_policy",
+        archive_id,
+        context=data.model_dump(),
+    )
+    try:
+        result = await request.app.state.retention_service.restore_audit_archive(
+            archive_id,
+            dry_run=data.dry_run,
+            actor=principal.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await request.app.state.audit_service.record_control_evidence(
+        control_id="retention.audit_archive_restore",
+        control_area="audit_retention",
+        actor=principal.email,
+        outcome="success",
+        evidence={
+            "archive_id": archive_id,
+            "dry_run": data.dry_run,
+            "hash_verified": result["hash_verified"],
+            "restored_count": result["restored_count"],
+            "would_restore_count": result["would_restore_count"],
+        },
     )
     return result
 

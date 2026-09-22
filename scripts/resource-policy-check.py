@@ -153,12 +153,14 @@ def _check_docker_images(failures: list[str], warnings: list[str], inventory: di
     for path in files:
         if not path.exists():
             continue
-        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+        lines = path.read_text().splitlines()
+        build_args = _docker_build_args(lines) if path.name == "Dockerfile" else {}
+        for lineno, line in enumerate(lines, start=1):
             stripped = line.strip()
             image = _image_from_line(stripped)
             if not image:
                 continue
-            expanded = re.sub(r"\$\{[^:}]+:-([^}]+)\}", r"\1", image)
+            expanded = _expand_docker_image(image, build_args)
             match = next(
                 (item for item in reviewed if item.get("match") in expanded),
                 None,
@@ -174,14 +176,14 @@ def _check_docker_images(failures: list[str], warnings: list[str], inventory: di
                     failures.append(
                         f"Docker inventory entry `{match.get('match')}` omits `{field}`."
                     )
-            if image.endswith(":latest"):
-                warnings.append(f"{path}:{lineno} uses floating latest image `{image}`.")
-            if "docker.io/" in image and "frappe/erpnext" not in image:
+            if expanded.endswith(":latest"):
+                warnings.append(f"{path}:{lineno} uses floating latest image `{expanded}`.")
+            if "docker.io/" in expanded and "frappe/erpnext" not in expanded:
                 # Docker Hub is allowed; this warning-worthy pattern is kept as a
                 # failure only for explicit proprietary markers in the reference.
-                lowered = image.lower()
+                lowered = expanded.lower()
                 if any(marker in lowered for marker in DENIED_LICENSE_MARKERS):
-                    failures.append(f"{path}:{lineno} uses denied image `{image}`.")
+                    failures.append(f"{path}:{lineno} uses denied image `{expanded}`.")
 
 
 def _check_local_models(failures: list[str], inventory: dict) -> None:
@@ -279,6 +281,33 @@ def _image_from_line(line: str) -> str | None:
         return parts[1] if len(parts) >= 2 else None
     match = re.match(r"image:\s*['\"]?([^'\"\s]+)", line)
     return match.group(1) if match else None
+
+
+def _docker_build_args(lines: list[str]) -> dict[str, str]:
+    """Return Docker ARG defaults available to FROM instructions."""
+    defaults: dict[str, str] = {}
+    for raw_line in lines:
+        line = raw_line.strip()
+        match = re.match(r"ARG\s+([A-Za-z_][A-Za-z0-9_]*)=(\S+)$", line)
+        if match:
+            defaults[match.group(1)] = match.group(2)
+    return defaults
+
+
+def _expand_docker_image(image: str, build_args: dict[str, str]) -> str:
+    """Resolve Compose defaults and declared Docker ARG defaults in an image."""
+    expanded = re.sub(r"\$\{[^:}]+:-([^}]+)\}", r"\1", image)
+
+    def replace_braced(match: re.Match[str]) -> str:
+        name = match.group(1)
+        return build_args.get(name, match.group(0))
+
+    expanded = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", replace_braced, expanded)
+    return re.sub(
+        r"\$([A-Za-z_][A-Za-z0-9_]*)",
+        lambda match: build_args.get(match.group(1), match.group(0)),
+        expanded,
+    )
 
 
 def _check_static_tool_proposals(failures: list[str]) -> None:

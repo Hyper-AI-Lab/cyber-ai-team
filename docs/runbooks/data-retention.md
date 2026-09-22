@@ -13,11 +13,19 @@ Configure windows with environment variables:
 - `RETENTION_WORKFLOW_RUN_DAYS`
 - `RETENTION_APPROVAL_REQUEST_DAYS`
 - `RETENTION_AUDIT_EVENT_DAYS`
+- `RETENTION_AUDIT_OPERATIONAL_DAYS`
+- `RETENTION_AUDIT_GOVERNANCE_DAYS`
+- `RETENTION_AUDIT_SECURITY_DAYS`
 - `RETENTION_BATCH_SIZE`
 
 Set a day value to `0` or lower to disable age-based cleanup for that category. Memory
 entries with `expires_at` in the past are still eligible for deletion. Pinned memories
 are not removed by age-based memory retention.
+
+`RETENTION_AUDIT_EVENT_DAYS` is retained as a compatibility setting. Current audit
+retention uses the three category-specific windows. Eligible audit rows are never
+discarded: they are moved atomically into compressed, SHA-256-verified archive bundles
+partitioned by `operational`, `governance`, or `security` category.
 
 ## Preview Cleanup
 
@@ -44,9 +52,46 @@ Executed cleanup:
 
 - Deletes expired and old non-pinned memory records.
 - Deletes matching Qdrant memory points when the memory service is available.
-- Deletes old communication logs, terminal workflow runs, resolved approval requests,
-  and audit events according to their configured windows.
-- Writes a `retention.cleanup` audit event with deletion counts.
+- Deletes old communication logs, terminal workflow runs, and resolved approval
+  requests according to their configured windows.
+- Archives eligible audit events into immutable compressed category partitions before
+  removing them from the hot audit table.
+- Writes a `retention.cleanup` audit event with deletion/archive counts, archive IDs,
+  and content hashes.
+
+Each audit category may archive up to `RETENTION_BATCH_SIZE` events per cleanup run.
+Security and governance history therefore retain longer hot-table windows by default,
+while routine operational history moves into immutable archive storage sooner.
+
+## Verify And Restore Audit Archives
+
+List archives without exposing their payloads:
+
+```bash
+cd backend
+cyber-team audit-archives --limit 100
+cyber-team audit-archives --category security
+```
+
+Verify an archive and preview how many rows are missing from the hot table:
+
+```bash
+cyber-team audit-archive-restore audit_archive_example
+```
+
+Restore the missing rows after reviewing the preview:
+
+```bash
+cyber-team audit-archive-restore audit_archive_example --execute
+```
+
+The restore path decompresses the payload, verifies its SHA-256 hash and event count,
+restores only absent original IDs, retains the archive bundle, and appends a separate
+`retention.audit_archive_restored` audit event. The same operations are available to
+the authenticated owner through:
+
+- `GET /api/operations/retention/audit-archives`
+- `POST /api/operations/retention/audit-archives/{archive_id}/restore`
 
 ## Export Subject Data
 

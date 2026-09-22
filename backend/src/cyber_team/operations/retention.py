@@ -1,11 +1,14 @@
 """Data retention and subject data lifecycle operations."""
 
+import hashlib
+import json
 import logging
 import uuid
+import zlib
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, false, func, or_, select
+from sqlalchemy import delete, desc, false, func, or_, select
 
 from cyber_team.clock import utc_now
 from cyber_team.config import settings
@@ -13,6 +16,7 @@ from cyber_team.db import async_session
 from cyber_team.db.models import (
     ApprovalRequest,
     AuditEvent,
+    AuditEventArchive,
     CommunicationLog,
     MemoryEntry,
     WorkflowRun,
@@ -21,6 +25,27 @@ from cyber_team.db.models import (
 logger = logging.getLogger(__name__)
 
 TERMINAL_WORKFLOW_STATUSES = ("completed", "failed", "cancelled", "rejected")
+AUDIT_ARCHIVE_ENCODING = "zlib+json"
+AUDIT_SECURITY_PREFIXES = (
+    "auth.",
+    "authorization.",
+    "credential.",
+    "data_subject.",
+    "security.",
+    "session.",
+)
+AUDIT_GOVERNANCE_PREFIXES = (
+    "action_policy.",
+    "approval.",
+    "control.",
+    "domain_control.",
+    "governor.",
+    "observer.",
+    "operating_model.",
+    "owner.",
+    "policy.",
+    "retention.",
+)
 
 
 class RetentionService:
@@ -42,12 +67,37 @@ class RetentionService:
                 name: await self._select_ids(session, id_column, condition, batch_size)
                 for name, (_model, id_column, condition) in conditions.items()
             }
+            audit_conditions = self._audit_retention_conditions(now)
+            audit_totals = {
+                category: await self._count(session, AuditEvent, condition)
+                for category, condition in audit_conditions.items()
+            }
+            audit_ids = {
+                category: await self._select_ids(
+                    session,
+                    AuditEvent.id,
+                    condition,
+                    batch_size,
+                )
+                for category, condition in audit_conditions.items()
+            }
+            archive_batches: list[dict[str, Any]] = []
 
             if not dry_run:
                 for name, (model, id_column, _condition) in conditions.items():
                     selected_ids = ids[name]
                     if selected_ids:
                         await session.execute(delete(model).where(id_column.in_(selected_ids)))
+                for category, selected_ids in audit_ids.items():
+                    if selected_ids:
+                        archive_batches.append(
+                            await self._archive_audit_events(
+                                session,
+                                category=category,
+                                event_ids=selected_ids,
+                                archived_at=now,
+                            )
+                        )
                 session.add(
                     AuditEvent(
                         id=str(uuid.uuid4()),
@@ -58,7 +108,22 @@ class RetentionService:
                         action="delete_expired_records",
                         outcome="success",
                         metadata_={
-                            "counts": {name: len(value) for name, value in ids.items()},
+                            "counts": {
+                                **{name: len(value) for name, value in ids.items()},
+                                "audit_events": sum(len(value) for value in audit_ids.values()),
+                            },
+                            "audit_categories": {
+                                name: len(value) for name, value in audit_ids.items()
+                            },
+                            "archive_batches": [
+                                {
+                                    "id": item["id"],
+                                    "category": item["category"],
+                                    "event_count": item["event_count"],
+                                    "content_hash": item["content_hash"],
+                                }
+                                for item in archive_batches
+                            ],
                             "dry_run": False,
                         },
                         created_at=now,
@@ -73,9 +138,125 @@ class RetentionService:
             "dry_run": dry_run,
             "batch_size": batch_size,
             "cutoffs": self._cutoffs(now),
-            "counts": totals if dry_run else {name: len(value) for name, value in ids.items()},
-            "truncated": {name: totals[name] > len(value) for name, value in ids.items()},
+            "counts": {
+                **(
+                    totals
+                    if dry_run
+                    else {name: len(value) for name, value in ids.items()}
+                ),
+                "audit_events": (
+                    sum(audit_totals.values())
+                    if dry_run
+                    else sum(len(value) for value in audit_ids.values())
+                ),
+            },
+            "audit_categories": {
+                name: {
+                    "eligible": audit_totals[name],
+                    "selected": len(audit_ids[name]),
+                    "truncated": audit_totals[name] > len(audit_ids[name]),
+                }
+                for name in sorted(audit_conditions)
+            },
+            "archive_batches": archive_batches,
+            "truncated": {
+                **{name: totals[name] > len(value) for name, value in ids.items()},
+                "audit_events": any(
+                    audit_totals[name] > len(audit_ids[name]) for name in audit_conditions
+                ),
+            },
         }
+
+    async def list_audit_archives(
+        self,
+        *,
+        category: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(limit, 500))
+        async with self._session_factory() as session:
+            query = select(AuditEventArchive)
+            if category:
+                query = query.where(AuditEventArchive.category == category)
+            archives = (
+                (
+                    await session.execute(
+                        query.order_by(desc(AuditEventArchive.created_at)).limit(safe_limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return [self._archive_to_dict(item) for item in archives]
+
+    async def restore_audit_archive(
+        self,
+        archive_id: str,
+        *,
+        dry_run: bool = True,
+        actor: str = "system",
+    ) -> dict[str, Any]:
+        async with self._session_factory() as session:
+            archive = (
+                await session.execute(
+                    select(AuditEventArchive).where(AuditEventArchive.id == archive_id)
+                )
+            ).scalar_one_or_none()
+            if not archive:
+                raise ValueError("Audit archive not found")
+            events = self._decode_archive(archive)
+            event_ids = [str(item["id"]) for item in events]
+            existing_ids = set(
+                (
+                    await session.execute(
+                        select(AuditEvent.id).where(AuditEvent.id.in_(event_ids))
+                    )
+                ).scalars()
+            )
+            missing = [item for item in events if str(item["id"]) not in existing_ids]
+            if not dry_run:
+                for item in missing:
+                    session.add(
+                        AuditEvent(
+                            id=str(item["id"]),
+                            event_type=str(item["event_type"]),
+                            actor=str(item["actor"]),
+                            actor_type=str(item["actor_type"]),
+                            resource_type=item.get("resource_type"),
+                            resource_id=item.get("resource_id"),
+                            action=item.get("action"),
+                            outcome=str(item["outcome"]),
+                            metadata_=item.get("metadata") or {},
+                            created_at=datetime.fromisoformat(str(item["created_at"])),
+                        )
+                    )
+                session.add(
+                    AuditEvent(
+                        id=str(uuid.uuid4()),
+                        event_type="retention.audit_archive_restored",
+                        actor=actor,
+                        actor_type="user" if actor != "system" else "system",
+                        resource_type="audit_archive",
+                        resource_id=archive.id,
+                        action="restore",
+                        outcome="success",
+                        metadata_={
+                            "category": archive.category,
+                            "content_hash": archive.content_hash,
+                            "restored_count": len(missing),
+                            "existing_count": len(existing_ids),
+                        },
+                    )
+                )
+                await session.commit()
+            return {
+                "archive": self._archive_to_dict(archive),
+                "dry_run": dry_run,
+                "hash_verified": True,
+                "restored_count": 0 if dry_run else len(missing),
+                "would_restore_count": len(missing),
+                "existing_count": len(existing_ids),
+            }
 
     async def export_subject_data(self, subject: str) -> dict:
         async with self._session_factory() as session:
@@ -190,12 +371,25 @@ class RetentionService:
                 ApprovalRequest.id,
                 self._resolved_approval_condition(cutoffs["approval_requests"]),
             ),
-            "audit_events": (
-                AuditEvent,
-                AuditEvent.id,
-                self._created_before(AuditEvent.created_at, cutoffs["audit_events"]),
-            ),
         }
+
+    def _audit_retention_conditions(self, now: datetime) -> dict[str, Any]:
+        cutoffs = self._cutoff_values(now)
+        security = self._prefix_condition(AUDIT_SECURITY_PREFIXES)
+        governance = self._prefix_condition(AUDIT_GOVERNANCE_PREFIXES)
+        return {
+            "security": security
+            & self._created_before(AuditEvent.created_at, cutoffs["audit_events_security"]),
+            "governance": governance
+            & ~security
+            & self._created_before(AuditEvent.created_at, cutoffs["audit_events_governance"]),
+            "operational": ~(security | governance)
+            & self._created_before(AuditEvent.created_at, cutoffs["audit_events_operational"]),
+        }
+
+    @staticmethod
+    def _prefix_condition(prefixes: tuple[str, ...]):
+        return or_(*(AuditEvent.event_type.startswith(prefix) for prefix in prefixes))
 
     @staticmethod
     def _created_before(column, cutoff: datetime | None):
@@ -241,7 +435,18 @@ class RetentionService:
                 now,
                 settings.retention_approval_request_days,
             ),
-            "audit_events": RetentionService._cutoff(now, settings.retention_audit_event_days),
+            "audit_events_operational": RetentionService._cutoff(
+                now,
+                settings.retention_audit_operational_days,
+            ),
+            "audit_events_governance": RetentionService._cutoff(
+                now,
+                settings.retention_audit_governance_days,
+            ),
+            "audit_events_security": RetentionService._cutoff(
+                now,
+                settings.retention_audit_security_days,
+            ),
         }
 
     @staticmethod
@@ -277,6 +482,102 @@ class RetentionService:
             await self._memory_service.delete_memory_points(memory_ids)
         except Exception as exc:
             logger.warning("Failed to delete retained memory vectors: %s", exc)
+
+    async def _archive_audit_events(
+        self,
+        session,
+        *,
+        category: str,
+        event_ids: list[str],
+        archived_at: datetime,
+    ) -> dict[str, Any]:
+        events = (
+            (
+                await session.execute(
+                    select(AuditEvent)
+                    .where(AuditEvent.id.in_(event_ids))
+                    .order_by(AuditEvent.created_at, AuditEvent.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not events:
+            raise RuntimeError("Audit archive selection became empty before archival")
+        serialized = [self._audit_to_dict(item) for item in events]
+        raw_payload = json.dumps(
+            serialized,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        content_hash = hashlib.sha256(raw_payload).hexdigest()
+        compressed = zlib.compress(raw_payload, level=9)
+        archive = (
+            await session.execute(
+                select(AuditEventArchive).where(
+                    AuditEventArchive.category == category,
+                    AuditEventArchive.content_hash == content_hash,
+                )
+            )
+        ).scalar_one_or_none()
+        if archive is None:
+            archive = AuditEventArchive(
+                category=category,
+                id=f"audit_archive_{uuid.uuid4().hex}",
+                period_start=events[0].created_at,
+                period_end=events[-1].created_at,
+                event_count=len(events),
+                first_event_at=events[0].created_at,
+                last_event_at=events[-1].created_at,
+                content_hash=content_hash,
+                encoding=AUDIT_ARCHIVE_ENCODING,
+                payload=compressed,
+                raw_size=len(raw_payload),
+                compressed_size=len(compressed),
+                metadata_={
+                    "source_table": "audit_events",
+                    "partition": category,
+                    "schema_version": 1,
+                },
+                created_at=archived_at,
+            )
+            session.add(archive)
+            await session.flush()
+        await session.execute(delete(AuditEvent).where(AuditEvent.id.in_(event_ids)))
+        return self._archive_to_dict(archive)
+
+    @staticmethod
+    def _decode_archive(archive: AuditEventArchive) -> list[dict[str, Any]]:
+        if archive.encoding != AUDIT_ARCHIVE_ENCODING:
+            raise ValueError(f"Unsupported audit archive encoding: {archive.encoding}")
+        try:
+            raw_payload = zlib.decompress(archive.payload)
+        except zlib.error as exc:
+            raise ValueError("Audit archive payload is corrupt") from exc
+        if hashlib.sha256(raw_payload).hexdigest() != archive.content_hash:
+            raise ValueError("Audit archive content hash does not match its payload")
+        decoded = json.loads(raw_payload.decode("utf-8"))
+        if not isinstance(decoded, list) or len(decoded) != archive.event_count:
+            raise ValueError("Audit archive event count does not match its payload")
+        return decoded
+
+    @staticmethod
+    def _archive_to_dict(archive: AuditEventArchive) -> dict[str, Any]:
+        return {
+            "id": archive.id,
+            "category": archive.category,
+            "period_start": archive.period_start.isoformat(),
+            "period_end": archive.period_end.isoformat(),
+            "event_count": archive.event_count,
+            "first_event_at": archive.first_event_at.isoformat(),
+            "last_event_at": archive.last_event_at.isoformat(),
+            "content_hash": archive.content_hash,
+            "encoding": archive.encoding,
+            "raw_size": archive.raw_size,
+            "compressed_size": archive.compressed_size,
+            "metadata": archive.metadata_ or {},
+            "created_at": archive.created_at.isoformat(),
+        }
 
     @staticmethod
     def _subject_conditions(subject: str, *, include_audit: bool) -> dict:

@@ -109,9 +109,15 @@ if [ "$workflow_tables" != "11" ]; then
   exit 1
 fi
 
-bounded_state_tables="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('audit_event_rollups', 'lifecycle_current_states')")"
-if [ "$bounded_state_tables" != "2" ]; then
-  echo "Expected bounded audit and lifecycle-current-state tables were not created" >&2
+bounded_state_tables="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('audit_event_rollups', 'audit_event_archives', 'lifecycle_current_states')")"
+if [ "$bounded_state_tables" != "3" ]; then
+  echo "Expected bounded audit/archive and lifecycle-current-state tables were not created" >&2
+  exit 1
+fi
+
+audit_archive_partitions="$(docker exec "$CONTAINER_NAME" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_inherits JOIN pg_class child ON pg_inherits.inhrelid = child.oid JOIN pg_class parent ON pg_inherits.inhparent = parent.oid WHERE parent.relname = 'audit_event_archives' AND child.relname IN ('audit_event_archives_security', 'audit_event_archives_governance', 'audit_event_archives_operational', 'audit_event_archives_default')")"
+if [ "$audit_archive_partitions" != "4" ]; then
+  echo "Expected all immutable audit archive category partitions" >&2
   exit 1
 fi
 

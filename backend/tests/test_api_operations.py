@@ -1854,3 +1854,65 @@ def test_gdpr_subject_delete_is_audit_preserving(monkeypatch):
         include_audit=False,
     )
     app.state.audit_service.record_control_evidence.assert_awaited_once()
+
+
+def test_audit_archive_list_and_restore_are_owner_authorized(monkeypatch):
+    app = FastAPI()
+    app.include_router(operations_router, prefix="/api/operations")
+    app.state.retention_service = AsyncMock()
+    app.state.retention_service.list_audit_archives.return_value = [
+        {
+            "id": "audit_archive_1",
+            "category": "security",
+            "event_count": 2,
+            "content_hash": "a" * 64,
+        }
+    ]
+    app.state.retention_service.restore_audit_archive.return_value = {
+        "archive": {"id": "audit_archive_1", "category": "security"},
+        "dry_run": True,
+        "hash_verified": True,
+        "restored_count": 0,
+        "would_restore_count": 2,
+        "existing_count": 0,
+    }
+    app.state.audit_service = AsyncMock()
+
+    async def mock_get_current_principal():
+        return owner_principal()
+
+    authorization_calls = []
+
+    async def mock_require_authorization(*args, **kwargs):
+        authorization_calls.append((args, kwargs))
+
+    app.dependency_overrides[get_current_principal] = mock_get_current_principal
+    monkeypatch.setattr(
+        "cyber_team.api.routes.operations.require_authorization",
+        mock_require_authorization,
+    )
+    client = TestClient(app)
+
+    listed = client.get(
+        "/api/operations/retention/audit-archives?category=security&limit=5"
+    )
+    restored = client.post(
+        "/api/operations/retention/audit-archives/audit_archive_1/restore",
+        json={"dry_run": True},
+    )
+
+    assert listed.status_code == 200
+    assert listed.json()[0]["category"] == "security"
+    assert restored.status_code == 200
+    assert restored.json()["hash_verified"] is True
+    assert len(authorization_calls) == 2
+    app.state.retention_service.list_audit_archives.assert_awaited_once_with(
+        category="security",
+        limit=5,
+    )
+    app.state.retention_service.restore_audit_archive.assert_awaited_once_with(
+        "audit_archive_1",
+        dry_run=True,
+        actor="owner@example.com",
+    )
+    app.state.audit_service.record_control_evidence.assert_awaited_once()

@@ -384,6 +384,34 @@ class AuditEventRollup(Base):
     )
 
 
+class AuditEventArchive(Base):
+    """Immutable compressed audit partition that can be verified and restored."""
+
+    __tablename__ = "audit_event_archives"
+    __table_args__ = (
+        UniqueConstraint(
+            "category",
+            "content_hash",
+            name="uq_audit_event_archives_category_hash",
+        ),
+    )
+
+    category: Mapped[str] = mapped_column(String(30), primary_key=True)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    period_start: Mapped[datetime] = mapped_column(DateTime, index=True)
+    period_end: Mapped[datetime] = mapped_column(DateTime, index=True)
+    event_count: Mapped[int] = mapped_column(Integer)
+    first_event_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    last_event_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    encoding: Mapped[str] = mapped_column(String(30), default="zlib+json")
+    payload: Mapped[bytes] = mapped_column(LargeBinary)
+    raw_size: Mapped[int] = mapped_column(Integer)
+    compressed_size: Mapped[int] = mapped_column(Integer)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
 class CommunicationLog(Base):
     __tablename__ = "communication_logs"
 
