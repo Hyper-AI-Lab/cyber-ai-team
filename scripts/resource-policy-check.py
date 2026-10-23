@@ -147,6 +147,7 @@ def _check_docker_images(failures: list[str], warnings: list[str], inventory: di
     files = [
         ROOT / "backend" / "Dockerfile",
         ROOT / "frontend" / "Dockerfile",
+        ROOT / "deploy" / "erpnext-node" / "Dockerfile",
         ROOT / "docker-compose.yml",
     ]
     reviewed = inventory.get("docker") or []

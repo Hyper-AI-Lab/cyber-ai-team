@@ -34,3 +34,22 @@ def test_compose_default_image_syntax_still_expands():
     assert resource_policy_check._expand_docker_image(
         "${POSTGRES_IMAGE:-postgres:17.6-alpine}", {}
     ) == "postgres:17.6-alpine"
+
+
+def test_reviewed_security_images_pass_resource_policy():
+    failures = []
+    inventory = resource_policy_check._load_inventory(failures)
+    resource_policy_check._check_docker_images(failures, [], inventory)
+    assert failures == []
+
+
+def test_unreviewed_erpnext_derivative_stage_is_rejected(tmp_path, monkeypatch):
+    directory = tmp_path / "deploy" / "erpnext-node"
+    directory.mkdir(parents=True)
+    (directory / "Dockerfile").write_text("FROM unreviewed-example:1\n")
+    monkeypatch.setattr(resource_policy_check, "ROOT", tmp_path)
+    failures = []
+    resource_policy_check._check_docker_images(failures, [], {"docker": []})
+    assert len(failures) == 1
+    assert "erpnext-node/Dockerfile:1" in failures[0]
+    assert "unreviewed-example:1" in failures[0]
