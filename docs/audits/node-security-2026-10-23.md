@@ -136,6 +136,13 @@ async SQLite and `run_sync` queries passing. Nine local runtime/resource/depende
 contract tests pass. This is a narrow clean-install correction, not permission to
 deploy the unfinished backend. Remote rerun results must be recorded separately.
 
+Rerun [39991920472](https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/39991920472)
+completed successfully for code commit `c15cc4c`: Backend (tests, Ruff, compile,
+offline/real PostgreSQL migrations, dependency audit and migration rehearsal),
+Frontend, Compose Smoke, Image Scan, Compose/Secrets/Diff and Observability Config
+all passed. This verifies the committed security/dependency checkpoint, not the
+uncommitted v5 lifecycle changes. No scheduled run or main-branch merge is claimed.
+
 The Jev installer-only regression was pushed to our integration branch as
 `83fb85b`. GitHub reported nine default-branch package alerts for MCP SDK
 HTTP/OAuth/experimental-task features and Hono. These alerts are not findings
