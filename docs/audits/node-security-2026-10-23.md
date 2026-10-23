@@ -120,6 +120,28 @@ Values were not copied into this report or repository. Subsequent inspections
 filter allowlisted fields before output. A passing repository secret scan does
 not remove that separate private-session exposure.
 
+## Remote Verification Follow-up
+
+Security checkpoint `cbbfa4d` was pushed to `codex/vision-integrity-v5`; no merge
+to main occurred. [Manual CI run 39990335294](https://github.com/Hyper-AI-Lab/cyber-ai-team/actions/runs/39990335294)
+passed Frontend, Compose/Secrets/Diff, Observability Config and Docker Image Scan.
+Backend stopped at import time because fresh SQLAlchemy 2.1 installs omitted
+greenlet; Compose smoke also failed on an unhealthy freshly built core. Its
+initial logs did not independently establish the cause. Live staging was untouched.
+
+The requirements now explicitly request `sqlalchemy[asyncio]`, following
+[SQLAlchemy's installation guidance](https://docs.sqlalchemy.org/en/21/faq/installation.html).
+An isolated clean install resolved SQLAlchemy 2.1.6 and greenlet 3.5.6, with actual
+async SQLite and `run_sync` queries passing. Nine local runtime/resource/dependency
+contract tests pass. This is a narrow clean-install correction, not permission to
+deploy the unfinished backend. Remote rerun results must be recorded separately.
+
+The Jev installer-only regression was pushed to our integration branch as
+`83fb85b`. GitHub reported nine default-branch package alerts for MCP SDK
+HTTP/OAuth/experimental-task features and Hono. These alerts are not findings
+against Node 22.23.4; installed-path applicability remains unverified. No Jev
+dependency bundle was silently updated as part of the Node runtime replacement.
+
 ## Next Development Step
 
 Resume v5 step 2 from its existing checkpoint: bounded lifecycle reconciliation,
